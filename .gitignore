@@ -1,0 +1,48 @@
+# Build output
+/build/
+/build-*/
+/bin/
+/lib/
+/out/
+
+# CMake
+/CMakeUserPresets.json
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/install_manifest.txt
+/compile_commands.json
+/Testing/
+/.cmake/
+
+# Ninja
+/.ninja_deps
+/.ninja_log
+/build.ninja
+/rules.ninja
+
+# Tool and package artifacts
+/imgui.ini
+/vcpkg_installed/
+
+# IDE files
+/.vs/
+/.vscode/
+/.idea/
+
+# Visual Studio generated files
+*.sln
+*.slnx
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.ilk
+*.pdb
+
+# Binaries and objects
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.a
