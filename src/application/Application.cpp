@@ -151,6 +151,8 @@ void Application::initialize()
                 }
             }
         }
+
+        frameEngagementCamera();
     }
     catch (const std::exception &e)
     {
@@ -267,7 +269,7 @@ void Application::run()
                 // Process input
                 try
                 {
-                    processInput();
+                    processInput(deltaTime);
                 }
                 catch (const std::exception &e)
                 {
@@ -332,45 +334,18 @@ void Application::run()
     }
 }
 
-void Application::processInput()
+void Application::processInput(float deltaTime)
 {
-    // Safety check for window
-    if (!m_window)
+    if (!m_window || !m_renderer)
     {
         return;
     }
 
-    // Handle ESC key to exit
-    // static bool escapePressed = false;
-    // if (glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-    // {
-    //     if (!escapePressed)
-    //     {
-    //         glfwSetWindowShouldClose(m_window, true);
-    //         escapePressed = true;
-    //     }
-    // }
-    // else
-    // {
-    //     escapePressed = false;
-    // }
-
-    // Handle SPACE key for pause
-    static bool spacePressed = false;
-    if (glfwGetKey(m_window, GLFW_KEY_SPACE) == GLFW_PRESS)
+    if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime))
     {
-        if (!spacePressed)
-        {
-            m_isPaused = !m_isPaused;
-            spacePressed = true;
-        }
-    }
-    else
-    {
-        spacePressed = false;
+        deltaTime = 0.016f;
     }
 
-    // Toggle the entire ImGui layer with Tab.
     static bool tabPressed = false;
     if (glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS)
     {
@@ -385,35 +360,74 @@ void Application::processInput()
         tabPressed = false;
     }
 
-    // Camera movement controls with WASD
-    const float cameraSpeed = 1.0f;
+    const bool uiCapturesKeyboard = m_showUI &&
+                                    ImGui::GetCurrentContext() != nullptr &&
+                                    ImGui::GetIO().WantCaptureKeyboard;
+
+    if (uiCapturesKeyboard)
+    {
+        return;
+    }
+
+    static bool enterPressed = false;
+    if (glfwGetKey(m_window, GLFW_KEY_ENTER) == GLFW_PRESS ||
+        glfwGetKey(m_window, GLFW_KEY_KP_ENTER) == GLFW_PRESS)
+    {
+        if (!enterPressed)
+        {
+            m_isPaused = !m_isPaused;
+            enterPressed = true;
+        }
+    }
+    else
+    {
+        enterPressed = false;
+    }
+
+    static bool focusPressed = false;
+    if (glfwGetKey(m_window, GLFW_KEY_C) == GLFW_PRESS)
+    {
+        if (!focusPressed)
+        {
+            frameEngagementCamera();
+            focusPressed = true;
+        }
+    }
+    else
+    {
+        focusPressed = false;
+    }
+
+    const bool speedBoost = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                            glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    const float cameraStep = deltaTime * (speedBoost ? 2.8f : 1.0f);
 
     if (glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS)
     {
-        m_renderer->moveCameraForward(cameraSpeed);
+        m_renderer->moveCameraForward(cameraStep);
     }
     if (glfwGetKey(m_window, GLFW_KEY_S) == GLFW_PRESS)
     {
-        m_renderer->moveCameraForward(-cameraSpeed);
+        m_renderer->moveCameraForward(-cameraStep);
     }
     if (glfwGetKey(m_window, GLFW_KEY_A) == GLFW_PRESS)
     {
-        m_renderer->moveCameraRight(-cameraSpeed);
+        m_renderer->moveCameraRight(-cameraStep);
     }
     if (glfwGetKey(m_window, GLFW_KEY_D) == GLFW_PRESS)
     {
-        m_renderer->moveCameraRight(cameraSpeed);
+        m_renderer->moveCameraRight(cameraStep);
     }
-    if (glfwGetKey(m_window, GLFW_KEY_Q) == GLFW_PRESS)
+    if (glfwGetKey(m_window, GLFW_KEY_SPACE) == GLFW_PRESS)
     {
-        m_renderer->moveCameraUp(-cameraSpeed);
+        m_renderer->moveCameraUp(cameraStep);
     }
-    if (glfwGetKey(m_window, GLFW_KEY_E) == GLFW_PRESS)
+    if (glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+        glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
     {
-        m_renderer->moveCameraUp(cameraSpeed);
+        m_renderer->moveCameraUp(-cameraStep);
     }
 
-    // Launch missile with F key
     static bool launchKeyPressed = false;
     if (glfwGetKey(m_window, GLFW_KEY_F) == GLFW_PRESS)
     {
@@ -692,7 +706,7 @@ void Application::render()
     try
     {
         // Clear the screen
-        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+        glClearColor(0.58f, 0.69f, 0.82f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Safety check for renderer
@@ -701,6 +715,8 @@ void Application::render()
             std::cerr << "ERROR: Renderer is null in render()" << std::endl;
             return;
         }
+
+        m_renderer->renderEnvironment();
 
         // Safety check for null missile
         if (!m_missile)
@@ -784,7 +800,7 @@ void Application::render()
                     glm::mat4 view = glm::lookAt(m_renderer->getCameraPosition(),
                                                  m_renderer->getCameraPosition() + m_renderer->getCameraFront(),
                                                  m_renderer->getCameraUp());
-                    glm::mat4 projection = glm::perspective(glm::radians(45.0f),
+                    glm::mat4 projection = glm::perspective(glm::radians(m_renderer->getCameraFOV()),
                                                             (float)m_width / (float)m_height,
                                                             0.1f, 1000.0f);
 
@@ -836,6 +852,56 @@ void Application::render()
     {
         std::cerr << "ERROR: Unknown exception in render" << std::endl;
     }
+}
+
+void Application::frameEngagementCamera()
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    std::vector<glm::vec3> points;
+    points.reserve(m_targets.size() + 2);
+    points.push_back(glm::vec3(0.0f, 0.0f, 0.0f));
+
+    if (m_missile)
+    {
+        points.push_back(m_missile->getPosition());
+    }
+
+    for (const auto &target : m_targets)
+    {
+        if (target && target->isActive())
+        {
+            points.push_back(target->getPosition());
+        }
+    }
+
+    glm::vec3 minPoint = points.front();
+    glm::vec3 maxPoint = points.front();
+    for (const glm::vec3 &point : points)
+    {
+        minPoint = glm::min(minPoint, point);
+        maxPoint = glm::max(maxPoint, point);
+    }
+
+    const glm::vec3 center = 0.5f * (minPoint + maxPoint);
+    const float horizontalSpan = glm::length(glm::vec2(maxPoint.x - minPoint.x, maxPoint.z - minPoint.z));
+    const float verticalSpan = maxPoint.y - minPoint.y;
+    const float framingRadius = std::max({horizontalSpan * 0.60f, verticalSpan * 1.35f, m_targetSpawnDistance * 0.85f, 150.0f});
+
+    glm::vec3 cameraDirection = glm::normalize(glm::vec3(-1.15f, 0.60f, 1.05f));
+    glm::vec3 cameraPosition = center + cameraDirection * (framingRadius * 1.85f);
+    cameraPosition.y = std::max(cameraPosition.y, center.y + framingRadius * 0.60f);
+
+    glm::vec3 lookTarget = center;
+    lookTarget.y = std::max(18.0f, center.y + verticalSpan * 0.20f);
+
+    m_renderer->setCameraSpeed(std::clamp(framingRadius * 0.22f, 30.0f, 120.0f));
+    m_renderer->setCameraFOV(50.0f);
+    m_renderer->setCameraPosition(cameraPosition);
+    m_renderer->setCameraTarget(lookTarget);
 }
 
 void Application::renderPredictedTrajectory()
@@ -1745,8 +1811,9 @@ void Application::setupUI()
                 beginCard("HelpCard", 118.0f);
                 drawCardHeader("Controls", "Keep the simulation visible while still knowing how to drive the camera.");
                 ImGui::TextUnformatted("Right mouse hold: free look");
-                ImGui::TextUnformatted("W / A / S / D: move camera");
-                ImGui::TextUnformatted("Space / Left Ctrl: move up or down");
+    ImGui::TextUnformatted("W / A / S / D: move camera");
+    ImGui::TextUnformatted("Space / Ctrl: move up or down");
+    ImGui::TextUnformatted("Enter: pause or resume simulation");
                 ImGui::TextDisabled(m_enableMouseCamera ? "Mouse capture is active." : "Mouse is currently in UI mode.");
                 endCard();
 

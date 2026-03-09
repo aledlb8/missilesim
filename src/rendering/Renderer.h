@@ -17,6 +17,7 @@ public:
     ~Renderer();
 
     void initialize();
+    void renderEnvironment();
     void render(PhysicsObject *object);
     void renderAll(const std::vector<PhysicsObject *> &objects);
 
@@ -74,7 +75,12 @@ private:
     void createLineRendering();
     void renderObject(PhysicsObject *object, const glm::mat4 &modelMatrix);
     void renderFloor();
+    void renderWorldGuides();
+    void renderGroundCircle(float radius, const glm::vec3 &color, int segments = 48);
+    void renderAirspaceBeacon(const glm::vec3 &basePosition, float height, const glm::vec3 &color);
     void updateCameraVectors();
+    glm::mat4 buildViewMatrix() const;
+    glm::mat4 buildProjectionMatrix() const;
 
     // OpenGL resources
     GLuint m_vao;           // Vertex Array Object
@@ -134,4 +140,5 @@ private:
     GLint m_modelLoc;
     GLint m_viewLoc;
     GLint m_projLoc;
+    GLint m_cameraPosLoc;
 };

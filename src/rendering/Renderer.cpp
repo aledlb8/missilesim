@@ -2,9 +2,11 @@
 #include "../objects/PhysicsObject.h"
 #include "../objects/Missile.h"
 #include "../objects/Target.h"
+#include <algorithm>
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtx/norm.hpp>
 
 // Vertex shader source
 const char *vertexShaderSource = R"(
@@ -36,16 +38,23 @@ const char *fragmentShaderSource = R"(
     in vec3 Normal;
     in vec3 Color;
     
+    uniform vec3 cameraPos;
+    
     out vec4 FragColor;
     
     void main() {
-        // Simple lighting
-        vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+        vec3 lightDir = normalize(vec3(-0.35, 0.9, -0.2));
         vec3 norm = normalize(Normal);
-        float diff = max(dot(norm, lightDir), 0.2);
+        float diffuse = max(dot(norm, lightDir), 0.0);
+        float skyMix = clamp(norm.y * 0.5 + 0.5, 0.0, 1.0);
+        vec3 ambient = mix(vec3(0.12, 0.13, 0.16), vec3(0.36, 0.42, 0.48), skyMix);
+        vec3 litColor = Color * (ambient + diffuse * 0.85);
+
+        float viewDistance = length(FragPos - cameraPos);
+        float fogFactor = clamp(exp(-viewDistance * 0.0013), 0.0, 1.0);
+        vec3 fogColor = vec3(0.58, 0.69, 0.82);
         
-        vec3 diffuse = diff * Color;
-        FragColor = vec4(diffuse, 1.0);
+        FragColor = vec4(mix(fogColor, litColor, fogFactor), 1.0);
     }
 )";
 
@@ -81,15 +90,15 @@ Renderer::Renderer()
       m_floorVAO(0), m_floorVBO(0), m_floorEBO(0),
       m_targetVAO(0), m_targetVBO(0), m_targetEBO(0),
       m_explosionVAO(0), m_explosionVBO(0), m_explosionEBO(0),
-      m_cameraPosition(0.0f, 5.0f, 15.0f),
+      m_cameraPosition(-120.0f, 78.0f, 180.0f),
       m_cameraTarget(0.0f, 0.0f, 0.0f),
       m_cameraUp(0.0f, 1.0f, 0.0f),
       m_cameraFront(0.0f, 0.0f, -1.0f),
       m_cameraRight(1.0f, 0.0f, 0.0f),
-      m_cameraYaw(-90.0f), // Default is -90 degrees (looking along negative z-axis)
-      m_cameraPitch(0.0f),
-      m_cameraSpeed(5.0f),
-      m_cameraFOV(45.0f)
+      m_cameraYaw(-126.0f),
+      m_cameraPitch(-18.0f),
+      m_cameraSpeed(35.0f),
+      m_cameraFOV(50.0f)
 {
     initialize();
 }
@@ -265,6 +274,7 @@ void Renderer::initialize()
     m_modelLoc = glGetUniformLocation(m_shaderProgram, "model");
     m_viewLoc = glGetUniformLocation(m_shaderProgram, "view");
     m_projLoc = glGetUniformLocation(m_shaderProgram, "projection");
+    m_cameraPosLoc = glGetUniformLocation(m_shaderProgram, "cameraPos");
 
     // Initialize camera vectors
     updateCameraVectors();
@@ -523,51 +533,52 @@ void Renderer::createFloor()
     m_floorVertices.clear();
     m_floorIndices.clear();
 
-    // Floor dimensions
-    const float size = 20.0f; // Size of the floor grid
-    const float y = 0.0f;     // Y position (ground level)
-
-    // Create a grid pattern floor
-    const int gridSize = 20; // Number of grid cells
+    const float size = 2400.0f;
+    const float y = 0.0f;
+    const int gridSize = 120;
     const float cellSize = size / gridSize;
+    const glm::vec3 tarmacColor(0.16f, 0.18f, 0.22f);
+    const glm::vec3 terrainColor(0.29f, 0.32f, 0.27f);
+    const glm::vec3 accentColor(0.22f, 0.25f, 0.29f);
 
-    // Define floor colors
-    const glm::vec3 lightColor(0.8f, 0.8f, 0.8f);
-    const glm::vec3 darkColor(0.5f, 0.5f, 0.5f);
-
-    // Create grid vertices
     for (int z = 0; z <= gridSize; z++)
     {
         for (int x = 0; x <= gridSize; x++)
         {
             float xPos = -size / 2.0f + x * cellSize;
             float zPos = -size / 2.0f + z * cellSize;
+            float radialT = glm::clamp(glm::length(glm::vec2(xPos, zPos)) / (size * 0.5f), 0.0f, 1.0f);
+            float macroNoise = 0.5f + 0.5f * sin(xPos * 0.008f) * cos(zPos * 0.010f);
+            glm::vec3 color = glm::mix(tarmacColor, terrainColor, radialT);
+            color = glm::mix(color, accentColor, 0.18f + macroNoise * 0.12f);
 
-            // Checkerboard pattern
-            glm::vec3 color = ((x + z) % 2 == 0) ? lightColor : darkColor;
+            if (glm::abs(xPos) < 18.0f && glm::abs(zPos) < 260.0f)
+            {
+                color = glm::mix(color, glm::vec3(0.30f, 0.32f, 0.36f), 0.7f);
+            }
 
-            // Add vertex
+            if (glm::abs(zPos) < 24.0f && glm::abs(xPos) < 160.0f)
+            {
+                color = glm::mix(color, glm::vec3(0.24f, 0.27f, 0.32f), 0.35f);
+            }
+
             m_floorVertices.push_back({{xPos, y, zPos}, {0.0f, 1.0f, 0.0f}, color});
         }
     }
 
-    // Create indices for grid cells
     for (int z = 0; z < gridSize; z++)
     {
         for (int x = 0; x < gridSize; x++)
         {
-            // Calculate indices for the current grid cell
             unsigned int topLeft = z * (gridSize + 1) + x;
             unsigned int topRight = topLeft + 1;
             unsigned int bottomLeft = (z + 1) * (gridSize + 1) + x;
             unsigned int bottomRight = bottomLeft + 1;
 
-            // First triangle (top-left, bottom-left, bottom-right)
             m_floorIndices.push_back(topLeft);
             m_floorIndices.push_back(bottomLeft);
             m_floorIndices.push_back(bottomRight);
 
-            // Second triangle (top-left, bottom-right, top-right)
             m_floorIndices.push_back(topLeft);
             m_floorIndices.push_back(bottomRight);
             m_floorIndices.push_back(topRight);
@@ -784,14 +795,8 @@ void Renderer::renderLine(const glm::vec3 &start, const glm::vec3 &end, const gl
         // Use line shader program
         glUseProgram(m_lineShaderProgram);
 
-        // Set view and projection matrices
-        glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraPosition + m_cameraFront, m_cameraUp);
-        
-        // Calculate aspect ratio from viewport dimensions
-        float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(m_viewportHeight);
-        
-        // Increase far plane to render distant lines and use camera FOV
-        glm::mat4 projection = glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
+        glm::mat4 view = buildViewMatrix();
+        glm::mat4 projection = buildProjectionMatrix();
 
         // Set uniform values
         GLuint viewLoc = glGetUniformLocation(m_lineShaderProgram, "view");
@@ -882,25 +887,34 @@ void Renderer::rotateCameraPitch(float deltaDegrees)
 
 void Renderer::moveCameraForward(float distance)
 {
-    // Scale distance by camera speed
     float scaledDistance = distance * m_cameraSpeed;
-    m_cameraPosition += m_cameraFront * scaledDistance;
+    glm::vec3 forward = glm::vec3(m_cameraFront.x, 0.0f, m_cameraFront.z);
+    if (glm::length2(forward) < 0.0001f)
+    {
+        forward = glm::vec3(0.0f, 0.0f, -1.0f);
+    }
+    forward = glm::normalize(forward);
+    m_cameraPosition += forward * scaledDistance;
     m_cameraTarget = m_cameraPosition + m_cameraFront;
 }
 
 void Renderer::moveCameraRight(float distance)
 {
-    // Scale distance by camera speed
     float scaledDistance = distance * m_cameraSpeed;
-    m_cameraPosition += m_cameraRight * scaledDistance;
+    glm::vec3 right = glm::vec3(m_cameraRight.x, 0.0f, m_cameraRight.z);
+    if (glm::length2(right) < 0.0001f)
+    {
+        right = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    right = glm::normalize(right);
+    m_cameraPosition += right * scaledDistance;
     m_cameraTarget = m_cameraPosition + m_cameraFront;
 }
 
 void Renderer::moveCameraUp(float distance)
 {
-    // Scale distance by camera speed
     float scaledDistance = distance * m_cameraSpeed;
-    m_cameraPosition += m_cameraUp * scaledDistance;
+    m_cameraPosition += glm::vec3(0.0f, 1.0f, 0.0f) * scaledDistance;
     m_cameraTarget = m_cameraPosition + m_cameraFront;
 }
 
@@ -923,8 +937,9 @@ void Renderer::updateCameraVectors()
 
 void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
 {
-    // Render the floor first
-    renderFloor();
+    renderEnvironment();
+    glm::mat4 view = buildViewMatrix();
+    glm::mat4 projection = buildProjectionMatrix();
 
     // Render all objects
     for (auto *object : objects)
@@ -978,19 +993,14 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
             glBindVertexArray(m_vao);
 
-            // View matrix
-            glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraTarget, m_cameraUp);
-
-            // Projection matrix
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 100.0f);
-
-            // Use shader program
             glUseProgram(m_shaderProgram);
-
-            // Pass transformation matrices to the shader
             glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
             glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+            if (m_cameraPosLoc != -1)
+            {
+                glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+            }
 
             // Draw object
             glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
@@ -1002,19 +1012,14 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             model = glm::scale(model, glm::vec3(2.0f, 2.0f, 2.0f));
             glBindVertexArray(m_targetVAO);
 
-            // View matrix
-            glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraTarget, m_cameraUp);
-
-            // Projection matrix
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 100.0f);
-
-            // Use shader program
             glUseProgram(m_shaderProgram);
-
-            // Pass transformation matrices to the shader
             glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
             glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+            if (m_cameraPosLoc != -1)
+            {
+                glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+            }
 
             // Draw object
             glDrawElements(GL_TRIANGLES, m_targetIndices.size(), GL_UNSIGNED_INT, 0);
@@ -1025,9 +1030,6 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
 
 void Renderer::render(PhysicsObject *object)
 {
-    // Render the floor first
-    renderFloor();
-
     if (!object)
         return;
 
@@ -1065,14 +1067,8 @@ void Renderer::render(PhysicsObject *object)
         }
     }
 
-    // View matrix using updated camera system
-    glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraTarget, m_cameraUp);
-
-    // Calculate aspect ratio from viewport dimensions
-    float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(m_viewportHeight);
-    
-    // Projection matrix with increased far plane to render distant objects
-    glm::mat4 projection = glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
+    glm::mat4 view = buildViewMatrix();
+    glm::mat4 projection = buildProjectionMatrix();
 
     // Use shader program
     glUseProgram(m_shaderProgram);
@@ -1081,6 +1077,10 @@ void Renderer::render(PhysicsObject *object)
     glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
     glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+    if (m_cameraPosLoc != -1)
+    {
+        glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+    }
 
     // Draw object based on its type
     if (object->getType() == "Missile")
@@ -1120,30 +1120,136 @@ void Renderer::render(PhysicsObject *object)
 
 void Renderer::renderFloor()
 {
-    // View matrix with updated camera system
-    glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraTarget, m_cameraUp);
-    
-    // Calculate aspect ratio from viewport dimensions
-    float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(m_viewportHeight);
-    
-    // Projection matrix with increased far plane to render distant objects
-    glm::mat4 projection = glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
-
-    // Create model matrix for the floor (no transformations needed, it's at the origin)
+    glm::mat4 view = buildViewMatrix();
+    glm::mat4 projection = buildProjectionMatrix();
     glm::mat4 model = glm::mat4(1.0f);
 
-    // Use shader program
     glUseProgram(m_shaderProgram);
 
-    // Pass transformation matrices to the shader
     glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
     glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+    if (m_cameraPosLoc != -1)
+    {
+        glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+    }
 
-    // Draw floor
     glBindVertexArray(m_floorVAO);
     glDrawElements(GL_TRIANGLES, m_floorIndices.size(), GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
+}
+
+void Renderer::renderEnvironment()
+{
+    renderFloor();
+    renderWorldGuides();
+}
+
+void Renderer::renderWorldGuides()
+{
+    const float guideY = 0.08f;
+    const float runwayHalfWidth = 14.0f;
+    const float runwayHalfLength = 230.0f;
+    const float airspaceHalfExtent = 420.0f;
+    const float beaconHeight = 220.0f;
+
+    const glm::vec3 runwayColor(0.92f, 0.94f, 0.96f);
+    const glm::vec3 runwayAccent(0.72f, 0.82f, 0.90f);
+    const glm::vec3 axisXColor(0.82f, 0.40f, 0.38f);
+    const glm::vec3 axisZColor(0.36f, 0.70f, 0.82f);
+    const glm::vec3 guideColor(0.50f, 0.60f, 0.68f);
+    const glm::vec3 beaconColor(0.72f, 0.78f, 0.86f);
+
+    renderLine(glm::vec3(-airspaceHalfExtent, guideY, 0.0f), glm::vec3(airspaceHalfExtent, guideY, 0.0f), axisXColor);
+    renderLine(glm::vec3(0.0f, guideY, -airspaceHalfExtent), glm::vec3(0.0f, guideY, airspaceHalfExtent), axisZColor);
+
+    renderGroundCircle(120.0f, glm::vec3(0.40f, 0.48f, 0.54f), 32);
+    renderGroundCircle(240.0f, glm::vec3(0.46f, 0.54f, 0.62f), 40);
+    renderGroundCircle(360.0f, glm::vec3(0.52f, 0.60f, 0.68f), 48);
+
+    renderLine(glm::vec3(-runwayHalfWidth, guideY, -runwayHalfLength), glm::vec3(runwayHalfWidth, guideY, -runwayHalfLength), runwayColor);
+    renderLine(glm::vec3(runwayHalfWidth, guideY, -runwayHalfLength), glm::vec3(runwayHalfWidth, guideY, runwayHalfLength), runwayColor);
+    renderLine(glm::vec3(runwayHalfWidth, guideY, runwayHalfLength), glm::vec3(-runwayHalfWidth, guideY, runwayHalfLength), runwayColor);
+    renderLine(glm::vec3(-runwayHalfWidth, guideY, runwayHalfLength), glm::vec3(-runwayHalfWidth, guideY, -runwayHalfLength), runwayColor);
+
+    for (float z = -runwayHalfLength + 24.0f; z < runwayHalfLength - 12.0f; z += 34.0f)
+    {
+        renderLine(glm::vec3(0.0f, guideY, z), glm::vec3(0.0f, guideY, z + 18.0f), runwayAccent);
+    }
+
+    const float padHalf = 18.0f;
+    renderLine(glm::vec3(-padHalf, guideY, -padHalf), glm::vec3(padHalf, guideY, -padHalf), guideColor);
+    renderLine(glm::vec3(padHalf, guideY, -padHalf), glm::vec3(padHalf, guideY, padHalf), guideColor);
+    renderLine(glm::vec3(padHalf, guideY, padHalf), glm::vec3(-padHalf, guideY, padHalf), guideColor);
+    renderLine(glm::vec3(-padHalf, guideY, padHalf), glm::vec3(-padHalf, guideY, -padHalf), guideColor);
+    renderPoint(glm::vec3(0.0f, 0.18f, 0.0f), glm::vec3(0.98f, 0.82f, 0.30f), 6.0f);
+
+    const glm::vec3 corners[4] = {
+        glm::vec3(-airspaceHalfExtent, 0.0f, -airspaceHalfExtent),
+        glm::vec3(airspaceHalfExtent, 0.0f, -airspaceHalfExtent),
+        glm::vec3(airspaceHalfExtent, 0.0f, airspaceHalfExtent),
+        glm::vec3(-airspaceHalfExtent, 0.0f, airspaceHalfExtent)};
+
+    for (int i = 0; i < 4; ++i)
+    {
+        const glm::vec3 currentGround = corners[i] + glm::vec3(0.0f, guideY, 0.0f);
+        const glm::vec3 nextGround = corners[(i + 1) % 4] + glm::vec3(0.0f, guideY, 0.0f);
+        const glm::vec3 currentTop = corners[i] + glm::vec3(0.0f, beaconHeight, 0.0f);
+        const glm::vec3 nextTop = corners[(i + 1) % 4] + glm::vec3(0.0f, beaconHeight, 0.0f);
+
+        renderLine(currentGround, nextGround, guideColor);
+        renderLine(currentTop, nextTop, glm::vec3(0.56f, 0.64f, 0.72f));
+        renderAirspaceBeacon(corners[i], beaconHeight, beaconColor);
+    }
+
+    renderLine(glm::vec3(-airspaceHalfExtent, beaconHeight, -airspaceHalfExtent),
+               glm::vec3(airspaceHalfExtent, beaconHeight, airspaceHalfExtent),
+               glm::vec3(0.42f, 0.50f, 0.58f));
+    renderLine(glm::vec3(airspaceHalfExtent, beaconHeight, -airspaceHalfExtent),
+               glm::vec3(-airspaceHalfExtent, beaconHeight, airspaceHalfExtent),
+               glm::vec3(0.42f, 0.50f, 0.58f));
+}
+
+void Renderer::renderGroundCircle(float radius, const glm::vec3 &color, int segments)
+{
+    const float guideY = 0.08f;
+    const float angleStep = glm::two_pi<float>() / static_cast<float>(segments);
+
+    for (int i = 0; i < segments; ++i)
+    {
+        float startAngle = angleStep * static_cast<float>(i);
+        float endAngle = angleStep * static_cast<float>(i + 1);
+        glm::vec3 start(radius * cos(startAngle), guideY, radius * sin(startAngle));
+        glm::vec3 end(radius * cos(endAngle), guideY, radius * sin(endAngle));
+        renderLine(start, end, color);
+    }
+}
+
+void Renderer::renderAirspaceBeacon(const glm::vec3 &basePosition, float height, const glm::vec3 &color)
+{
+    const glm::vec3 base = basePosition + glm::vec3(0.0f, 0.08f, 0.0f);
+    const glm::vec3 top = basePosition + glm::vec3(0.0f, height, 0.0f);
+    renderLine(base, top, color);
+
+    const glm::vec3 tickColor = glm::mix(color, glm::vec3(1.0f, 1.0f, 1.0f), 0.15f);
+    for (float altitude = 55.0f; altitude < height; altitude += 55.0f)
+    {
+        const glm::vec3 tickCenter = basePosition + glm::vec3(0.0f, altitude, 0.0f);
+        renderLine(tickCenter - glm::vec3(8.0f, 0.0f, 0.0f), tickCenter + glm::vec3(8.0f, 0.0f, 0.0f), tickColor);
+        renderLine(tickCenter - glm::vec3(0.0f, 0.0f, 8.0f), tickCenter + glm::vec3(0.0f, 0.0f, 8.0f), tickColor);
+    }
+}
+
+glm::mat4 Renderer::buildViewMatrix() const
+{
+    return glm::lookAt(m_cameraPosition, m_cameraTarget, m_cameraUp);
+}
+
+glm::mat4 Renderer::buildProjectionMatrix() const
+{
+    const int safeHeight = std::max(m_viewportHeight, 1);
+    float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(safeHeight);
+    return glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
 }
 
 void Renderer::renderExplosion(const glm::vec3 &position, float size)
@@ -1194,14 +1300,8 @@ void Renderer::renderExplosion(const glm::vec3 &position, float size)
     model = glm::translate(model, position);
     model = glm::scale(model, glm::vec3(size));
 
-    // View matrix
-    glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraTarget, m_cameraUp);
-
-    // Calculate aspect ratio from viewport dimensions
-    float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(m_viewportHeight);
-    
-    // Projection matrix with increased far plane and camera FOV
-    glm::mat4 projection = glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
+    glm::mat4 view = buildViewMatrix();
+    glm::mat4 projection = buildProjectionMatrix();
 
     bool success = true;
     try
@@ -1224,6 +1324,8 @@ void Renderer::renderExplosion(const glm::vec3 &position, float size)
                 glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
             if (m_projLoc != -1)
                 glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+            if (m_cameraPosLoc != -1)
+                glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
 
             // Draw explosion
             glBindVertexArray(m_explosionVAO);
@@ -1271,14 +1373,8 @@ void Renderer::renderPoint(const glm::vec3 &position, const glm::vec3 &color, fl
         // Use line shader program (works for points too)
         glUseProgram(m_lineShaderProgram);
 
-        // Set view and projection matrices
-        glm::mat4 view = glm::lookAt(m_cameraPosition, m_cameraPosition + m_cameraFront, m_cameraUp);
-        
-        // Calculate aspect ratio from viewport dimensions
-        float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(m_viewportHeight);
-        
-        // Projection matrix with increased far plane and camera FOV
-        glm::mat4 projection = glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
+        glm::mat4 view = buildViewMatrix();
+        glm::mat4 projection = buildProjectionMatrix();
 
         // Set uniform values
         GLuint viewLoc = glGetUniformLocation(m_lineShaderProgram, "view");

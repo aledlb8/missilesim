@@ -30,12 +30,12 @@ A 3D missile physics simulator with OpenGL rendering and realistic physics.
 ## Controls
 
 - **Camera Controls**:
-  - WASD: Move camera position
-  - Q/E: Move camera up/down
-  - Arrow keys: Rotate camera view
+- WASD: Move camera position
+- Space/Ctrl: Move camera up/down
+- Arrow keys: Rotate camera view
 
 - **Simulation Controls**:
-  - Space: Pause/Resume simulation
+- Enter: Pause/Resume simulation
   - F: Launch missile at nearest target
   - Escape: Exit application
 

@@ -33,10 +33,11 @@ public:
     void shutdown();
     
 private:
-    void processInput();
+    void processInput(float deltaTime);
     void update(float deltaTime);
     void render();
     void setupUI();
+    void frameEngagementCamera();
     
     // Mouse control functions
     void mouseCallback(double xpos, double ypos);
