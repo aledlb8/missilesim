@@ -71,6 +71,7 @@ private:
     // Movement tracking
     float m_movementTime = 0.0f;           // Current time in the movement cycle
     glm::vec3 m_initialPosition;           // Initial position for reference
+    float m_wavePathDistance = 0.0f;       // Along-track progress for sinusoidal motion
     
     // Movement pattern implementations
     void applyLinearMovement(float deltaTime);

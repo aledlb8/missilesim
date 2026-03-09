@@ -34,6 +34,7 @@ public:
     // Ground collision properties
     void setGroundEnabled(bool enabled) { m_groundEnabled = enabled; }
     bool isGroundEnabled() const { return m_groundEnabled; }
+    float getGroundLevel() const { return m_groundLevel; }
     void setGroundRestitution(float restitution) { m_groundRestitution = restitution; }
     float getGroundRestitution() const { return m_groundRestitution; }
     

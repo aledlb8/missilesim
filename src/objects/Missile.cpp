@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iostream>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -32,12 +33,48 @@ glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback
 
     return glm::vec3(0.0f, 0.0f, 1.0f);
 }
+
+float computeTerrainUrgency(float deficit, float recoveryWindow)
+{
+    if (recoveryWindow <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    return glm::clamp(deficit / recoveryWindow, 0.0f, 1.0f);
+}
 } // namespace
 
 Missile::Missile(const glm::vec3 &position, const glm::vec3 &velocity,
                  float mass, float dragCoefficient, float crossSectionalArea, float liftCoefficient)
-    : PhysicsObject(position, velocity, mass), m_dragCoefficient(dragCoefficient), m_crossSectionalArea(crossSectionalArea), m_liftCoefficient(liftCoefficient)
+    : PhysicsObject(position, velocity, std::max(mass, 0.01f)),
+      m_dragCoefficient(dragCoefficient),
+      m_crossSectionalArea(crossSectionalArea),
+      m_liftCoefficient(liftCoefficient),
+      m_dryMass(std::max(mass, 0.01f))
 {
+    synchronizeMass();
+}
+
+void Missile::setMass(float mass)
+{
+    m_dryMass = std::max(mass, 0.01f);
+    synchronizeMass();
+}
+
+void Missile::setFuel(float kg)
+{
+    m_fuel = std::max(kg, 0.0f);
+    if (m_fuel <= 0.0f)
+    {
+        m_thrustEnabled = false;
+    }
+    synchronizeMass();
+}
+
+void Missile::synchronizeMass()
+{
+    m_mass = std::max(m_dryMass + m_fuel, 0.01f);
 }
 
 void Missile::setTarget(const glm::vec3 &targetPosition)
@@ -268,6 +305,55 @@ void Missile::applyGuidance(float deltaTime)
         glm::vec3 desiredGuidanceDirection = normalizeOrFallback((horizontalGuidanceDirection * (1.0f - verticalGuidanceBlend)) +
                                                                      (fullGuidanceDirection * verticalGuidanceBlend),
                                                                  horizontalGuidanceDirection);
+
+        if (m_terrainAvoidanceEnabled)
+        {
+            const float currentClearance = m_position.y - m_groundReferenceAltitude;
+            const float targetClearance = std::max(m_filteredTargetPosition.y - m_groundReferenceAltitude, 0.0f);
+            const float terminalClearance = std::max(targetClearance + 4.0f, 2.0f);
+            const float scheduledClearance = glm::mix(m_terrainClearance, terminalClearance, terminalBlend);
+            const float terrainLookAheadTime = glm::clamp(glm::mix(m_terrainLookAheadTime, 0.75f, terminalBlend), 0.5f, m_terrainLookAheadTime);
+            const float projectedVerticalSpeed = glm::mix(m_velocity.y, desiredGuidanceDirection.y * speed, 0.65f);
+            const float predictedClearance = currentClearance + (projectedVerticalSpeed * terrainLookAheadTime);
+            const float descentPenalty = std::max(-m_velocity.y, 0.0f) * glm::mix(0.7f, 0.2f, terminalBlend);
+            const float immediateDeficit = scheduledClearance - currentClearance;
+            const float projectedDeficit = (scheduledClearance + descentPenalty) - predictedClearance;
+            const float recoveryWindow = std::max(scheduledClearance * 0.8f, 25.0f);
+            const float terrainUrgency = std::max(
+                computeTerrainUrgency(immediateDeficit, recoveryWindow),
+                computeTerrainUrgency(projectedDeficit, recoveryWindow));
+
+            float timeToGround = std::numeric_limits<float>::infinity();
+            if (m_velocity.y < -0.5f && currentClearance > 0.0f)
+            {
+                timeToGround = currentClearance / -m_velocity.y;
+            }
+
+            const float timeUrgency = std::isfinite(timeToGround)
+                                          ? (1.0f - glm::smoothstep(0.8f, terrainLookAheadTime * 1.5f, timeToGround))
+                                          : 0.0f;
+            const float terrainAvoidanceBlend = std::max(terrainUrgency, timeUrgency);
+
+            if (terrainAvoidanceBlend > 0.0f)
+            {
+                const glm::vec3 terrainForward = normalizeOrFallback(
+                    glm::vec3(horizontalGuidanceDirection.x, 0.0f, horizontalGuidanceDirection.z),
+                    glm::vec3(velocityDirection.x, 0.0f, velocityDirection.z));
+                const float climbBias = glm::mix(0.25f, 1.85f, terrainAvoidanceBlend);
+                const glm::vec3 terrainSafeDirection = normalizeOrFallback(
+                    glm::vec3(terrainForward.x, climbBias, terrainForward.z),
+                    glm::vec3(0.0f, 1.0f, 0.0f));
+                const float terrainBlend = glm::mix(0.22f, 0.9f, terrainAvoidanceBlend);
+                desiredGuidanceDirection = normalizeOrFallback(
+                    glm::mix(desiredGuidanceDirection, terrainSafeDirection, terrainBlend),
+                    terrainSafeDirection);
+                commandedAcceleration += glm::vec3(
+                    0.0f,
+                    allowedLateralAcceleration * glm::mix(0.2f, 1.0f, terrainAvoidanceBlend),
+                    0.0f);
+            }
+        }
+
         glm::vec3 guidanceLateral = desiredGuidanceDirection - (velocityDirection * glm::dot(velocityDirection, desiredGuidanceDirection));
         if (glm::length2(guidanceLateral) > 0.0001f)
         {
@@ -332,13 +418,24 @@ void Missile::applyGuidance(float deltaTime)
 bool Missile::applyThrust(float deltaTime)
 {
     // Check if thrust is enabled and we have fuel
-    if (!m_thrustEnabled || m_fuel <= 0.0f)
+    if (!m_thrustEnabled || m_fuel <= 0.0f || m_thrust <= 0.0f)
     {
+        if (m_fuel <= 0.0f)
+        {
+            m_fuel = 0.0f;
+            m_thrustEnabled = false;
+            synchronizeMass();
+        }
         return false;
     }
 
     try
     {
+        if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime) || m_fuelConsumptionRate <= 0.0f)
+        {
+            return false;
+        }
+
         // Safety checks for valid thrust direction
         if (glm::length2(m_thrustDirection) < 0.001f ||
             std::isnan(m_thrustDirection.x) || std::isnan(m_thrustDirection.y) || std::isnan(m_thrustDirection.z) ||
@@ -356,28 +453,38 @@ bool Missile::applyThrust(float deltaTime)
         }
 
         // Calculate fuel consumption for this step
-        float fuelConsumed = m_fuelConsumptionRate * deltaTime;
+        const float requestedFuel = m_fuelConsumptionRate * deltaTime;
+        if (requestedFuel <= 0.0f)
+        {
+            return false;
+        }
 
         // Limit consumption to available fuel
-        fuelConsumed = std::min(fuelConsumed, m_fuel);
-
-        // Update remaining fuel
-        m_fuel -= fuelConsumed;
-
-        // If fuel runs out, disable thrust
-        if (m_fuel <= 0.0f)
+        const float fuelConsumed = std::min(requestedFuel, m_fuel);
+        const float throttleFraction = glm::clamp(fuelConsumed / requestedFuel, 0.0f, 1.0f);
+        if (throttleFraction <= 0.0f)
         {
             m_fuel = 0.0f;
             m_thrustEnabled = false;
+            synchronizeMass();
             return false;
         }
 
         // Calculate thrust force - proportional to fuel consumption
-        float thrustMagnitude = m_thrust * (fuelConsumed / (m_fuelConsumptionRate * deltaTime));
+        const float thrustMagnitude = m_thrust * throttleFraction;
 
         // Apply thrust force in the thrust direction
         glm::vec3 thrustForce = m_thrustDirection * thrustMagnitude;
         applyForce(thrustForce);
+
+        // Update remaining fuel and wet mass after the burn.
+        m_fuel -= fuelConsumed;
+        if (m_fuel <= 0.0f)
+        {
+            m_fuel = 0.0f;
+            m_thrustEnabled = false;
+        }
+        synchronizeMass();
 
         return true;
     }

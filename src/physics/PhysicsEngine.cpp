@@ -40,6 +40,9 @@ void PhysicsEngine::update(float deltaTime)
             // Apply aerodynamic forces
             if (object->getType() == "Missile")
             {
+                Missile *missile = static_cast<Missile *>(object);
+                missile->setGroundReferenceAltitude(m_groundLevel);
+
                 // Apply drag
                 if (m_drag)
                 {
@@ -53,7 +56,6 @@ void PhysicsEngine::update(float deltaTime)
                 }
 
                 // Apply missile guidance
-                Missile *missile = static_cast<Missile *>(object);
                 if (missile->isGuidanceEnabled() && missile->hasTarget())
                 {
                     missile->applyGuidance(deltaTime);

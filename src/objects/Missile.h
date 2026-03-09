@@ -44,10 +44,20 @@ public:
     // Guidance parameters
     void setGuidanceEnabled(bool enabled) { m_guidanceEnabled = enabled; }
     bool isGuidanceEnabled() const { return m_guidanceEnabled; }
+    void setMass(float mass);
+    float getDryMass() const { return m_dryMass; }
     void setNavigationGain(float gain) { m_navigationGain = gain; }
     float getNavigationGain() const { return m_navigationGain; }
     void setMaxSteeringForce(float force) { m_maxSteeringForce = force; }
     float getMaxSteeringForce() const { return m_maxSteeringForce; }
+    void setTerrainAvoidanceEnabled(bool enabled) { m_terrainAvoidanceEnabled = enabled; }
+    bool isTerrainAvoidanceEnabled() const { return m_terrainAvoidanceEnabled; }
+    void setTerrainClearance(float clearance) { m_terrainClearance = (clearance >= 0.0f) ? clearance : 0.0f; }
+    float getTerrainClearance() const { return m_terrainClearance; }
+    void setTerrainLookAheadTime(float seconds) { m_terrainLookAheadTime = (seconds >= 0.5f) ? seconds : 0.5f; }
+    float getTerrainLookAheadTime() const { return m_terrainLookAheadTime; }
+    void setGroundReferenceAltitude(float altitude) { m_groundReferenceAltitude = altitude; }
+    float getGroundReferenceAltitude() const { return m_groundReferenceAltitude; }
     
     // Apply guidance force
     void applyGuidance(float deltaTime);
@@ -64,10 +74,10 @@ public:
     void setThrustEnabled(bool enabled) { m_thrustEnabled = enabled; }
     bool isThrustEnabled() const { return m_thrustEnabled; }
     
-    void setFuel(float kg) { m_fuel = kg; }
+    void setFuel(float kg);
     float getFuel() const { return m_fuel; }
     
-    void setFuelConsumptionRate(float kgPerSecond) { m_fuelConsumptionRate = kgPerSecond; }
+    void setFuelConsumptionRate(float kgPerSecond) { m_fuelConsumptionRate = (kgPerSecond >= 0.0f) ? kgPerSecond : 0.0f; }
     float getFuelConsumptionRate() const { return m_fuelConsumptionRate; }
     
     // Apply thrust and return true if thrust was applied
@@ -79,11 +89,13 @@ public:
 private:
     void initializeTargetTrack(const glm::vec3& position, const glm::vec3& velocity);
     void resetTargetTrack();
+    void synchronizeMass();
 
     // Aerodynamic properties
     float m_dragCoefficient;
     float m_crossSectionalArea;
     float m_liftCoefficient;
+    float m_dryMass = 0.0f;
     
     // Guidance properties
     bool m_guidanceEnabled = true;
@@ -95,11 +107,15 @@ private:
     bool m_targetTrackInitialized = false;
     float m_navigationGain = 4.0f;    // Typical PN navigation constant range is ~3-5
     float m_maxSteeringForce = 20000.0f; // Lateral control authority in Newtons
+    bool m_terrainAvoidanceEnabled = true;
+    float m_terrainClearance = 90.0f;
+    float m_terrainLookAheadTime = 6.0f;
+    float m_groundReferenceAltitude = 0.0f;
     
     // Thrust properties
     float m_thrust = 10000.0f;  // Thrust force in Newtons
     glm::vec3 m_thrustDirection = glm::vec3(0.0f, 0.0f, 1.0f);  // Direction of thrust
     bool m_thrustEnabled = false;  // Whether thrust is active
-    float m_fuel = 100.0f;  // Fuel amount in kg
+    float m_fuel = 0.0f;  // Fuel amount in kg
     float m_fuelConsumptionRate = 0.5f;  // Fuel consumption in kg/second
 }; 

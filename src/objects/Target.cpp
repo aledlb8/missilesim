@@ -5,6 +5,36 @@
 #include <cmath>
 #include <random>
 
+namespace
+{
+constexpr float kMinimumMovementPeriodSeconds = 0.1f;
+constexpr float kMinimumMovementRadiusMeters = 0.1f;
+constexpr float kMinimumForwardSpeedFraction = 0.35f;
+
+glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
+{
+    if (glm::length2(vector) > 0.0001f)
+    {
+        return glm::normalize(vector);
+    }
+
+    if (glm::length2(fallback) > 0.0001f)
+    {
+        return glm::normalize(fallback);
+    }
+
+    return glm::vec3(1.0f, 0.0f, 0.0f);
+}
+
+glm::vec3 perpendicularTo(const glm::vec3 &direction)
+{
+    const glm::vec3 referenceAxis = (std::abs(direction.y) < 0.9f)
+                                        ? glm::vec3(0.0f, 1.0f, 0.0f)
+                                        : glm::vec3(1.0f, 0.0f, 0.0f);
+    return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
+}
+} // namespace
+
 Target::Target(const glm::vec3& position, float radius)
     : PhysicsObject(position, glm::vec3(0.0f), 0.0f)  // Targets don't move or have mass
     , m_radius(radius) {
@@ -140,49 +170,59 @@ void Target::applyLinearMovement(float deltaTime)
 
 void Target::applyCircularMovement(float deltaTime)
 {
-    // Calculate angle based on time and period (in radians)
-    float angle = (m_movementTime / m_movementPeriod) * 2.0f * glm::pi<float>();
-    
-    // Calculate new position on circle
-    m_position.x = m_movementCenter.x + m_movementAmplitude * std::cos(angle);
-    m_position.z = m_movementCenter.z + m_movementAmplitude * std::sin(angle);
-    
-    // Height can oscillate for added complexity
-    m_position.y = m_movementCenter.y + (m_movementAmplitude * 0.2f) * std::sin(angle * 2.0f);
+    (void)deltaTime;
+
+    const float radius = std::max(m_movementAmplitude, kMinimumMovementRadiusMeters);
+    const float requestedAngularRate = (2.0f * glm::pi<float>()) / std::max(m_movementPeriod, kMinimumMovementPeriodSeconds);
+
+    // The orbit includes a small vertical weave, so cap the angular rate against the 3D path length.
+    const float verticalAmplitude = radius * 0.2f;
+    const float maxPathDerivativeMagnitude = std::sqrt((radius * radius) + ((2.0f * verticalAmplitude) * (2.0f * verticalAmplitude)));
+    const float maxAngularRateFromSpeed = (m_movementSpeed > 0.0f)
+                                              ? (m_movementSpeed / std::max(maxPathDerivativeMagnitude, kMinimumMovementRadiusMeters))
+                                              : 0.0f;
+    const float effectiveAngularRate = std::min(requestedAngularRate, maxAngularRateFromSpeed);
+    const float angle = m_movementTime * effectiveAngularRate;
+
+    m_position.x = m_movementCenter.x + radius * std::cos(angle);
+    m_position.z = m_movementCenter.z + radius * std::sin(angle);
+    m_position.y = m_movementCenter.y + verticalAmplitude * std::sin(angle * 2.0f);
 }
 
 void Target::applySinusoidalMovement(float deltaTime)
 {
-    // Calculate normalized time in the wave cycle (0 to 1)
-    float t = std::fmod(m_movementTime, m_movementPeriod) / m_movementPeriod;
-    
-    // Convert to angle (0 to 2π)
-    float angle = t * 2.0f * glm::pi<float>();
-    
-    // Create a perpendicular vector to movement direction for the sine wave
-    glm::vec3 cross;
-    
-    // Choose an appropriate cross vector to ensure perpendicular direction
-    if (std::abs(m_movementDirection.y) < 0.9f) {
-        cross = glm::normalize(glm::cross(m_movementDirection, glm::vec3(0.0f, 1.0f, 0.0f)));
-    } else {
-        cross = glm::normalize(glm::cross(m_movementDirection, glm::vec3(1.0f, 0.0f, 0.0f)));
+    const glm::vec3 forwardDirection = normalizeOrFallback(m_movementDirection, glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 lateralDirection = perpendicularTo(forwardDirection);
+    const float amplitude = std::max(m_movementAmplitude, 0.0f);
+    const float requestedAngularRate = (2.0f * glm::pi<float>()) / std::max(m_movementPeriod, kMinimumMovementPeriodSeconds);
+    const float cruiseSpeed = std::max(m_movementSpeed, 0.0f);
+
+    float effectiveAngularRate = requestedAngularRate;
+    if (amplitude > 0.001f && cruiseSpeed > 0.0f)
+    {
+        const float reservedForwardSpeed = cruiseSpeed * kMinimumForwardSpeedFraction;
+        const float maxLateralSpeed = std::sqrt(std::max((cruiseSpeed * cruiseSpeed) - (reservedForwardSpeed * reservedForwardSpeed), 0.0f));
+        const float maxAngularRateFromSpeed = maxLateralSpeed / amplitude;
+        effectiveAngularRate = std::min(requestedAngularRate, maxAngularRateFromSpeed);
     }
-    
-    // Calculate progress along the main direction
-    float linearProgress = m_movementSpeed * m_movementTime;
-    
-    // Apply sine wave offset perpendicular to the movement direction
-    float sineOffset = m_movementAmplitude * std::sin(angle);
-    
-    // Set position
-    m_position = m_initialPosition + 
-                 (m_movementDirection * linearProgress) + 
-                 (cross * sineOffset);
-    
-    // Reset position if we've gone too far
-    if (glm::length(m_position - m_initialPosition) > m_movementAmplitude * 10.0f) {
-        m_position = m_initialPosition;
+    else if (cruiseSpeed <= 0.0f)
+    {
+        effectiveAngularRate = 0.0f;
+    }
+
+    const float angle = m_movementTime * effectiveAngularRate;
+    const float lateralVelocityMagnitude = amplitude * effectiveAngularRate * std::cos(angle);
+    const float forwardSpeed = std::sqrt(std::max((cruiseSpeed * cruiseSpeed) - (lateralVelocityMagnitude * lateralVelocityMagnitude), 0.0f));
+
+    m_wavePathDistance += forwardSpeed * deltaTime;
+    m_position = m_initialPosition +
+                 (forwardDirection * m_wavePathDistance) +
+                 (lateralDirection * (amplitude * std::sin(angle)));
+
+    // Reset the reference track once the target has traversed far beyond its local engagement pocket.
+    if (glm::length(m_position - m_initialPosition) > std::max(amplitude * 10.0f, 250.0f)) {
+        m_initialPosition = m_position;
+        m_wavePathDistance = 0.0f;
         m_movementTime = 0.0f;
     }
 }

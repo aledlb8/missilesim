@@ -116,7 +116,7 @@ private:
     bool m_showUI = true;
     float m_initialVelocity[3] = {0.0f, 0.0f, 50.0f};  // Initial velocity in m/s
     float m_initialPosition[3] = {0.0f, 0.0f, 0.0f};   // Initial position in m
-    float m_mass = 100.0f;                            // Mass in kg
+    float m_mass = 100.0f;                            // Dry mass in kg
     float m_dragCoefficient = 0.1f;                   // Drag coefficient
     float m_crossSectionalArea = 0.1f;                // Cross-sectional area in m²
     float m_liftCoefficient = 0.1f;                   // Lift coefficient
@@ -125,6 +125,9 @@ private:
     bool m_guidanceEnabled = true;
     float m_navigationGain = 4.0f;
     float m_maxSteeringForce = 20000.0f;
+    bool m_terrainAvoidanceEnabled = true;
+    float m_terrainClearance = 90.0f;
+    float m_terrainLookAheadTime = 6.0f;
     
     // Missile thrust properties
     float m_missileThrust = 10000.0f;  // Thrust force in Newtons

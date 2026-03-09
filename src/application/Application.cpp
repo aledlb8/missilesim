@@ -206,6 +206,9 @@ bool Application::loadSettings()
     m_guidanceEnabled = readBool("guidance_enabled", m_guidanceEnabled);
     m_navigationGain = std::max(readFloat("navigation_gain", m_navigationGain), 0.1f);
     m_maxSteeringForce = std::max(readFloat("max_steering_force", m_maxSteeringForce), 1000.0f);
+    m_terrainAvoidanceEnabled = readBool("terrain_avoidance_enabled", m_terrainAvoidanceEnabled);
+    m_terrainClearance = std::max(readFloat("terrain_clearance", m_terrainClearance), 0.0f);
+    m_terrainLookAheadTime = std::max(readFloat("terrain_lookahead_time", m_terrainLookAheadTime), 0.5f);
 
     m_missileThrust = std::max(readFloat("missile_thrust", m_missileThrust), 0.0f);
     m_missileFuel = std::max(readFloat("missile_fuel", m_missileFuel), 0.0f);
@@ -274,6 +277,9 @@ std::string Application::buildSettingsSnapshot() const
     output << "guidance_enabled=" << formatBoolValue(m_guidanceEnabled) << "\n";
     output << "navigation_gain=" << m_navigationGain << "\n";
     output << "max_steering_force=" << m_maxSteeringForce << "\n";
+    output << "terrain_avoidance_enabled=" << formatBoolValue(m_terrainAvoidanceEnabled) << "\n";
+    output << "terrain_clearance=" << m_terrainClearance << "\n";
+    output << "terrain_lookahead_time=" << m_terrainLookAheadTime << "\n";
     output << "missile_thrust=" << m_missileThrust << "\n";
     output << "missile_fuel=" << m_missileFuel << "\n";
     output << "missile_fuel_consumption_rate=" << m_missileFuelConsumptionRate << "\n";
@@ -1418,13 +1424,17 @@ void Application::renderPredictedTrajectory()
         std::vector<glm::vec3> trajectoryPoints;
         trajectoryPoints.push_back(missilePos);
 
-        Missile simMissile(missilePos, missileVel, m_missile->getMass(),
+        Missile simMissile(missilePos, missileVel, m_missile->getDryMass(),
                            m_missile->getDragCoefficient(), m_missile->getCrossSectionalArea(),
                            m_missile->getLiftCoefficient());
 
         simMissile.setGuidanceEnabled(m_missile->isGuidanceEnabled());
         simMissile.setNavigationGain(m_missile->getNavigationGain());
         simMissile.setMaxSteeringForce(m_missile->getMaxSteeringForce());
+        simMissile.setTerrainAvoidanceEnabled(m_missile->isTerrainAvoidanceEnabled());
+        simMissile.setTerrainClearance(m_missile->getTerrainClearance());
+        simMissile.setTerrainLookAheadTime(m_missile->getTerrainLookAheadTime());
+        simMissile.setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
 
         simMissile.setThrust(m_missile->getThrust());
         simMissile.setThrustEnabled(m_missile->isThrustEnabled());
@@ -1815,6 +1825,10 @@ void Application::setupUI()
             m_missile->setGuidanceEnabled(m_guidanceEnabled);
             m_missile->setNavigationGain(m_navigationGain);
             m_missile->setMaxSteeringForce(m_maxSteeringForce);
+            m_missile->setTerrainAvoidanceEnabled(m_terrainAvoidanceEnabled);
+            m_missile->setTerrainClearance(m_terrainClearance);
+            m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);
+            m_missile->setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
             m_missile->setThrust(m_missileThrust);
             m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
 
@@ -1840,6 +1854,9 @@ void Application::setupUI()
 
         const float missileSpeed = glm::length(missileVelocity);
         const float missileAltitude = std::max(missilePosition.y, 0.0f);
+        const float terrainClearance = missilePosition.y - (m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
+        const float missileMass = m_missile->getMass();
+        const float missileDryMass = m_missile->getDryMass();
         Atmosphere::State missileAtmosphere;
         if (m_physicsEngine)
         {
@@ -1857,6 +1874,7 @@ void Application::setupUI()
         const bool thrustEnabled = m_missile->isThrustEnabled();
         const bool guidanceEnabled = m_missile->isGuidanceEnabled();
         const float fuel = m_missile->getFuel();
+        const bool boosterBurnedOut = !thrustEnabled && fuel <= 0.0f;
         const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
         ImVec4 fuelColor = accentRed;
         if (fuelPercent > 0.50f)
@@ -2037,11 +2055,12 @@ void Application::setupUI()
                 ImGui::SliderFloat("Simulation speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
                 endCard();
 
-                beginCard("PropulsionCard", 160.0f);
-                drawCardHeader("Propulsion Profile", "These values are staged for the next launch and rearm.");
+                beginCard("PropulsionCard", 184.0f);
+                drawCardHeader("Propulsion Profile", "Fuel is propellant mass added on top of dry airframe mass.");
                 ImGui::SliderFloat("Thrust output", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N");
                 ImGui::SliderFloat("Fuel load", &m_missileFuel, 10.0f, 1000.0f, "%.1f kg");
                 ImGui::SliderFloat("Fuel burn rate", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.2f kg/s");
+                ImGui::TextDisabled("Launch mass: %.1f kg", m_mass + m_missileFuel);
                 endCard();
 
                 beginCard("EnvironmentCard", 200.0f);
@@ -2103,18 +2122,21 @@ void Application::setupUI()
                 endCard();
 
                 beginCard("MissileAirframeCard", 188.0f);
-                drawCardHeader("Airframe", "Mass and aerodynamic coefficients determine stability and energy retention.");
-                ImGui::SliderFloat("Mass", &m_mass, 10.0f, 1000.0f, "%.1f kg");
+                drawCardHeader("Airframe", "Dry mass and aerodynamic coefficients determine stability and energy retention.");
+                ImGui::SliderFloat("Dry mass", &m_mass, 10.0f, 1000.0f, "%.1f kg");
                 ImGui::SliderFloat("Drag coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
                 ImGui::SliderFloat("Cross-sectional area", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m^2");
                 ImGui::SliderFloat("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
                 endCard();
 
-                beginCard("MissileGuidanceCard", 168.0f);
-                drawCardHeader("Guidance", "Tune proportional navigation response and available control authority.");
+                beginCard("MissileGuidanceCard", 232.0f);
+                drawCardHeader("Guidance", "Tune target pursuit and terrain-clearance behavior.");
                 ImGui::Checkbox("Guidance enabled", &m_guidanceEnabled);
                 ImGui::SliderFloat("Navigation gain", &m_navigationGain, 0.1f, 10.0f, "%.2f");
                 ImGui::SliderFloat("Max steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
+                ImGui::Checkbox("Terrain avoidance", &m_terrainAvoidanceEnabled);
+                ImGui::SliderFloat("Terrain clearance", &m_terrainClearance, 0.0f, 400.0f, "%.1f m");
+                ImGui::SliderFloat("Terrain look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
                 endCard();
 
                 beginCard("MissileApplyCard", 112.0f);
@@ -2156,7 +2178,7 @@ void Application::setupUI()
                 endCard();
 
                 beginCard("TargetMovementCard", 240.0f);
-                drawCardHeader("Movement Profile", "Choose how targets maneuver and when the profile is applied.");
+                drawCardHeader("Movement Profile", "Choose how targets maneuver. Nonlinear patterns honor the speed limit and lengthen the cycle if needed.");
                 if (ImGui::Checkbox("Moving targets", &m_targetsMove) && !m_targetsMove)
                 {
                     for (const auto &target : m_targets)
@@ -2182,7 +2204,7 @@ void Application::setupUI()
                     }
                     ImGui::SliderFloat("Movement speed", &m_targetMovementSpeed, 1.0f, 50.0f, "%.1f m/s");
                     ImGui::SliderFloat("Movement range", &m_targetMovementAmplitude, 25.0f, 10000.0f, "%.1f m");
-                    ImGui::SliderFloat("Movement period", &m_targetMovementPeriod, 2.0f, 30.0f, "%.1f s");
+                    ImGui::SliderFloat("Preferred cycle period", &m_targetMovementPeriod, 2.0f, 30.0f, "%.1f s");
 
                     pushButtonPalette(accentBlue, accentBlueHover, accentBlueActive);
                     if (ImGui::Button("Apply Movement Profile", ImVec2(-1.0f, 34.0f)))
@@ -2364,7 +2386,7 @@ void Application::setupUI()
         }
         endCard();
 
-        beginCard("TelemetryCard", 220.0f);
+        beginCard("TelemetryCard", 264.0f);
         drawCardHeader("Missile Telemetry", "Live position, kinematics, altitude, and local atmosphere readout for the current missile object.");
         if (ImGui::BeginTable("TelemetryTable", 2, readoutTableFlags))
         {
@@ -2381,6 +2403,12 @@ void Application::setupUI()
             drawReadoutRow("Mach", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.1f m", missileAltitude);
             drawReadoutRow("Altitude", buffer, missileAltitude > 0.0f ? textBright : accentAmber);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", terrainClearance);
+            drawReadoutRow("Terrain clearance", buffer, terrainClearance > 0.0f ? textBright : accentAmber);
+            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileMass);
+            drawReadoutRow("Current mass", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileDryMass);
+            drawReadoutRow("Dry mass", buffer, textDim);
             std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", missileAtmosphere.densityKgPerCubicMeter);
             drawReadoutRow("Ambient density", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.2f kPa", missileAtmosphere.pressurePascals * 0.001f);
@@ -2393,9 +2421,12 @@ void Application::setupUI()
         }
         endCard();
 
-        beginCard("EngineCard", 208.0f);
+        beginCard("EngineCard", 228.0f);
         drawCardHeader("Engine And Guidance", "Propulsion reserve, seeker state, and live control authority.");
-        ImGui::TextColored(thrustEnabled ? accentGreen : textDim, "%s", thrustEnabled ? "BOOSTER ACTIVE" : "BOOSTER OFF");
+        ImGui::TextColored(
+            thrustEnabled ? accentGreen : (boosterBurnedOut ? accentAmber : textDim),
+            "%s",
+            thrustEnabled ? "BOOSTER ACTIVE" : (boosterBurnedOut ? "BOOSTER BURNED OUT" : "BOOSTER OFF"));
         ImGui::TextColored(guidanceLocked ? accentGreen : (guidanceEnabled ? accentAmber : textDim),
                            "%s",
                            guidanceLocked ? "SEEKER LOCKED" : (guidanceEnabled ? "SEEKER SEARCHING" : "GUIDANCE DISABLED"));
@@ -2411,10 +2442,15 @@ void Application::setupUI()
             drawReadoutRow("Thrust command", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
             drawReadoutRow("Burn rate", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileMass);
+            drawReadoutRow("Wet mass", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.2f", m_navigationGain);
             drawReadoutRow("Navigation gain", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.0f N", m_maxSteeringForce);
             drawReadoutRow("Max steering", buffer, textBright);
+            drawReadoutRow("Terrain mode", m_missile->isTerrainAvoidanceEnabled() ? "Clearance hold" : "Direct pursuit", m_missile->isTerrainAvoidanceEnabled() ? accentGreen : textDim);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", m_missile->getTerrainClearance());
+            drawReadoutRow("Terrain floor", buffer, textBright);
             ImGui::EndTable();
         }
         endCard();
@@ -2869,10 +2905,24 @@ void Application::resetMissile()
             m_maxSteeringForce = 20000.0f;
         }
 
+        if (std::isnan(m_terrainClearance) || std::isinf(m_terrainClearance) || m_terrainClearance < 0.0f)
+        {
+            m_terrainClearance = 90.0f;
+        }
+
+        if (std::isnan(m_terrainLookAheadTime) || std::isinf(m_terrainLookAheadTime) || m_terrainLookAheadTime < 0.5f)
+        {
+            m_terrainLookAheadTime = 6.0f;
+        }
+
         // Set guidance parameters
         m_missile->setGuidanceEnabled(m_guidanceEnabled);
         m_missile->setNavigationGain(m_navigationGain);
         m_missile->setMaxSteeringForce(m_maxSteeringForce);
+        m_missile->setTerrainAvoidanceEnabled(m_terrainAvoidanceEnabled);
+        m_missile->setTerrainClearance(m_terrainClearance);
+        m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);
+        m_missile->setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
 
         // Set thrust parameters but disable thrust until launch
         m_missile->setThrust(m_missileThrust);
