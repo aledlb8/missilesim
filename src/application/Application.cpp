@@ -759,13 +759,10 @@ void Application::render()
                 {
                     m_renderer->render(target.get());
 
-                    // Render target debug info if enabled
-                    if (m_showTargetInfo && m_missile)
+                    // Render target debug info if enabled, or always in hidden HUD mode.
+                    if (m_missile && (m_showTargetInfo || !m_showUI))
                     {
-                        // Calculate distance to target
                         float distance = glm::length(target->getPosition() - m_missile->getPosition());
-
-                        // Store target position and label for later rendering
                         std::string label = "Target: " + std::to_string(static_cast<int>(distance)) + "m";
                         targetLabels.push_back(std::make_pair(target->getPosition(), label));
                     }
@@ -786,16 +783,23 @@ void Application::render()
         // Setup ImGui frame - wrap in try-catch for safety
         try
         {
-            if (m_showUI)
+            if (ImGui::GetCurrentContext() != nullptr)
             {
                 ImGui_ImplOpenGL3_NewFrame();
                 ImGui_ImplGlfw_NewFrame();
                 ImGui::NewFrame();
 
-                setupUI();
+                if (m_showUI)
+                {
+                    setupUI();
+                }
+                else
+                {
+                    renderMinimalHUD();
+                }
 
-                // Draw target labels using ImGui in world space
-                if (m_showTargetInfo && m_window && m_missile)
+                // Draw world labels using ImGui in screen space projected from the scene.
+                if (m_window && m_missile && ((m_showUI && m_showTargetInfo) || !m_showUI))
                 {
                     glm::mat4 view = glm::lookAt(m_renderer->getCameraPosition(),
                                                  m_renderer->getCameraPosition() + m_renderer->getCameraFront(),
@@ -803,31 +807,43 @@ void Application::render()
                     glm::mat4 projection = glm::perspective(glm::radians(m_renderer->getCameraFOV()),
                                                             (float)m_width / (float)m_height,
                                                             0.1f, 1000.0f);
+                    ImDrawList *drawList = ImGui::GetBackgroundDrawList();
+
+                    auto drawWorldText = [&](const glm::vec3 &worldPosition, const std::string &text, ImU32 color, float screenYOffset = 0.0f)
+                    {
+                        glm::vec4 clipSpace = projection * view * glm::vec4(worldPosition, 1.0f);
+
+                        if (clipSpace.w <= 0.0f)
+                        {
+                            return;
+                        }
+
+                        glm::vec3 ndcSpace = glm::vec3(clipSpace) / clipSpace.w;
+                        ImVec2 screenPos;
+                        screenPos.x = (ndcSpace.x + 1.0f) * 0.5f * m_width;
+                        screenPos.y = (1.0f - (ndcSpace.y + 1.0f) * 0.5f) * m_height + screenYOffset;
+
+                        if (screenPos.x >= 0.0f && screenPos.x < m_width &&
+                            screenPos.y >= 0.0f && screenPos.y < m_height)
+                        {
+                            drawList->AddText(screenPos, color, text.c_str());
+                        }
+                    };
 
                     for (const auto &targetLabel : targetLabels)
                     {
-                        // Project 3D world position to screen space
-                        glm::vec4 clipSpace = projection * view * glm::vec4(targetLabel.first, 1.0f);
+                        drawWorldText(targetLabel.first + glm::vec3(0.0f, 3.0f, 0.0f), targetLabel.second, IM_COL32(255, 234, 120, 255));
+                    }
 
-                        if (clipSpace.w > 0)
-                        { // Only if it's in front of the camera
-                            glm::vec3 ndcSpace = glm::vec3(clipSpace) / clipSpace.w;
+                    if (!m_showUI)
+                    {
+                        const glm::vec3 missileLabelAnchor = m_missile->getPosition() + glm::vec3(0.0f, 3.6f, 0.0f);
+                        char buffer[96];
+                        std::snprintf(buffer, sizeof(buffer), "ALT %.0f m", std::max(m_missile->getPosition().y, 0.0f));
+                        drawWorldText(missileLabelAnchor, buffer, IM_COL32(152, 220, 255, 255), 0.0f);
 
-                            // Convert from NDC space [-1,1] to screen space [0,width/height]
-                            ImVec2 screenPos;
-                            screenPos.x = (ndcSpace.x + 1.0f) * 0.5f * m_width;
-                            screenPos.y = (1.0f - (ndcSpace.y + 1.0f) * 0.5f) * m_height;
-
-                            // Only draw if it's on screen
-                            if (screenPos.x >= 0 && screenPos.x < m_width &&
-                                screenPos.y >= 0 && screenPos.y < m_height)
-                            {
-                                ImGui::GetBackgroundDrawList()->AddText(
-                                    screenPos,
-                                    IM_COL32(255, 255, 0, 255),
-                                    targetLabel.second.c_str());
-                            }
-                        }
+                        std::snprintf(buffer, sizeof(buffer), "SPD %.0f m/s", glm::length(m_missile->getVelocity()));
+                        drawWorldText(missileLabelAnchor, buffer, IM_COL32(200, 245, 255, 255), 16.0f);
                     }
                 }
 
@@ -852,6 +868,59 @@ void Application::render()
     {
         std::cerr << "ERROR: Unknown exception in render" << std::endl;
     }
+}
+
+void Application::renderMinimalHUD()
+{
+    if (!m_missile || !m_renderer)
+    {
+        return;
+    }
+
+    const float fuel = m_missile->getFuel();
+    const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
+
+    ImVec4 fuelColor(0.92f, 0.34f, 0.34f, 1.0f);
+    if (fuelPercent > 0.50f)
+    {
+        fuelColor = ImVec4(0.42f, 0.86f, 0.64f, 1.0f);
+    }
+    else if (fuelPercent > 0.25f)
+    {
+        fuelColor = ImVec4(0.96f, 0.77f, 0.34f, 1.0f);
+    }
+
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 18.0f, viewport->WorkPos.y + 18.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(220.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.62f);
+
+    const ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration |
+                                      ImGuiWindowFlags_NoInputs |
+                                      ImGuiWindowFlags_NoNav |
+                                      ImGuiWindowFlags_NoSavedSettings |
+                                      ImGuiWindowFlags_NoFocusOnAppearing;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.09f, 0.12f, 0.84f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.22f, 0.31f, 0.40f, 0.60f));
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, fuelColor);
+
+    if (ImGui::Begin("MinimalFlightHud", nullptr, hudFlags))
+    {
+        char buffer[96];
+        std::snprintf(buffer, sizeof(buffer), "%.1f kg", fuel);
+        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Fuel");
+        ImGui::SameLine(58.0f);
+        ImGui::TextColored(ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%s", buffer);
+        ImGui::ProgressBar(fuelPercent, ImVec2(-1.0f, 8.0f), "");
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar(3);
 }
 
 void Application::frameEngagementCamera()

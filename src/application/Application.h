@@ -37,6 +37,7 @@ private:
     void update(float deltaTime);
     void render();
     void setupUI();
+    void renderMinimalHUD();
     void frameEngagementCamera();
     
     // Mouse control functions
