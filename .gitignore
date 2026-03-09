@@ -23,6 +23,7 @@
 
 # Tool and package artifacts
 /imgui.ini
+/config/user_settings.ini
 /vcpkg_installed/
 
 # IDE files

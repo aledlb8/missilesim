@@ -39,6 +39,11 @@ private:
     void setupUI();
     void renderMinimalHUD();
     void frameEngagementCamera();
+    std::string buildSettingsSnapshot() const;
+    bool loadSettings();
+    void saveSettings();
+    void scheduleSettingsSave();
+    void flushSettingsAutosave(float deltaTime);
     
     // Mouse control functions
     void mouseCallback(double xpos, double ypos);
@@ -147,4 +152,14 @@ private:
     
     // Random number generator
     std::mt19937 m_rng;
+
+    // Autosaved user settings
+    std::string m_settingsPath = "config/user_settings.ini";
+    bool m_settingsDirty = false;
+    float m_settingsAutosaveDelay = 0.0f;
+    std::string m_lastSettingsSnapshot;
+    float m_savedGravity = 9.81f;
+    float m_savedAirDensity = 1.225f;
+    float m_savedCameraFOV = 50.0f;
+    float m_savedCameraSpeed = 35.0f;
 }; 
