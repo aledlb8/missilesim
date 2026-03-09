@@ -21,13 +21,18 @@ void Lift::applyTo(PhysicsObject* object) {
     // Normalize velocity to get direction
     glm::vec3 direction = velocity / speed;
     
+    // Sample local atmospheric state at the object's altitude.
+    const float altitude = object->getPosition().y;
+    const float density = m_atmosphere->calculateDensityAtAltitude(altitude);
+    if (density <= 0.0f) return;
+
     // Get air density and object properties
-    float density = m_atmosphere->getDensity();
     float liftCoefficient = object->getLiftCoefficient();
     float area = object->getCrossSectionalArea();
     
-    // Calculate lift force magnitude: F_lift = 0.5 * rho * v^2 * Cl * A
-    float liftMagnitude = 0.5f * density * speed * speed * liftCoefficient * area;
+    // Calculate lift force magnitude: F_lift = q * Cl * A, where q = 0.5 * rho * v^2.
+    const float dynamicPressure = 0.5f * density * speed * speed;
+    float liftMagnitude = dynamicPressure * liftCoefficient * area;
     
     glm::vec3 liftDirection(0.0f);
     float liftScale = 1.0f;

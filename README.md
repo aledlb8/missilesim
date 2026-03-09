@@ -6,7 +6,7 @@ A 3D missile physics simulator with OpenGL rendering and realistic physics.
 
 - **Physics-Based Simulation**: 
   - Realistic gravity and aerodynamic forces (drag and lift)
-  - Atmosphere model with variable air density
+  - Layered standard atmosphere with altitude-dependent density, pressure, and temperature
   - Ground collision with configurable bounciness
   - Accurate missile dynamics
 
@@ -83,7 +83,7 @@ A 3D missile physics simulator with OpenGL rendering and realistic physics.
 The simulation includes:
 
 - Gravitational forces (configurable acceleration)
-- Drag forces based on object shape and air density
+- Drag forces based on object shape and local atmospheric density
 - Lift forces for aerodynamic objects
 - Proportional navigation for missile guidance
 - Collision detection with ground and targets

@@ -1433,7 +1433,8 @@ void Application::renderPredictedTrajectory()
         simMissile.setThrustDirection(m_missile->getThrustDirection());
 
         float dt = m_trajectoryTime / m_trajectoryPoints;
-        Atmosphere atmosphere;
+        const float gravityMagnitude = m_physicsEngine ? m_physicsEngine->getGravity() : 9.81f;
+        Atmosphere atmosphere(m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity);
         Drag drag(&atmosphere);
         Lift lift(&atmosphere);
 
@@ -1443,7 +1444,7 @@ void Application::renderPredictedTrajectory()
         for (int i = 1; i < m_trajectoryPoints; ++i)
         {
             simMissile.resetForces();
-            simMissile.applyForce(glm::vec3(0.0f, -9.81f * simMissile.getMass(), 0.0f));
+            simMissile.applyForce(glm::vec3(0.0f, -gravityMagnitude * simMissile.getMass(), 0.0f));
             drag.applyTo(&simMissile);
             lift.applyTo(&simMissile);
 
@@ -1839,6 +1840,20 @@ void Application::setupUI()
 
         const float missileSpeed = glm::length(missileVelocity);
         const float missileAltitude = std::max(missilePosition.y, 0.0f);
+        Atmosphere::State missileAtmosphere;
+        if (m_physicsEngine)
+        {
+            missileAtmosphere = m_physicsEngine->getAtmosphereState(missileAltitude);
+        }
+        else
+        {
+            Atmosphere fallbackAtmosphere(m_savedAirDensity);
+            missileAtmosphere = fallbackAtmosphere.sample(missileAltitude);
+        }
+        const float missileMach =
+            (missileAtmosphere.speedOfSoundMetersPerSecond > 0.0f)
+                ? (missileSpeed / missileAtmosphere.speedOfSoundMetersPerSecond)
+                : 0.0f;
         const bool thrustEnabled = m_missile->isThrustEnabled();
         const bool guidanceEnabled = m_missile->isGuidanceEnabled();
         const float fuel = m_missile->getFuel();
@@ -2037,7 +2052,7 @@ void Application::setupUI()
                 {
                     m_physicsEngine->setGravity(gravity);
                 }
-                if (ImGui::SliderFloat("Air density", &airDensity, 0.0f, 2.0f, "%.3f kg/m^3"))
+                if (ImGui::SliderFloat("Sea-level density", &airDensity, 0.0f, 2.0f, "%.3f kg/m^3"))
                 {
                     m_physicsEngine->setAirDensity(airDensity);
                 }
@@ -2350,7 +2365,7 @@ void Application::setupUI()
         endCard();
 
         beginCard("TelemetryCard", 220.0f);
-        drawCardHeader("Missile Telemetry", "Live position, kinematics, and altitude readout for the current missile object.");
+        drawCardHeader("Missile Telemetry", "Live position, kinematics, altitude, and local atmosphere readout for the current missile object.");
         if (ImGui::BeginTable("TelemetryTable", 2, readoutTableFlags))
         {
             char buffer[128];
@@ -2362,8 +2377,16 @@ void Application::setupUI()
             drawReadoutRow("Acceleration", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.1f m/s", missileSpeed);
             drawReadoutRow("Speed", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.2f", missileMach);
+            drawReadoutRow("Mach", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.1f m", missileAltitude);
             drawReadoutRow("Altitude", buffer, missileAltitude > 0.0f ? textBright : accentAmber);
+            std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", missileAtmosphere.densityKgPerCubicMeter);
+            drawReadoutRow("Ambient density", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.2f kPa", missileAtmosphere.pressurePascals * 0.001f);
+            drawReadoutRow("Ambient pressure", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.2f K", missileAtmosphere.temperatureKelvin);
+            drawReadoutRow("Air temperature", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
             drawReadoutRow("Flight time", buffer, textBright);
             ImGui::EndTable();
@@ -2410,7 +2433,7 @@ void Application::setupUI()
             std::snprintf(buffer, sizeof(buffer), "%.2f m/s^2", m_physicsEngine->getGravity());
             drawReadoutRow("Gravity", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", m_physicsEngine->getAirDensity());
-            drawReadoutRow("Air density", buffer, textBright);
+            drawReadoutRow("Sea-level density", buffer, textBright);
             ImGui::EndTable();
         }
         ImGui::TextDisabled(m_enableMouseCamera ? "Mouse capture enabled." : "Mouse capture released.");

@@ -20,13 +20,18 @@ void Drag::applyTo(PhysicsObject* object) {
     // Normalize velocity to get direction
     glm::vec3 direction = velocity / speed;
     
-    // Get air density and object properties
-    float density = m_atmosphere->getDensity();
+    // Sample local atmospheric state at the object's altitude.
+    const float altitude = object->getPosition().y;
+    const float density = m_atmosphere->calculateDensityAtAltitude(altitude);
+    if (density <= 0.0f) return;
+
+    // Get object properties
     float dragCoefficient = object->getDragCoefficient();
     float area = object->getCrossSectionalArea();
     
-    // Calculate drag force magnitude: F_drag = 0.5 * rho * v^2 * Cd * A
-    float dragMagnitude = 0.5f * density * speed * speed * dragCoefficient * area;
+    // Calculate drag force magnitude: F_drag = q * Cd * A, where q = 0.5 * rho * v^2.
+    const float dynamicPressure = 0.5f * density * speed * speed;
+    float dragMagnitude = dynamicPressure * dragCoefficient * area;
     
     // Apply drag force in the opposite direction of velocity
     glm::vec3 dragForce = -dragMagnitude * direction;

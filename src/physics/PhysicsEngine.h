@@ -25,9 +25,11 @@ public:
     float getGravity() const;
     void setGravity(float gravity);
     
-    // Getter and setter for air density
+    // Getter and setter for configurable sea-level reference density
     float getAirDensity() const;
     void setAirDensity(float density);
+    float getAirDensityAtAltitude(float altitude) const;
+    Atmosphere::State getAtmosphereState(float altitude) const;
     
     // Ground collision properties
     void setGroundEnabled(bool enabled) { m_groundEnabled = enabled; }

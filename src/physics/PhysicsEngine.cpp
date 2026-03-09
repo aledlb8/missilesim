@@ -384,3 +384,13 @@ void PhysicsEngine::setAirDensity(float density)
 {
     m_atmosphere->setDensity(density);
 }
+
+float PhysicsEngine::getAirDensityAtAltitude(float altitude) const
+{
+    return m_atmosphere->calculateDensityAtAltitude(altitude);
+}
+
+Atmosphere::State PhysicsEngine::getAtmosphereState(float altitude) const
+{
+    return m_atmosphere->sample(altitude);
+}
