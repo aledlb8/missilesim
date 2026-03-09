@@ -28,28 +28,15 @@ public:
     std::string getType() const override { return "Missile"; }
     
     // Guidance system - static target position (old system)
-    void setTarget(const glm::vec3& targetPosition) { 
-        m_hasTarget = true; 
-        m_targetPosition = targetPosition;
-        m_targetObject = nullptr; // Clear target object when using static position
-    }
+    void setTarget(const glm::vec3& targetPosition);
     
     // Guidance system - dynamic target tracking
-    void setTargetObject(Target* target) {
-        m_targetObject = target;
-        m_hasTarget = (target != nullptr);
-        if (m_hasTarget) {
-            m_targetPosition = target->getPosition(); // Initial position
-        }
-    }
+    void setTargetObject(Target* target);
     
     // Get tracked target
     Target* getTargetObject() const { return m_targetObject; }
     
-    void clearTarget() { 
-        m_hasTarget = false;
-        m_targetObject = nullptr;
-    }
+    void clearTarget();
     
     bool hasTarget() const { return m_hasTarget; }
     const glm::vec3& getTargetPosition() const { return m_targetPosition; }
@@ -90,6 +77,9 @@ public:
     void update(float deltaTime) override;
     
 private:
+    void initializeTargetTrack(const glm::vec3& position, const glm::vec3& velocity);
+    void resetTargetTrack();
+
     // Aerodynamic properties
     float m_dragCoefficient;
     float m_crossSectionalArea;
@@ -100,6 +90,9 @@ private:
     bool m_hasTarget = false;
     glm::vec3 m_targetPosition = glm::vec3(0.0f);
     Target* m_targetObject = nullptr; // Pointer to target object for continuous tracking
+    glm::vec3 m_filteredTargetPosition = glm::vec3(0.0f);
+    glm::vec3 m_filteredTargetVelocity = glm::vec3(0.0f);
+    bool m_targetTrackInitialized = false;
     float m_navigationGain = 4.0f;    // Typical PN navigation constant range is ~3-5
     float m_maxSteeringForce = 20000.0f; // Lateral control authority in Newtons
     

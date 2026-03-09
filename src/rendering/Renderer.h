@@ -20,6 +20,7 @@ public:
     void renderEnvironment();
     void render(PhysicsObject *object);
     void renderAll(const std::vector<PhysicsObject *> &objects);
+    void setEnvironmentMetrics(float groundHalfExtent, float airspaceHalfExtent, float airspaceHeight);
 
     // Visual effects
     void renderExplosion(const glm::vec3 &position, float size);
@@ -43,6 +44,7 @@ public:
     float getCameraFOV() const { return m_cameraFOV; }
     void setCameraSpeed(float speed) { m_cameraSpeed = speed; }
     float getCameraSpeed() const { return m_cameraSpeed; }
+    float getSceneFarPlane() const { return m_sceneFarPlane; }
 
     // Viewport settings
     void setViewportSize(int width, int height)
@@ -73,6 +75,7 @@ private:
     void createTargetModel();
     void createExplosionModel();
     void createLineRendering();
+    void uploadFloorMesh();
     void renderObject(PhysicsObject *object, const glm::mat4 &modelMatrix);
     void renderFloor();
     void renderWorldGuides();
@@ -131,6 +134,10 @@ private:
     // Viewport dimensions
     int m_viewportWidth = 1280;
     int m_viewportHeight = 720;
+    float m_groundHalfExtent = 1200.0f;
+    float m_airspaceHalfExtent = 600.0f;
+    float m_airspaceHeight = 320.0f;
+    float m_sceneFarPlane = 20000.0f;
 
     // Mesh data
     std::vector<Vertex> m_vertices;
@@ -141,4 +148,5 @@ private:
     GLint m_viewLoc;
     GLint m_projLoc;
     GLint m_cameraPosLoc;
+    GLint m_fogDensityLoc;
 };

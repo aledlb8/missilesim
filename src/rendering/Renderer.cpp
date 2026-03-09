@@ -39,6 +39,7 @@ const char *fragmentShaderSource = R"(
     in vec3 Color;
     
     uniform vec3 cameraPos;
+    uniform float fogDensity;
     
     out vec4 FragColor;
     
@@ -51,7 +52,7 @@ const char *fragmentShaderSource = R"(
         vec3 litColor = Color * (ambient + diffuse * 0.85);
 
         float viewDistance = length(FragPos - cameraPos);
-        float fogFactor = clamp(exp(-viewDistance * 0.0013), 0.0, 1.0);
+        float fogFactor = clamp(exp(-viewDistance * fogDensity), 0.0, 1.0);
         vec3 fogColor = vec3(0.58, 0.69, 0.82);
         
         FragColor = vec4(mix(fogColor, litColor, fogFactor), 1.0);
@@ -275,6 +276,7 @@ void Renderer::initialize()
     m_viewLoc = glGetUniformLocation(m_shaderProgram, "view");
     m_projLoc = glGetUniformLocation(m_shaderProgram, "projection");
     m_cameraPosLoc = glGetUniformLocation(m_shaderProgram, "cameraPos");
+    m_fogDensityLoc = glGetUniformLocation(m_shaderProgram, "fogDensity");
 
     // Initialize camera vectors
     updateCameraVectors();
@@ -533,10 +535,14 @@ void Renderer::createFloor()
     m_floorVertices.clear();
     m_floorIndices.clear();
 
-    const float size = 2400.0f;
+    const float size = m_groundHalfExtent * 2.0f;
     const float y = 0.0f;
-    const int gridSize = 120;
+    const int gridSize = std::clamp(static_cast<int>(size / 40.0f), 60, 240);
     const float cellSize = size / gridSize;
+    const float runwayHalfWidth = glm::clamp(m_airspaceHalfExtent * 0.035f, 14.0f, 72.0f);
+    const float runwayHalfLength = glm::clamp(m_airspaceHalfExtent * 0.55f, 230.0f, m_groundHalfExtent * 0.45f);
+    const float serviceLaneHalfWidth = runwayHalfWidth * 1.7f;
+    const float serviceLaneHalfLength = runwayHalfLength * 0.70f;
     const glm::vec3 tarmacColor(0.16f, 0.18f, 0.22f);
     const glm::vec3 terrainColor(0.29f, 0.32f, 0.27f);
     const glm::vec3 accentColor(0.22f, 0.25f, 0.29f);
@@ -552,12 +558,12 @@ void Renderer::createFloor()
             glm::vec3 color = glm::mix(tarmacColor, terrainColor, radialT);
             color = glm::mix(color, accentColor, 0.18f + macroNoise * 0.12f);
 
-            if (glm::abs(xPos) < 18.0f && glm::abs(zPos) < 260.0f)
+            if (glm::abs(xPos) < runwayHalfWidth && glm::abs(zPos) < runwayHalfLength)
             {
                 color = glm::mix(color, glm::vec3(0.30f, 0.32f, 0.36f), 0.7f);
             }
 
-            if (glm::abs(zPos) < 24.0f && glm::abs(xPos) < 160.0f)
+            if (glm::abs(zPos) < serviceLaneHalfWidth && glm::abs(xPos) < serviceLaneHalfLength)
             {
                 color = glm::mix(color, glm::vec3(0.24f, 0.27f, 0.32f), 0.35f);
             }
@@ -584,6 +590,21 @@ void Renderer::createFloor()
             m_floorIndices.push_back(topRight);
         }
     }
+}
+
+void Renderer::uploadFloorMesh()
+{
+    if (m_floorVAO == 0 || m_floorVBO == 0 || m_floorEBO == 0)
+    {
+        return;
+    }
+
+    glBindVertexArray(m_floorVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_floorVBO);
+    glBufferData(GL_ARRAY_BUFFER, m_floorVertices.size() * sizeof(Vertex), m_floorVertices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_floorEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_floorIndices.size() * sizeof(unsigned int), m_floorIndices.data(), GL_STATIC_DRAW);
+    glBindVertexArray(0);
 }
 
 void Renderer::createTargetModel()
@@ -918,6 +939,36 @@ void Renderer::moveCameraUp(float distance)
     m_cameraTarget = m_cameraPosition + m_cameraFront;
 }
 
+void Renderer::setEnvironmentMetrics(float groundHalfExtent, float airspaceHalfExtent, float airspaceHeight)
+{
+    const float clampedGroundHalfExtent = std::max(groundHalfExtent, 1200.0f);
+    const float clampedAirspaceHalfExtent = std::max(airspaceHalfExtent, 600.0f);
+    const float clampedAirspaceHeight = std::max(airspaceHeight, 320.0f);
+
+    if (std::abs(clampedGroundHalfExtent - m_groundHalfExtent) < 1.0f &&
+        std::abs(clampedAirspaceHalfExtent - m_airspaceHalfExtent) < 1.0f &&
+        std::abs(clampedAirspaceHeight - m_airspaceHeight) < 1.0f)
+    {
+        return;
+    }
+
+    m_groundHalfExtent = clampedGroundHalfExtent;
+    m_airspaceHalfExtent = clampedAirspaceHalfExtent;
+    m_airspaceHeight = clampedAirspaceHeight;
+    m_sceneFarPlane = std::max(20000.0f, (m_groundHalfExtent * 3.5f) + (m_airspaceHeight * 2.0f));
+
+    createFloor();
+    uploadFloorMesh();
+}
+
+namespace
+{
+float computeFogDensity(float sceneFarPlane)
+{
+    return 1.0f / std::max(sceneFarPlane * 0.45f, 6000.0f);
+}
+}
+
 void Renderer::updateCameraVectors()
 {
     // Calculate front vector from yaw and pitch
@@ -1001,6 +1052,10 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             {
                 glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
             }
+            if (m_fogDensityLoc != -1)
+            {
+                glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+            }
 
             // Draw object
             glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
@@ -1019,6 +1074,10 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             if (m_cameraPosLoc != -1)
             {
                 glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+            }
+            if (m_fogDensityLoc != -1)
+            {
+                glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
             }
 
             // Draw object
@@ -1081,6 +1140,10 @@ void Renderer::render(PhysicsObject *object)
     {
         glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
     }
+    if (m_fogDensityLoc != -1)
+    {
+        glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+    }
 
     // Draw object based on its type
     if (object->getType() == "Missile")
@@ -1133,6 +1196,10 @@ void Renderer::renderFloor()
     {
         glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
     }
+    if (m_fogDensityLoc != -1)
+    {
+        glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+    }
 
     glBindVertexArray(m_floorVAO);
     glDrawElements(GL_TRIANGLES, m_floorIndices.size(), GL_UNSIGNED_INT, 0);
@@ -1148,10 +1215,12 @@ void Renderer::renderEnvironment()
 void Renderer::renderWorldGuides()
 {
     const float guideY = 0.08f;
-    const float runwayHalfWidth = 14.0f;
-    const float runwayHalfLength = 230.0f;
-    const float airspaceHalfExtent = 420.0f;
-    const float beaconHeight = 220.0f;
+    const float runwayHalfWidth = glm::clamp(m_airspaceHalfExtent * 0.035f, 14.0f, 72.0f);
+    const float runwayHalfLength = glm::clamp(m_airspaceHalfExtent * 0.55f, 230.0f, m_groundHalfExtent * 0.45f);
+    const float airspaceHalfExtent = m_airspaceHalfExtent;
+    const float beaconHeight = m_airspaceHeight;
+    const float ringStep = glm::clamp(m_airspaceHalfExtent * 0.25f, 160.0f, 2500.0f);
+    const int ringCount = std::max(3, std::min(5, static_cast<int>(airspaceHalfExtent / ringStep)));
 
     const glm::vec3 runwayColor(0.92f, 0.94f, 0.96f);
     const glm::vec3 runwayAccent(0.72f, 0.82f, 0.90f);
@@ -1163,21 +1232,27 @@ void Renderer::renderWorldGuides()
     renderLine(glm::vec3(-airspaceHalfExtent, guideY, 0.0f), glm::vec3(airspaceHalfExtent, guideY, 0.0f), axisXColor);
     renderLine(glm::vec3(0.0f, guideY, -airspaceHalfExtent), glm::vec3(0.0f, guideY, airspaceHalfExtent), axisZColor);
 
-    renderGroundCircle(120.0f, glm::vec3(0.40f, 0.48f, 0.54f), 32);
-    renderGroundCircle(240.0f, glm::vec3(0.46f, 0.54f, 0.62f), 40);
-    renderGroundCircle(360.0f, glm::vec3(0.52f, 0.60f, 0.68f), 48);
+    for (int ringIndex = 1; ringIndex <= ringCount; ++ringIndex)
+    {
+        const float radius = std::min(ringStep * ringIndex, airspaceHalfExtent * 0.92f);
+        const float ringTint = static_cast<float>(ringIndex) / static_cast<float>(ringCount + 1);
+        const glm::vec3 ringColor = glm::mix(glm::vec3(0.40f, 0.48f, 0.54f), glm::vec3(0.56f, 0.64f, 0.72f), ringTint);
+        renderGroundCircle(radius, ringColor, 48);
+    }
 
     renderLine(glm::vec3(-runwayHalfWidth, guideY, -runwayHalfLength), glm::vec3(runwayHalfWidth, guideY, -runwayHalfLength), runwayColor);
     renderLine(glm::vec3(runwayHalfWidth, guideY, -runwayHalfLength), glm::vec3(runwayHalfWidth, guideY, runwayHalfLength), runwayColor);
     renderLine(glm::vec3(runwayHalfWidth, guideY, runwayHalfLength), glm::vec3(-runwayHalfWidth, guideY, runwayHalfLength), runwayColor);
     renderLine(glm::vec3(-runwayHalfWidth, guideY, runwayHalfLength), glm::vec3(-runwayHalfWidth, guideY, -runwayHalfLength), runwayColor);
 
-    for (float z = -runwayHalfLength + 24.0f; z < runwayHalfLength - 12.0f; z += 34.0f)
+    const float dashLength = glm::clamp(runwayHalfLength * 0.08f, 18.0f, 140.0f);
+    const float dashStep = dashLength * 1.9f;
+    for (float z = -runwayHalfLength + dashLength; z < runwayHalfLength - dashLength; z += dashStep)
     {
-        renderLine(glm::vec3(0.0f, guideY, z), glm::vec3(0.0f, guideY, z + 18.0f), runwayAccent);
+        renderLine(glm::vec3(0.0f, guideY, z), glm::vec3(0.0f, guideY, z + dashLength), runwayAccent);
     }
 
-    const float padHalf = 18.0f;
+    const float padHalf = glm::clamp(runwayHalfWidth * 1.3f, 18.0f, 54.0f);
     renderLine(glm::vec3(-padHalf, guideY, -padHalf), glm::vec3(padHalf, guideY, -padHalf), guideColor);
     renderLine(glm::vec3(padHalf, guideY, -padHalf), glm::vec3(padHalf, guideY, padHalf), guideColor);
     renderLine(glm::vec3(padHalf, guideY, padHalf), glm::vec3(-padHalf, guideY, padHalf), guideColor);
@@ -1232,11 +1307,13 @@ void Renderer::renderAirspaceBeacon(const glm::vec3 &basePosition, float height,
     renderLine(base, top, color);
 
     const glm::vec3 tickColor = glm::mix(color, glm::vec3(1.0f, 1.0f, 1.0f), 0.15f);
-    for (float altitude = 55.0f; altitude < height; altitude += 55.0f)
+    const float tickStep = glm::clamp(height * 0.25f, 55.0f, 1200.0f);
+    const float tickHalfSpan = glm::clamp(m_airspaceHalfExtent * 0.02f, 8.0f, 65.0f);
+    for (float altitude = tickStep; altitude < height; altitude += tickStep)
     {
         const glm::vec3 tickCenter = basePosition + glm::vec3(0.0f, altitude, 0.0f);
-        renderLine(tickCenter - glm::vec3(8.0f, 0.0f, 0.0f), tickCenter + glm::vec3(8.0f, 0.0f, 0.0f), tickColor);
-        renderLine(tickCenter - glm::vec3(0.0f, 0.0f, 8.0f), tickCenter + glm::vec3(0.0f, 0.0f, 8.0f), tickColor);
+        renderLine(tickCenter - glm::vec3(tickHalfSpan, 0.0f, 0.0f), tickCenter + glm::vec3(tickHalfSpan, 0.0f, 0.0f), tickColor);
+        renderLine(tickCenter - glm::vec3(0.0f, 0.0f, tickHalfSpan), tickCenter + glm::vec3(0.0f, 0.0f, tickHalfSpan), tickColor);
     }
 }
 
@@ -1249,7 +1326,7 @@ glm::mat4 Renderer::buildProjectionMatrix() const
 {
     const int safeHeight = std::max(m_viewportHeight, 1);
     float aspectRatio = static_cast<float>(m_viewportWidth) / static_cast<float>(safeHeight);
-    return glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, 10000.0f);
+    return glm::perspective(glm::radians(m_cameraFOV), aspectRatio, 0.1f, m_sceneFarPlane);
 }
 
 void Renderer::renderExplosion(const glm::vec3 &position, float size)
@@ -1326,6 +1403,8 @@ void Renderer::renderExplosion(const glm::vec3 &position, float size)
                 glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
             if (m_cameraPosLoc != -1)
                 glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+            if (m_fogDensityLoc != -1)
+                glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
 
             // Draw explosion
             glBindVertexArray(m_explosionVAO);

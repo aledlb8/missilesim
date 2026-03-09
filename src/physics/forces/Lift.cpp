@@ -1,5 +1,6 @@
 #include "Lift.h"
 #include "objects/PhysicsObject.h"
+#include "objects/Missile.h"
 #include "physics/Atmosphere.h"
 #include <glm/gtc/constants.hpp>
 
@@ -28,24 +29,38 @@ void Lift::applyTo(PhysicsObject* object) {
     // Calculate lift force magnitude: F_lift = 0.5 * rho * v^2 * Cl * A
     float liftMagnitude = 0.5f * density * speed * speed * liftCoefficient * area;
     
-    // Calculate lift direction (perpendicular to velocity)
-    // For simplicity, we'll apply lift in the up direction (world Y-axis)
-    // In a more sophisticated model, we'd use the object's orientation
-    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-    
-    // Make sure lift is perpendicular to velocity
-    // Remove any component of 'up' that's parallel to direction
-    glm::vec3 liftDirection = up - glm::dot(up, direction) * direction;
-    
-    // Normalize the lift direction
-    if (glm::length(liftDirection) > 0.001f) {
-        liftDirection = glm::normalize(liftDirection);
+    glm::vec3 liftDirection(0.0f);
+    float liftScale = 1.0f;
+
+    if (object->getType() == "Missile") {
+        const Missile* missile = dynamic_cast<const Missile*>(object);
+        if (!missile) {
+            return;
+        }
+
+        const glm::vec3 thrustDirection = missile->getThrustDirection();
+        glm::vec3 steeringComponent = thrustDirection - glm::dot(thrustDirection, direction) * direction;
+        const float steeringDemand = glm::length(steeringComponent);
+
+        if (steeringDemand < 0.001f) {
+            return;
+        }
+
+        liftDirection = steeringComponent / steeringDemand;
+        liftScale = glm::clamp(steeringDemand * 3.0f, 0.0f, 1.0f);
     } else {
-        // If velocity is straight up or down, use a default lift direction
-        liftDirection = glm::vec3(1.0f, 0.0f, 0.0f);
+        // Non-missile objects still use a simple world-up lift approximation.
+        const glm::vec3 up(0.0f, 1.0f, 0.0f);
+        liftDirection = up - glm::dot(up, direction) * direction;
+
+        if (glm::length(liftDirection) > 0.001f) {
+            liftDirection = glm::normalize(liftDirection);
+        } else {
+            liftDirection = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
     }
-    
+
     // Apply lift force
-    glm::vec3 liftForce = liftMagnitude * liftDirection;
+    glm::vec3 liftForce = (liftMagnitude * liftScale) * liftDirection;
     object->applyForce(liftForce);
 } 

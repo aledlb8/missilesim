@@ -39,6 +39,8 @@ private:
     void setupUI();
     void renderMinimalHUD();
     void frameEngagementCamera();
+    void updateEnvironmentScale();
+    float computeEngagementRadius() const;
     std::string buildSettingsSnapshot() const;
     bool loadSettings();
     void saveSettings();
@@ -98,8 +100,8 @@ private:
     bool m_showTargetInfo = true;     // Whether to show target information
     bool m_showPredictedTargetPath = true;  // Whether to show predicted target path
     bool m_showInterceptPoint = true;       // Whether to show intercept point
-    int m_trajectoryPoints = 100;     // Number of points in trajectory visualization
-    float m_trajectoryTime = 5.0f;    // Time in seconds to predict trajectory
+    int m_trajectoryPoints = 140;     // Number of points in trajectory visualization
+    float m_trajectoryTime = 12.0f;   // Time in seconds to predict trajectory
     
     // Simulation properties
     float m_timeStep = 0.01f;  // Physics time step in seconds
@@ -130,7 +132,7 @@ private:
     float m_missileFuelConsumptionRate = 0.5f;  // Fuel consumption in kg/second
     
     // Target properties
-    float m_targetSpawnDistance = 200.0f;  // Distance from origin to spawn targets
+    float m_targetSpawnDistance = 1500.0f;  // Distance from origin to spawn targets
     int m_targetCount = 1;                // Number of targets to create
     
     // Target movement properties
@@ -138,7 +140,7 @@ private:
     bool m_randomizeTargetMovement = true;                   // Whether to randomize movement patterns
     TargetMovementPattern m_targetMovementPattern = TargetMovementPattern::CIRCULAR; // Default movement pattern
     float m_targetMovementSpeed = 10.0f;                     // Movement speed in m/s
-    float m_targetMovementAmplitude = 50.0f;                 // Movement amplitude/range in m
+    float m_targetMovementAmplitude = 250.0f;                // Movement amplitude/range in m
     float m_targetMovementPeriod = 10.0f;                    // Time to complete one movement cycle in s
     
     // Score tracking

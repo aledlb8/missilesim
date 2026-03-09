@@ -6,10 +6,92 @@
 #include <iostream>
 #include <cmath>
 
+namespace
+{
+float computeCloseRangeBlend(float distance, float fullAuthorityDistance, float lowAuthorityDistance)
+{
+    if (lowAuthorityDistance <= fullAuthorityDistance)
+    {
+        return distance <= fullAuthorityDistance ? 1.0f : 0.0f;
+    }
+
+    return 1.0f - glm::smoothstep(fullAuthorityDistance, lowAuthorityDistance, distance);
+}
+
+glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
+{
+    if (glm::length2(vector) > 0.0001f)
+    {
+        return glm::normalize(vector);
+    }
+
+    if (glm::length2(fallback) > 0.0001f)
+    {
+        return glm::normalize(fallback);
+    }
+
+    return glm::vec3(0.0f, 0.0f, 1.0f);
+}
+} // namespace
+
 Missile::Missile(const glm::vec3 &position, const glm::vec3 &velocity,
                  float mass, float dragCoefficient, float crossSectionalArea, float liftCoefficient)
     : PhysicsObject(position, velocity, mass), m_dragCoefficient(dragCoefficient), m_crossSectionalArea(crossSectionalArea), m_liftCoefficient(liftCoefficient)
 {
+}
+
+void Missile::setTarget(const glm::vec3 &targetPosition)
+{
+    const bool targetChanged = (m_targetObject != nullptr) || !m_hasTarget ||
+                               (glm::length2(m_targetPosition - targetPosition) > 0.0001f);
+    m_hasTarget = true;
+    m_targetPosition = targetPosition;
+    m_targetObject = nullptr;
+    if (targetChanged || !m_targetTrackInitialized)
+    {
+        initializeTargetTrack(targetPosition, glm::vec3(0.0f));
+    }
+}
+
+void Missile::setTargetObject(Target *target)
+{
+    const bool targetChanged = (m_targetObject != target);
+    m_targetObject = target;
+    m_hasTarget = (target != nullptr);
+
+    if (m_hasTarget)
+    {
+        m_targetPosition = target->getPosition();
+        if (targetChanged || !m_targetTrackInitialized)
+        {
+            initializeTargetTrack(m_targetPosition, target->getVelocity());
+        }
+    }
+    else
+    {
+        resetTargetTrack();
+    }
+}
+
+void Missile::clearTarget()
+{
+    m_hasTarget = false;
+    m_targetObject = nullptr;
+    resetTargetTrack();
+}
+
+void Missile::initializeTargetTrack(const glm::vec3 &position, const glm::vec3 &velocity)
+{
+    m_filteredTargetPosition = position;
+    m_filteredTargetVelocity = velocity;
+    m_targetTrackInitialized = true;
+}
+
+void Missile::resetTargetTrack()
+{
+    m_filteredTargetPosition = glm::vec3(0.0f);
+    m_filteredTargetVelocity = glm::vec3(0.0f);
+    m_targetTrackInitialized = false;
 }
 
 void Missile::applyGuidance(float deltaTime)
@@ -39,8 +121,7 @@ void Missile::applyGuidance(float deltaTime)
         else if (m_targetObject != nullptr)
         {
             // If target is no longer active, clear it
-            m_hasTarget = false;
-            m_targetObject = nullptr;
+            clearTarget();
             return;
         }
 
@@ -79,23 +160,47 @@ void Missile::applyGuidance(float deltaTime)
             return;
         }
 
+        if (!m_targetTrackInitialized)
+        {
+            initializeTargetTrack(m_targetPosition, targetVelocity);
+        }
+
+        const float closeRangeBlend = computeCloseRangeBlend(distanceToTarget, 1500.0f, 8500.0f);
+        const float terminalBlend = computeCloseRangeBlend(distanceToTarget, 350.0f, 2200.0f);
+        const float smoothingTimeConstant = glm::mix(1.6f, 0.08f, closeRangeBlend);
+        const float trackAlpha = glm::clamp(1.0f - std::exp(-deltaTime / std::max(smoothingTimeConstant, 0.01f)), 0.02f, 1.0f);
+
+        m_filteredTargetPosition = glm::mix(m_filteredTargetPosition, m_targetPosition, trackAlpha);
+        m_filteredTargetVelocity = glm::mix(m_filteredTargetVelocity, targetVelocity, trackAlpha);
+
+        relativePosition = m_filteredTargetPosition - m_position;
+        distanceToTarget = glm::length(relativePosition);
+        if (distanceToTarget < 1.0f)
+        {
+            return;
+        }
+
         glm::vec3 lineOfSight = relativePosition / distanceToTarget;
         glm::vec3 velocityDirection = m_velocity / speed;
-        glm::vec3 relativeVelocity = targetVelocity - m_velocity;
+        glm::vec3 relativeVelocity = m_filteredTargetVelocity - m_velocity;
 
-        // True proportional navigation: command lateral acceleration from LOS rotation rate.
+        const float maxLateralAcceleration = m_maxSteeringForce / std::max(m_mass, 1.0f);
+        const float allowedLateralAcceleration = maxLateralAcceleration * glm::mix(0.35f, 1.0f, closeRangeBlend);
+        const float scheduledNavigationGain = m_navigationGain * glm::mix(0.55f, 1.0f, closeRangeBlend);
+
+        // Range-scheduled PN: stay calm in midcourse, then tighten up as the intercept develops.
         const float rangeSq = std::max(glm::dot(relativePosition, relativePosition), 1.0f);
         const float closingSpeed = std::max(-glm::dot(relativeVelocity, lineOfSight), 0.0f);
         const glm::vec3 lineOfSightRate = glm::cross(relativePosition, relativeVelocity) / rangeSq;
-        glm::vec3 commandedAcceleration = m_navigationGain * closingSpeed * glm::cross(lineOfSightRate, velocityDirection);
+        glm::vec3 commandedAcceleration = scheduledNavigationGain * closingSpeed * glm::cross(lineOfSightRate, velocityDirection);
 
-        // Solve a lead point as a secondary pursuit term and for thrust shaping.
-        glm::vec3 targetPredictedPosition = m_targetPosition;
+        // Use a filtered lead point and cap look-ahead at long range so target jitter does not whip the missile around.
+        glm::vec3 targetPredictedPosition = m_filteredTargetPosition;
         float timeToIntercept = distanceToTarget / speed;
         bool hasInterceptSolution = false;
         const float missileSpeedSq = speed * speed;
-        const float a = glm::dot(targetVelocity, targetVelocity) - missileSpeedSq;
-        const float b = 2.0f * glm::dot(relativePosition, targetVelocity);
+        const float a = glm::dot(m_filteredTargetVelocity, m_filteredTargetVelocity) - missileSpeedSq;
+        const float b = 2.0f * glm::dot(relativePosition, m_filteredTargetVelocity);
         const float c = glm::dot(relativePosition, relativePosition);
         const float epsilon = 0.0001f;
 
@@ -143,34 +248,46 @@ void Missile::applyGuidance(float deltaTime)
             timeToIntercept = distanceToTarget / speed;
         }
 
-        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, 5.0f);
-        targetPredictedPosition = m_targetPosition + targetVelocity * timeToIntercept;
+        const float maxLeadLookAhead = glm::mix(5.0f, 18.0f, closeRangeBlend);
+        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, maxLeadLookAhead);
+        targetPredictedPosition = m_filteredTargetPosition + m_filteredTargetVelocity * timeToIntercept;
 
-        glm::vec3 leadDirection = targetPredictedPosition - m_position;
-        if (glm::length2(leadDirection) > 0.0001f)
+        glm::vec3 leadDirection = normalizeOrFallback(targetPredictedPosition - m_position, lineOfSight);
+        const float midcourseLeadBlend = glm::mix(0.14f, 0.9f, terminalBlend);
+        const glm::vec3 horizontalLineOfSight = normalizeOrFallback(glm::vec3(lineOfSight.x, 0.0f, lineOfSight.z), lineOfSight);
+        const glm::vec3 horizontalLeadDirection = normalizeOrFallback(glm::vec3(leadDirection.x, 0.0f, leadDirection.z), horizontalLineOfSight);
+        const glm::vec3 horizontalGuidanceDirection = normalizeOrFallback((horizontalLineOfSight * (1.0f - midcourseLeadBlend)) +
+                                                                              (horizontalLeadDirection * midcourseLeadBlend),
+                                                                          horizontalLineOfSight);
+        const glm::vec3 fullGuidanceDirection = normalizeOrFallback((lineOfSight * (1.0f - midcourseLeadBlend)) +
+                                                                        (leadDirection * midcourseLeadBlend),
+                                                                    lineOfSight);
+        const float altitudeError = std::abs(m_filteredTargetPosition.y - m_position.y);
+        const float altitudeUrgency = glm::clamp(altitudeError / std::max(distanceToTarget * 0.2f, 75.0f), 0.0f, 1.0f);
+        const float verticalGuidanceBlend = std::max(glm::mix(0.08f, 1.0f, terminalBlend), altitudeUrgency);
+        glm::vec3 desiredGuidanceDirection = normalizeOrFallback((horizontalGuidanceDirection * (1.0f - verticalGuidanceBlend)) +
+                                                                     (fullGuidanceDirection * verticalGuidanceBlend),
+                                                                 horizontalGuidanceDirection);
+        glm::vec3 guidanceLateral = desiredGuidanceDirection - (velocityDirection * glm::dot(velocityDirection, desiredGuidanceDirection));
+        if (glm::length2(guidanceLateral) > 0.0001f)
         {
-            leadDirection = glm::normalize(leadDirection);
-        }
-        else
-        {
-            leadDirection = lineOfSight;
-        }
-
-        glm::vec3 leadLateral = leadDirection - (velocityDirection * glm::dot(velocityDirection, leadDirection));
-        if (glm::length2(leadLateral) > 0.0001f)
-        {
-            leadLateral = glm::normalize(leadLateral);
-            const float leadError = std::acos(glm::clamp(glm::dot(velocityDirection, leadDirection), -1.0f, 1.0f));
-            const float pursuitAcceleration = std::min(speed * leadError * 2.0f, (m_maxSteeringForce / std::max(m_mass, 1.0f)) * 0.35f);
-            commandedAcceleration += leadLateral * pursuitAcceleration;
+            guidanceLateral = glm::normalize(guidanceLateral);
+            const float guidanceError = std::acos(glm::clamp(glm::dot(velocityDirection, desiredGuidanceDirection), -1.0f, 1.0f));
+            const float guidanceDeadZone = glm::mix(glm::radians(0.2f), glm::radians(0.05f), closeRangeBlend);
+            if (guidanceError > guidanceDeadZone)
+            {
+                const float pursuitError = guidanceError - guidanceDeadZone;
+                const float pursuitAcceleration = std::min(speed * pursuitError * glm::mix(1.1f, 2.2f, terminalBlend),
+                                                           maxLateralAcceleration * glm::mix(0.28f, 0.55f, closeRangeBlend));
+                commandedAcceleration += guidanceLateral * pursuitAcceleration;
+            }
         }
 
         // Clamp lateral acceleration to the airframe's turn authority.
-        const float maxLateralAcceleration = m_maxSteeringForce / std::max(m_mass, 1.0f);
         const float commandedAccelerationMagnitude = glm::length(commandedAcceleration);
-        if (commandedAccelerationMagnitude > maxLateralAcceleration)
+        if (commandedAccelerationMagnitude > allowedLateralAcceleration)
         {
-            commandedAcceleration = (commandedAcceleration / commandedAccelerationMagnitude) * maxLateralAcceleration;
+            commandedAcceleration = (commandedAcceleration / commandedAccelerationMagnitude) * allowedLateralAcceleration;
         }
 
         applyForce(commandedAcceleration * m_mass);
@@ -178,16 +295,19 @@ void Missile::applyGuidance(float deltaTime)
         // Preserve energy by keeping thrust mostly along the velocity vector and only biasing toward lead.
         if (m_thrustEnabled)
         {
-            const float alignment = glm::clamp(glm::dot(velocityDirection, leadDirection), -1.0f, 1.0f);
+            const float alignment = glm::clamp(glm::dot(velocityDirection, desiredGuidanceDirection), -1.0f, 1.0f);
             const float turnDemand = 1.0f - std::max(alignment, 0.0f);
-            const float desiredLeadBlend = (speed < 25.0f) ? 1.0f : glm::clamp(turnDemand * 0.35f, 0.0f, 0.35f);
-            glm::vec3 desiredThrustDirection = (velocityDirection * (1.0f - desiredLeadBlend)) + (leadDirection * desiredLeadBlend);
+            const float leadBlendCap = glm::mix(0.12f, 0.4f, terminalBlend);
+            const float desiredLeadBlend = (speed < 25.0f) ? 1.0f : glm::clamp(turnDemand * leadBlendCap, 0.0f, leadBlendCap);
+            glm::vec3 desiredThrustDirection = (velocityDirection * (1.0f - desiredLeadBlend)) + (desiredGuidanceDirection * desiredLeadBlend);
 
             if (glm::length2(desiredThrustDirection) > 0.0001f)
             {
                 desiredThrustDirection = glm::normalize(desiredThrustDirection);
                 glm::vec3 currentThrustDirection = (glm::length2(m_thrustDirection) > 0.0001f) ? glm::normalize(m_thrustDirection) : velocityDirection;
-                const float thrustTurnBlend = glm::clamp((deltaTime * 3.0f) + (turnDemand * 0.1f), 0.0f, 0.4f);
+                const float thrustTurnBlend = glm::clamp((deltaTime * glm::mix(1.4f, 3.0f, terminalBlend)) +
+                                                             (turnDemand * glm::mix(0.03f, 0.1f, terminalBlend)),
+                                                         0.0f, glm::mix(0.12f, 0.4f, terminalBlend));
                 glm::vec3 blendedThrustDirection = (currentThrustDirection * (1.0f - thrustTurnBlend)) + (desiredThrustDirection * thrustTurnBlend);
 
                 if (glm::length2(blendedThrustDirection) > 0.0001f)

@@ -183,8 +183,8 @@ bool Application::loadSettings()
     m_showTargetInfo = readBool("show_target_info", m_showTargetInfo);
     m_showPredictedTargetPath = readBool("show_predicted_target_path", m_showPredictedTargetPath);
     m_showInterceptPoint = readBool("show_intercept_point", m_showInterceptPoint);
-    m_trajectoryPoints = std::clamp(readInt("trajectory_points", m_trajectoryPoints), 10, 300);
-    m_trajectoryTime = std::clamp(readFloat("trajectory_time", m_trajectoryTime), 0.5f, 10.0f);
+    m_trajectoryPoints = std::clamp(readInt("trajectory_points", m_trajectoryPoints), 10, 600);
+    m_trajectoryTime = std::clamp(readFloat("trajectory_time", m_trajectoryTime), 0.5f, 60.0f);
     m_simulationSpeed = std::clamp(readFloat("simulation_speed", m_simulationSpeed), 0.1f, 10.0f);
 
     m_groundEnabled = readBool("ground_enabled", m_groundEnabled);
@@ -497,6 +497,7 @@ void Application::initialize()
             m_renderer->setCameraSpeed(m_savedCameraSpeed);
         }
 
+        updateEnvironmentScale();
         m_lastSettingsSnapshot = buildSettingsSnapshot();
     }
     catch (const std::exception &e)
@@ -946,8 +947,12 @@ void Application::update(float deltaTime)
                     }
 
                     // Kill bad flights that leave the playable space.
+                    const float engagementRadius = computeEngagementRadius();
+                    const float maxFlightRadius = std::max(5000.0f, engagementRadius * 5.0f);
+                    const float maxFlightAltitude = std::max(3000.0f, engagementRadius * 1.8f);
+                    const float missileHorizontalDistance = glm::length(glm::vec2(missilePos.x, missilePos.z));
                     if (!terminateFlight &&
-                        (glm::length(missilePos) > 5000.0f || missilePos.y > 3000.0f))
+                        (missileHorizontalDistance > maxFlightRadius || missilePos.y > maxFlightAltitude))
                     {
                         terminateFlight = true;
                     }
@@ -1070,6 +1075,7 @@ void Application::render()
             return;
         }
 
+        updateEnvironmentScale();
         m_renderer->renderEnvironment();
 
         // Safety check for null missile
@@ -1160,7 +1166,7 @@ void Application::render()
                                                  m_renderer->getCameraUp());
                     glm::mat4 projection = glm::perspective(glm::radians(m_renderer->getCameraFOV()),
                                                             (float)m_width / (float)m_height,
-                                                            0.1f, 1000.0f);
+                                                            0.1f, m_renderer->getSceneFarPlane());
                     ImDrawList *drawList = ImGui::GetBackgroundDrawList();
 
                     auto drawWorldText = [&](const glm::vec3 &worldPosition, const std::string &text, ImU32 color, float screenYOffset = 0.0f)
@@ -1277,6 +1283,59 @@ void Application::renderMinimalHUD()
     ImGui::PopStyleVar(3);
 }
 
+float Application::computeEngagementRadius() const
+{
+    float engagementRadius = std::max(400.0f, m_targetSpawnDistance + (m_targetsMove ? m_targetMovementAmplitude * 1.5f : 0.0f));
+
+    if (m_missile)
+    {
+        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(m_missile->getPosition().x, m_missile->getPosition().z)) + 150.0f);
+    }
+
+    for (const auto &target : m_targets)
+    {
+        if (!target || !target->isActive())
+        {
+            continue;
+        }
+
+        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(target->getPosition().x, target->getPosition().z)) + (target->getRadius() * 8.0f));
+    }
+
+    return engagementRadius;
+}
+
+void Application::updateEnvironmentScale()
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    const float engagementRadius = computeEngagementRadius();
+    float maxAltitude = std::max(320.0f, m_targetMovementAmplitude * 0.35f);
+
+    if (m_missile)
+    {
+        maxAltitude = std::max(maxAltitude, m_missile->getPosition().y + 150.0f);
+    }
+
+    for (const auto &target : m_targets)
+    {
+        if (!target || !target->isActive())
+        {
+            continue;
+        }
+
+        maxAltitude = std::max(maxAltitude, target->getPosition().y + std::max(120.0f, m_targetMovementAmplitude * 0.25f));
+    }
+
+    const float airspaceHalfExtent = std::max(600.0f, engagementRadius * 1.35f);
+    const float groundHalfExtent = std::max(1200.0f, airspaceHalfExtent * 2.4f);
+    const float airspaceHeight = std::max(320.0f, std::max(maxAltitude * 1.6f, engagementRadius * 0.45f));
+    m_renderer->setEnvironmentMetrics(groundHalfExtent, airspaceHalfExtent, airspaceHeight);
+}
+
 void Application::frameEngagementCamera()
 {
     if (!m_renderer)
@@ -1312,7 +1371,7 @@ void Application::frameEngagementCamera()
     const glm::vec3 center = 0.5f * (minPoint + maxPoint);
     const float horizontalSpan = glm::length(glm::vec2(maxPoint.x - minPoint.x, maxPoint.z - minPoint.z));
     const float verticalSpan = maxPoint.y - minPoint.y;
-    const float framingRadius = std::max({horizontalSpan * 0.60f, verticalSpan * 1.35f, m_targetSpawnDistance * 0.85f, 150.0f});
+    const float framingRadius = std::max({horizontalSpan * 0.60f, verticalSpan * 1.35f, computeEngagementRadius() * 0.65f, 150.0f});
 
     glm::vec3 cameraDirection = glm::normalize(glm::vec3(-1.15f, 0.60f, 1.05f));
     glm::vec3 cameraPosition = center + cameraDirection * (framingRadius * 1.85f);
@@ -1321,7 +1380,7 @@ void Application::frameEngagementCamera()
     glm::vec3 lookTarget = center;
     lookTarget.y = std::max(18.0f, center.y + verticalSpan * 0.20f);
 
-    m_renderer->setCameraSpeed(std::clamp(framingRadius * 0.22f, 30.0f, 120.0f));
+    m_renderer->setCameraSpeed(std::clamp(framingRadius * 0.22f, 30.0f, 800.0f));
     m_renderer->setCameraFOV(50.0f);
     m_renderer->setCameraPosition(cameraPosition);
     m_renderer->setCameraTarget(lookTarget);
@@ -1498,7 +1557,7 @@ glm::vec3 Application::predictInterceptPoint(const glm::vec3 &missilePos, const 
             timeToIntercept = glm::length(relativePosition) / missileSpeed;
         }
 
-        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, 10.0f);
+        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, 60.0f);
         return targetPos + targetVel * timeToIntercept;
     }
     catch (...)
@@ -2074,7 +2133,7 @@ void Application::setupUI()
                     resetTargets();
                 }
 
-                ImGui::SliderFloat("Spawn distance", &m_targetSpawnDistance, 50.0f, 500.0f, "%.0f m");
+                ImGui::SliderFloat("Spawn distance", &m_targetSpawnDistance, 100.0f, 20000.0f, "%.0f m");
                 if (ImGui::IsItemDeactivatedAfterEdit())
                 {
                     resetTargets();
@@ -2107,7 +2166,7 @@ void Application::setupUI()
                         }
                     }
                     ImGui::SliderFloat("Movement speed", &m_targetMovementSpeed, 1.0f, 50.0f, "%.1f m/s");
-                    ImGui::SliderFloat("Movement range", &m_targetMovementAmplitude, 10.0f, 200.0f, "%.1f m");
+                    ImGui::SliderFloat("Movement range", &m_targetMovementAmplitude, 25.0f, 10000.0f, "%.1f m");
                     ImGui::SliderFloat("Movement period", &m_targetMovementPeriod, 2.0f, 30.0f, "%.1f s");
 
                     pushButtonPalette(accentBlue, accentBlueHover, accentBlueActive);
@@ -2213,7 +2272,7 @@ void Application::setupUI()
                 }
 
                 float cameraSpeed = m_renderer->getCameraSpeed();
-                if (ImGui::SliderFloat("Camera speed", &cameraSpeed, 0.1f, 10.0f, "%.1f"))
+                if (ImGui::SliderFloat("Camera speed", &cameraSpeed, 1.0f, 800.0f, "%.0f"))
                 {
                     m_renderer->setCameraSpeed(cameraSpeed);
                 }
@@ -2227,8 +2286,8 @@ void Application::setupUI()
                 ImGui::Checkbox("Show target labels", &m_showTargetInfo);
                 ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
                 ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
-                ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 300);
-                ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 10.0f, "%.1f s");
+                ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 600);
+                ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
                 endCard();
 
                 beginCard("HelpCard", 118.0f);
@@ -2449,15 +2508,18 @@ void Application::createRandomTarget()
     {
         // Create a random distribution for angles and height
         std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * 3.14159f); // 0 to 2π
-        std::uniform_real_distribution<float> heightDist(50.0f, 150.0f);        // 50 to 150 meters
         std::uniform_real_distribution<float> radiusDist(3.0f, 7.0f);           // 3 to 7 meters radius
         std::uniform_int_distribution<int> movementPatternDist(0, 4);           // Random movement pattern
 
         // Validate targetSpawnDistance
         if (m_targetSpawnDistance <= 0.0f || std::isnan(m_targetSpawnDistance) || std::isinf(m_targetSpawnDistance))
         {
-            m_targetSpawnDistance = 200.0f; // Reset to default
+            m_targetSpawnDistance = 1500.0f; // Reset to default
         }
+
+        const float minimumSpawnAltitude = std::max(50.0f, std::min(m_targetSpawnDistance * 0.05f, 600.0f));
+        const float maximumSpawnAltitude = std::max(minimumSpawnAltitude + 50.0f, std::min(m_targetSpawnDistance * 0.25f, 4000.0f));
+        std::uniform_real_distribution<float> heightDist(minimumSpawnAltitude, maximumSpawnAltitude);
 
         // Generate random spherical coordinates
         float angle = angleDist(m_rng);
