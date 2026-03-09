@@ -4,6 +4,7 @@
 #include <random>
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 #include <glm/gtx/norm.hpp>
 #include "physics/Atmosphere.h"
 #include "physics/forces/Drag.h"
@@ -369,6 +370,21 @@ void Application::processInput()
         spacePressed = false;
     }
 
+    // Toggle the entire ImGui layer with Tab.
+    static bool tabPressed = false;
+    if (glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS)
+    {
+        if (!tabPressed)
+        {
+            m_showUI = !m_showUI;
+            tabPressed = true;
+        }
+    }
+    else
+    {
+        tabPressed = false;
+    }
+
     // Camera movement controls with WASD
     const float cameraSpeed = 1.0f;
 
@@ -416,7 +432,7 @@ void Application::processInput()
 void Application::mouseCallback(double xpos, double ypos)
 {
     // Skip if camera rotation is disabled or imgui has focus
-    if (!m_enableMouseCamera || ImGui::GetIO().WantCaptureMouse)
+    if (!m_enableMouseCamera || (m_showUI && ImGui::GetIO().WantCaptureMouse))
         return;
 
     if (m_firstMouse)
@@ -754,54 +770,54 @@ void Application::render()
         // Setup ImGui frame - wrap in try-catch for safety
         try
         {
-            ImGui_ImplOpenGL3_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::NewFrame();
-
-            // Create UI
-            setupUI();
-
-            // Draw target labels using ImGui in world space
-            if (m_showTargetInfo && m_window && m_missile)
+            if (m_showUI)
             {
-                glm::mat4 view = glm::lookAt(m_renderer->getCameraPosition(),
-                                             m_renderer->getCameraPosition() + m_renderer->getCameraFront(),
-                                             m_renderer->getCameraUp());
-                glm::mat4 projection = glm::perspective(glm::radians(45.0f),
-                                                        (float)m_width / (float)m_height,
-                                                        0.1f, 1000.0f);
+                ImGui_ImplOpenGL3_NewFrame();
+                ImGui_ImplGlfw_NewFrame();
+                ImGui::NewFrame();
 
-                for (const auto &targetLabel : targetLabels)
+                setupUI();
+
+                // Draw target labels using ImGui in world space
+                if (m_showTargetInfo && m_window && m_missile)
                 {
-                    // Project 3D world position to screen space
-                    glm::vec4 clipSpace = projection * view * glm::vec4(targetLabel.first, 1.0f);
+                    glm::mat4 view = glm::lookAt(m_renderer->getCameraPosition(),
+                                                 m_renderer->getCameraPosition() + m_renderer->getCameraFront(),
+                                                 m_renderer->getCameraUp());
+                    glm::mat4 projection = glm::perspective(glm::radians(45.0f),
+                                                            (float)m_width / (float)m_height,
+                                                            0.1f, 1000.0f);
 
-                    if (clipSpace.w > 0)
-                    { // Only if it's in front of the camera
-                        glm::vec3 ndcSpace = glm::vec3(clipSpace) / clipSpace.w;
+                    for (const auto &targetLabel : targetLabels)
+                    {
+                        // Project 3D world position to screen space
+                        glm::vec4 clipSpace = projection * view * glm::vec4(targetLabel.first, 1.0f);
 
-                        // Convert from NDC space [-1,1] to screen space [0,width/height]
-                        ImVec2 screenPos;
-                        screenPos.x = (ndcSpace.x + 1.0f) * 0.5f * m_width;
-                        screenPos.y = (1.0f - (ndcSpace.y + 1.0f) * 0.5f) * m_height;
+                        if (clipSpace.w > 0)
+                        { // Only if it's in front of the camera
+                            glm::vec3 ndcSpace = glm::vec3(clipSpace) / clipSpace.w;
 
-                        // Only draw if it's on screen
-                        if (screenPos.x >= 0 && screenPos.x < m_width &&
-                            screenPos.y >= 0 && screenPos.y < m_height)
-                        {
-                            // Add a background rectangle for better visibility
-                            ImGui::GetBackgroundDrawList()->AddText(
-                                screenPos,
-                                IM_COL32(255, 255, 0, 255), // Yellow
-                                targetLabel.second.c_str());
+                            // Convert from NDC space [-1,1] to screen space [0,width/height]
+                            ImVec2 screenPos;
+                            screenPos.x = (ndcSpace.x + 1.0f) * 0.5f * m_width;
+                            screenPos.y = (1.0f - (ndcSpace.y + 1.0f) * 0.5f) * m_height;
+
+                            // Only draw if it's on screen
+                            if (screenPos.x >= 0 && screenPos.x < m_width &&
+                                screenPos.y >= 0 && screenPos.y < m_height)
+                            {
+                                ImGui::GetBackgroundDrawList()->AddText(
+                                    screenPos,
+                                    IM_COL32(255, 255, 0, 255),
+                                    targetLabel.second.c_str());
+                            }
                         }
                     }
                 }
-            }
 
-            // Render ImGui
-            ImGui::Render();
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                ImGui::Render();
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            }
         }
         catch (const std::exception &e)
         {
@@ -1004,304 +1020,623 @@ glm::vec3 Application::predictInterceptPoint(const glm::vec3 &missilePos, const 
 
 void Application::setupUI()
 {
-    ImGuiStyle &style = ImGui::GetStyle();
-
-    // Main control window
-    ImGui::SetNextWindowSize(ImVec2(400, 580), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Missile Simulator Controls", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-
-    // Top status bar with score and main controls
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-    ImGui::BeginChild("StatusBar", ImVec2(0, 80), true);
-
-    // Status information
-    ImGui::Columns(2);
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Score: %d", m_score);
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Targets Hit: %d", m_targetHits);
-    ImGui::NextColumn();
-
-    // Main action buttons
-    if (ImGui::Button(m_isPaused ? "Resume" : "Pause", ImVec2(120, 30)))
     {
-        m_isPaused = !m_isPaused;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Launch", ImVec2(120, 30)))
-    {
-        launchMissile();
-    }
+        static bool themeInitialized = false;
 
-    ImGui::Columns(1);
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-
-    ImGui::Spacing();
-
-    // Create tabbed interface for better organization
-    if (ImGui::BeginTabBar("ControlTabs", ImGuiTabBarFlags_None))
-    {
-        // Simulation tab
-        if (ImGui::BeginTabItem("Simulation"))
+        ImGuiStyle &deckStyle = ImGui::GetStyle();
+        if (!themeInitialized)
         {
-            ImGui::BeginChild("SimulationPanel", ImVec2(0, 400), true);
+            ImGui::StyleColorsDark();
 
-            // Simulation speed control
-            ImGui::SliderFloat("Simulation Speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Adjust simulation speed (1.0 = real time)");
+            deckStyle.WindowPadding = ImVec2(14.0f, 14.0f);
+            deckStyle.FramePadding = ImVec2(12.0f, 7.0f);
+            deckStyle.CellPadding = ImVec2(8.0f, 6.0f);
+            deckStyle.ItemSpacing = ImVec2(10.0f, 9.0f);
+            deckStyle.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
+            deckStyle.IndentSpacing = 18.0f;
+            deckStyle.ScrollbarSize = 14.0f;
+            deckStyle.GrabMinSize = 10.0f;
+            deckStyle.WindowRounding = 12.0f;
+            deckStyle.ChildRounding = 10.0f;
+            deckStyle.FrameRounding = 8.0f;
+            deckStyle.PopupRounding = 10.0f;
+            deckStyle.ScrollbarRounding = 10.0f;
+            deckStyle.GrabRounding = 8.0f;
+            deckStyle.TabRounding = 8.0f;
+            deckStyle.WindowBorderSize = 1.0f;
+            deckStyle.ChildBorderSize = 1.0f;
+            deckStyle.FrameBorderSize = 1.0f;
+            deckStyle.TabBorderSize = 0.0f;
+            deckStyle.WindowTitleAlign = ImVec2(0.02f, 0.5f);
 
-            ImGui::Separator();
-            ImGui::Text("Missile Engine Controls:");
+            ImVec4 *colors = deckStyle.Colors;
+            colors[ImGuiCol_Text] = ImVec4(0.93f, 0.95f, 0.98f, 1.0f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.56f, 0.63f, 0.71f, 1.0f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.07f, 0.10f, 0.97f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.12f, 0.16f, 1.0f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.07f, 0.09f, 0.13f, 0.98f);
+            colors[ImGuiCol_Border] = ImVec4(0.17f, 0.24f, 0.31f, 1.0f);
+            colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.11f, 0.15f, 0.20f, 1.0f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.21f, 0.28f, 1.0f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.18f, 0.25f, 0.34f, 1.0f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.07f, 0.10f, 0.14f, 1.0f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.09f, 0.13f, 0.18f, 1.0f);
+            colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.05f, 0.07f, 0.10f, 0.90f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.08f, 0.11f, 0.15f, 1.0f);
+            colors[ImGuiCol_ScrollbarBg] = ImVec4(0.05f, 0.07f, 0.09f, 0.70f);
+            colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.31f, 0.41f, 1.0f);
+            colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.29f, 0.40f, 0.52f, 1.0f);
+            colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.35f, 0.47f, 0.60f, 1.0f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.38f, 0.72f, 0.94f, 1.0f);
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.33f, 0.66f, 0.88f, 1.0f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.43f, 0.77f, 0.97f, 1.0f);
+            colors[ImGuiCol_Button] = ImVec4(0.13f, 0.20f, 0.27f, 1.0f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.18f, 0.28f, 0.37f, 1.0f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.22f, 0.34f, 0.45f, 1.0f);
+            colors[ImGuiCol_Header] = ImVec4(0.12f, 0.18f, 0.24f, 1.0f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.18f, 0.25f, 0.33f, 1.0f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.22f, 0.31f, 0.40f, 1.0f);
+            colors[ImGuiCol_Separator] = ImVec4(0.16f, 0.23f, 0.30f, 1.0f);
+            colors[ImGuiCol_SeparatorHovered] = ImVec4(0.29f, 0.49f, 0.68f, 1.0f);
+            colors[ImGuiCol_SeparatorActive] = ImVec4(0.35f, 0.58f, 0.79f, 1.0f);
+            colors[ImGuiCol_ResizeGrip] = ImVec4(0.20f, 0.32f, 0.44f, 0.30f);
+            colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.30f, 0.49f, 0.67f, 0.70f);
+            colors[ImGuiCol_ResizeGripActive] = ImVec4(0.37f, 0.60f, 0.82f, 0.90f);
+            colors[ImGuiCol_Tab] = ImVec4(0.08f, 0.12f, 0.16f, 1.0f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.18f, 0.28f, 0.38f, 1.0f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.12f, 0.20f, 0.28f, 1.0f);
+            colors[ImGuiCol_TabUnfocused] = ImVec4(0.06f, 0.09f, 0.13f, 1.0f);
+            colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.09f, 0.14f, 0.19f, 1.0f);
+            colors[ImGuiCol_TableHeaderBg] = ImVec4(0.10f, 0.14f, 0.18f, 1.0f);
+            colors[ImGuiCol_TableBorderStrong] = ImVec4(0.14f, 0.20f, 0.27f, 1.0f);
+            colors[ImGuiCol_TableBorderLight] = ImVec4(0.11f, 0.16f, 0.21f, 1.0f);
+            colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+            colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.07f, 0.10f, 0.13f, 0.75f);
+            colors[ImGuiCol_TextSelectedBg] = ImVec4(0.21f, 0.47f, 0.70f, 0.45f);
+            colors[ImGuiCol_NavHighlight] = ImVec4(0.36f, 0.71f, 0.95f, 1.0f);
+            colors[ImGuiCol_PlotHistogram] = ImVec4(0.38f, 0.72f, 0.94f, 1.0f);
+            colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.50f, 0.81f, 0.98f, 1.0f);
 
-            // Display thrust controls with better grouping
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            ImGui::SliderFloat("Thrust Power (N)", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Thrust force in Newtons (higher = more powerful)");
+            themeInitialized = true;
+        }
 
-            ImGui::SliderFloat("Fuel Amount (kg)", &m_missileFuel, 10.0f, 1000.0f, "%.1f kg");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Total fuel capacity");
+        const ImVec4 textDim(0.58f, 0.67f, 0.74f, 1.0f);
+        const ImVec4 textBright(0.94f, 0.96f, 0.98f, 1.0f);
+        const ImVec4 accentBlue(0.33f, 0.66f, 0.88f, 1.0f);
+        const ImVec4 accentBlueHover(0.40f, 0.73f, 0.94f, 1.0f);
+        const ImVec4 accentBlueActive(0.27f, 0.56f, 0.78f, 1.0f);
+        const ImVec4 accentGreen(0.22f, 0.70f, 0.47f, 1.0f);
+        const ImVec4 accentGreenHover(0.27f, 0.77f, 0.53f, 1.0f);
+        const ImVec4 accentGreenActive(0.18f, 0.61f, 0.41f, 1.0f);
+        const ImVec4 accentAmber(0.91f, 0.58f, 0.20f, 1.0f);
+        const ImVec4 accentAmberHover(0.96f, 0.65f, 0.28f, 1.0f);
+        const ImVec4 accentAmberActive(0.84f, 0.50f, 0.14f, 1.0f);
+        const ImVec4 accentRed(0.82f, 0.31f, 0.28f, 1.0f);
+        const ImVec4 accentRedHover(0.88f, 0.38f, 0.34f, 1.0f);
+        const ImVec4 accentRedActive(0.74f, 0.26f, 0.24f, 1.0f);
+        const ImVec4 cardColor(0.09f, 0.12f, 0.16f, 1.0f);
 
-            ImGui::SliderFloat("Fuel Usage (kg/s)", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.1f kg/s");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Fuel consumption rate when engine is active");
+        const auto *viewport = ImGui::GetMainViewport();
+        const ImVec2 workPos = viewport->WorkPos;
+        const ImVec2 workSize = viewport->WorkSize;
+        const float outerPadding = 18.0f;
+        const float commandBarHeight = 96.0f;
+        const float leftPanelWidth = std::clamp(workSize.x * 0.29f, 360.0f, 470.0f);
+        const float rightPanelWidth = std::clamp(workSize.x * 0.24f, 320.0f, 410.0f);
+        const float panelTop = workPos.y + outerPadding + commandBarHeight;
+        const float panelHeight = std::max(300.0f, workSize.y - commandBarHeight - (outerPadding * 2.0f));
+        const ImGuiWindowFlags panelFlags = ImGuiWindowFlags_NoMove |
+                                            ImGuiWindowFlags_NoResize |
+                                            ImGuiWindowFlags_NoCollapse |
+                                            ImGuiWindowFlags_NoSavedSettings;
+        const ImGuiWindowFlags toolbarFlags = panelFlags |
+                                            ImGuiWindowFlags_NoTitleBar |
+                                            ImGuiWindowFlags_NoScrollbar |
+                                            ImGuiWindowFlags_NoScrollWithMouse;
+        const ImGuiTableFlags readoutTableFlags = ImGuiTableFlags_SizingStretchProp |
+                                                  ImGuiTableFlags_BordersInnerV |
+                                                  ImGuiTableFlags_RowBg;
+
+        auto pushButtonPalette = [](const ImVec4 &base, const ImVec4 &hovered, const ImVec4 &active)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, base);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hovered);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
+        };
+
+        auto popButtonPalette = []()
+        {
+            ImGui::PopStyleColor(3);
+        };
+
+        bool cardOpen = false;
+
+        auto beginCard = [&](const char *id, float)
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0f, 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_TableRowBg, cardColor);
+            ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, cardColor);
+            ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, ImVec4(0.17f, 0.24f, 0.31f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ImVec4(0.17f, 0.24f, 0.31f, 1.0f));
+
+            cardOpen = ImGui::BeginTable(id, 1, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_SizingStretchSame);
+            if (cardOpen)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(cardColor));
+                ImGui::TableSetColumnIndex(0);
+            }
+        };
+
+        auto endCard = [&]()
+        {
+            if (cardOpen)
+            {
+                ImGui::EndTable();
+                cardOpen = false;
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::PopStyleVar();
+            ImGui::Dummy(ImVec2(0.0f, 10.0f));
+        };
+
+        auto drawCardHeader = [&](const char *title, const char *subtitle)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, textBright);
+            ImGui::TextUnformatted(title);
             ImGui::PopStyleColor();
-
+            if (subtitle != nullptr && subtitle[0] != '\0')
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, textDim);
+                ImGui::TextWrapped("%s", subtitle);
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
             ImGui::Separator();
-            ImGui::Text("Environment Properties:");
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        };
 
-            // Environment properties in a nicer group
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            float gravity = m_physicsEngine->getGravity();
-            float airDensity = m_physicsEngine->getAirDensity();
-
-            if (ImGui::SliderFloat("Gravity (m/s²)", &gravity, 0.0f, 20.0f, "%.1f m/s²"))
-            {
-                m_physicsEngine->setGravity(gravity);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Earth gravity = 9.81 m/s²");
-
-            if (ImGui::SliderFloat("Air Density (kg/m³)", &airDensity, 0.0f, 2.0f, "%.3f kg/m³"))
-            {
-                m_physicsEngine->setAirDensity(airDensity);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Sea level = 1.225 kg/m³");
+        auto drawReadoutRow = [&](const char *label, const char *value, const ImVec4 &valueColor)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushStyleColor(ImGuiCol_Text, textDim);
+            ImGui::TextUnformatted(label);
             ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(1);
+            ImGui::PushStyleColor(ImGuiCol_Text, valueColor);
+            ImGui::TextUnformatted(value);
+            ImGui::PopStyleColor();
+        };
 
-            // Ground settings with indentation
-            if (ImGui::Checkbox("Enable Ground Collision", &m_groundEnabled))
+        auto drawToolbarPill = [&](const char *id, const char *label, const char *value, const ImVec4 &accent, float height)
+        {
+            const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const ImVec2 size(width, height);
+            ImDrawList *drawList = ImGui::GetWindowDrawList();
+            const ImU32 bg = ImGui::ColorConvertFloat4ToU32(ImVec4(0.10f, 0.14f, 0.19f, 1.0f));
+            const ImU32 border = ImGui::ColorConvertFloat4ToU32(ImVec4(0.17f, 0.24f, 0.31f, 1.0f));
+            const ImU32 accentLine = ImGui::ColorConvertFloat4ToU32(ImVec4(accent.x, accent.y, accent.z, 0.95f));
+            const ImU32 labelColor = ImGui::ColorConvertFloat4ToU32(textDim);
+            const ImU32 valueColor = ImGui::ColorConvertFloat4ToU32(textBright);
+
+            drawList->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), bg, 10.0f);
+            drawList->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), border, 10.0f, 0, 1.0f);
+            drawList->AddRectFilled(pos, ImVec2(pos.x + 4.0f, pos.y + size.y), accentLine, 10.0f, ImDrawFlags_RoundCornersLeft);
+            drawList->AddText(ImVec2(pos.x + 14.0f, pos.y + 8.0f), labelColor, label);
+            drawList->AddText(ImVec2(pos.x + 14.0f, pos.y + 23.0f), valueColor, value);
+
+            ImGui::PushID(id);
+            ImGui::InvisibleButton("##toolbar_pill", size);
+            ImGui::PopID();
+        };
+
+        auto movementPatternName = [](TargetMovementPattern pattern) -> const char *
+        {
+            switch (pattern)
             {
-                m_physicsEngine->setGroundEnabled(m_groundEnabled);
+            case TargetMovementPattern::STATIONARY:
+                return "Stationary";
+            case TargetMovementPattern::LINEAR:
+                return "Linear";
+            case TargetMovementPattern::CIRCULAR:
+                return "Circular";
+            case TargetMovementPattern::SINUSOIDAL:
+                return "Sinusoidal";
+            case TargetMovementPattern::RANDOM:
+                return "Random";
+            default:
+                return "Unknown";
+            }
+        };
+
+        auto applyLiveMissileConfig = [&]()
+        {
+            if (!m_missile)
+            {
+                return;
             }
 
-            if (m_groundEnabled)
+            m_missile->setMass(m_mass);
+            m_missile->setDragCoefficient(m_dragCoefficient);
+            m_missile->setCrossSectionalArea(m_crossSectionalArea);
+            m_missile->setLiftCoefficient(m_liftCoefficient);
+            m_missile->setGuidanceEnabled(m_guidanceEnabled);
+            m_missile->setNavigationGain(m_navigationGain);
+            m_missile->setMaxSteeringForce(m_maxSteeringForce);
+            m_missile->setThrust(m_missileThrust);
+            m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
+
+            if (!m_missileInFlight)
             {
-                ImGui::Indent(20);
-                if (ImGui::SliderFloat("Ground Bounciness", &m_groundRestitution, 0.0f, 1.0f, "%.2f"))
+                m_missile->setFuel(m_missileFuel);
+            }
+        };
+
+        int activeTargets = 0;
+        for (const auto &target : m_targets)
+        {
+            if (target && target->isActive())
+            {
+                activeTargets++;
+            }
+        }
+
+        glm::vec3 missilePosition = m_missile->getPosition();
+        glm::vec3 missileVelocity = m_missile->getVelocity();
+        glm::vec3 missileAcceleration = m_missile->getAcceleration();
+        glm::vec3 cameraPosition = m_renderer->getCameraPosition();
+
+        const float missileSpeed = glm::length(missileVelocity);
+        const float missileAltitude = std::max(missilePosition.y, 0.0f);
+        const bool thrustEnabled = m_missile->isThrustEnabled();
+        const bool guidanceEnabled = m_missile->isGuidanceEnabled();
+        const float fuel = m_missile->getFuel();
+        const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
+        ImVec4 fuelColor = accentRed;
+        if (fuelPercent > 0.50f)
+        {
+            fuelColor = accentGreen;
+        }
+        else if (fuelPercent > 0.25f)
+        {
+            fuelColor = accentAmber;
+        }
+
+        Target *trackedTarget = m_missile->getTargetObject();
+        if ((trackedTarget == nullptr || !trackedTarget->isActive()) && activeTargets > 0)
+        {
+            trackedTarget = findBestTarget();
+        }
+
+        int trackedTargetIndex = -1;
+        if (trackedTarget != nullptr)
+        {
+            for (size_t i = 0; i < m_targets.size(); ++i)
+            {
+                if (m_targets[i].get() == trackedTarget)
                 {
-                    m_physicsEngine->setGroundRestitution(m_groundRestitution);
+                    trackedTargetIndex = static_cast<int>(i) + 1;
+                    break;
                 }
-                ImGui::Text("0.0 = No bounce, 1.0 = Perfect bounce");
-                ImGui::Unindent(20);
             }
+        }
 
-            ImGui::Separator();
+        const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr && trackedTarget->isActive();
+        const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
 
-            // Reset buttons in a horizontal layout
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.1f, 0.1f, 0.8f));
-            if (ImGui::Button("Reset Missile"))
+        const char *missionState = "Standby";
+        ImVec4 missionStateColor = accentBlue;
+        if (m_isPaused)
+        {
+            missionState = "Paused";
+            missionStateColor = accentAmber;
+        }
+        else if (m_missileInFlight && guidanceLocked && thrustEnabled)
+        {
+            missionState = "Intercept";
+            missionStateColor = accentGreen;
+        }
+        else if (m_missileInFlight && guidanceLocked)
+        {
+            missionState = "Glide Track";
+            missionStateColor = accentBlue;
+        }
+        else if (m_missileInFlight && thrustEnabled)
+        {
+            missionState = "Boost";
+            missionStateColor = accentAmber;
+        }
+        else if (m_missileInFlight)
+        {
+            missionState = "Ballistic";
+            missionStateColor = accentRed;
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(workPos.x + outerPadding, workPos.y + outerPadding), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(workSize.x - (outerPadding * 2.0f), commandBarHeight), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 8.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.09f, 0.13f, 0.98f));
+        ImGui::Begin("##CommandDeck", nullptr, toolbarFlags);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8.0f, 4.0f));
+        if (ImGui::BeginTable("CommandDeckLayout", 3, ImGuiTableFlags_SizingStretchProp))
+        {
+            ImGui::TableSetupColumn("Brand", ImGuiTableColumnFlags_WidthStretch, 1.20f);
+            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.45f);
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthStretch, 1.10f);
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImDrawList *drawList = ImGui::GetWindowDrawList();
+            const ImVec2 brandPos = ImGui::GetCursorScreenPos();
+            const ImVec2 brandSize(ImGui::GetContentRegionAvail().x, 56.0f);
+            drawList->AddRectFilled(brandPos, ImVec2(brandPos.x + brandSize.x, brandPos.y + brandSize.y),
+                                    ImGui::ColorConvertFloat4ToU32(ImVec4(0.09f, 0.13f, 0.18f, 1.0f)), 12.0f);
+            drawList->AddRect(brandPos, ImVec2(brandPos.x + brandSize.x, brandPos.y + brandSize.y),
+                              ImGui::ColorConvertFloat4ToU32(ImVec4(0.19f, 0.29f, 0.39f, 1.0f)), 12.0f, 0, 1.0f);
+            drawList->AddRectFilled(brandPos, ImVec2(brandPos.x + 6.0f, brandPos.y + brandSize.y),
+                                    ImGui::ColorConvertFloat4ToU32(ImVec4(0.33f, 0.66f, 0.88f, 1.0f)), 12.0f, ImDrawFlags_RoundCornersLeft);
+            drawList->AddText(ImVec2(brandPos.x + 18.0f, brandPos.y + 10.0f),
+                              ImGui::ColorConvertFloat4ToU32(textDim), "TACTICAL SIMULATION");
+            drawList->AddText(ImVec2(brandPos.x + 18.0f, brandPos.y + 29.0f),
+                              ImGui::ColorConvertFloat4ToU32(textBright), "MISSILESIM COMMAND DECK");
+            ImGui::Dummy(brandSize);
+
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::BeginTable("CommandDeckStats", 4, ImGuiTableFlags_SizingStretchSame))
             {
-                resetMissile();
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                drawToolbarPill("state", "STATE", missionState, missionStateColor, 56.0f);
+
+                char statBuffer[32];
+
+                ImGui::TableSetColumnIndex(1);
+                std::snprintf(statBuffer, sizeof(statBuffer), "%d", m_score);
+                drawToolbarPill("score", "SCORE", statBuffer, accentBlue, 56.0f);
+
+                ImGui::TableSetColumnIndex(2);
+                std::snprintf(statBuffer, sizeof(statBuffer), "%d", m_targetHits);
+                drawToolbarPill("hits", "HITS", statBuffer, accentGreen, 56.0f);
+
+                ImGui::TableSetColumnIndex(3);
+                std::snprintf(statBuffer, sizeof(statBuffer), "%d", activeTargets);
+                drawToolbarPill("targets", "ACTIVE", statBuffer, accentAmber, 56.0f);
+
+                ImGui::EndTable();
             }
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f);
+            const float actionWidth = ImGui::GetContentRegionAvail().x;
+            const float buttonWidth = std::max(0.0f, (actionWidth - 10.0f) * 0.5f);
+
+            pushButtonPalette(accentBlue, accentBlueHover, accentBlueActive);
+            if (ImGui::Button(m_isPaused ? "Resume" : "Pause", ImVec2(buttonWidth, 36.0f)))
+            {
+                m_isPaused = !m_isPaused;
+            }
+            popButtonPalette();
+
             ImGui::SameLine();
-            if (ImGui::Button("Reset Targets"))
+
+            pushButtonPalette(accentAmber, accentAmberHover, accentAmberActive);
+            if (ImGui::Button("Launch", ImVec2(buttonWidth, 36.0f)))
             {
-                resetTargets();
+                launchMissile();
             }
+            popButtonPalette();
+
+            ImGui::PushStyleColor(ImGuiCol_Text, textDim);
+            ImGui::TextUnformatted(m_missileInFlight ? "Live flight in progress" : "Launch hotkey: F");
             ImGui::PopStyleColor();
 
-            ImGui::EndChild();
-            ImGui::EndTabItem();
+            ImGui::EndTable();
         }
+        ImGui::PopStyleVar();
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
 
-        // Missile tab
-        if (ImGui::BeginTabItem("Missile Properties"))
+        ImGui::SetNextWindowPos(ImVec2(workPos.x + outerPadding, panelTop), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(leftPanelWidth, panelHeight), ImGuiCond_Always);
+        ImGui::Begin("Mission Control", nullptr, panelFlags);
+
+        if (ImGui::BeginTabBar("WorkspaceTabs", ImGuiTabBarFlags_FittingPolicyResizeDown))
         {
-            ImGui::BeginChild("MissilePanel", ImVec2(0, 400), true);
-
-            // Initial conditions with better formatting
-            ImGui::Text("Initial Conditions:");
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            ImGui::InputFloat3("Initial Position (m)", m_initialPosition);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Starting position [x, y, z] in meters");
-
-            ImGui::InputFloat3("Initial Velocity (m/s)", m_initialVelocity);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Starting velocity [x, y, z] in meters/second");
-            ImGui::PopStyleColor();
-
-            ImGui::Separator();
-            ImGui::Text("Physical Properties:");
-
-            // Physical properties with better formatting
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            ImGui::SliderFloat("Mass (kg)", &m_mass, 10.0f, 1000.0f, "%.1f kg");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Missile mass affects acceleration and momentum");
-
-            ImGui::SliderFloat("Drag Coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Air resistance factor (lower = more aerodynamic)");
-
-            ImGui::SliderFloat("Cross-Sectional Area (m²)", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m²");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Frontal area exposed to airflow");
-
-            ImGui::SliderFloat("Lift Coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Aerodynamic lift generation capability");
-            ImGui::PopStyleColor();
-
-            ImGui::Separator();
-            ImGui::Text("Guidance System:");
-
-            // Guidance parameters with better formatting
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            ImGui::Checkbox("Enable Guidance", &m_guidanceEnabled);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Turn on/off target tracking system");
-
-            ImGui::SliderFloat("Navigation Gain", &m_navigationGain, 0.1f, 10.0f, "%.2f");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How aggressively missile corrects course (higher = more responsive)");
-
-            ImGui::SliderFloat("Max Steering Force (N)", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Maximum lateral force available for seeker/autopilot corrections");
-            ImGui::PopStyleColor();
-
-            // Apply button with color - always show regardless of property changes
-            ImGui::Separator();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.5f, 0.2f, 0.8f));
-            if (ImGui::Button("Apply Properties", ImVec2(-1, 30)))
+            if (ImGui::BeginTabItem("Scenario"))
             {
-                // Update missile with new properties
-                m_missile->setMass(m_mass);
-                m_missile->setDragCoefficient(m_dragCoefficient);
-                m_missile->setCrossSectionalArea(m_crossSectionalArea);
-                m_missile->setLiftCoefficient(m_liftCoefficient);
-                m_missile->setGuidanceEnabled(m_guidanceEnabled);
-                m_missile->setNavigationGain(m_navigationGain);
-                m_missile->setMaxSteeringForce(m_maxSteeringForce);
-            }
-            ImGui::PopStyleColor();
-
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-
-        // Targets tab
-        if (ImGui::BeginTabItem("Targets"))
-        {
-            ImGui::BeginChild("TargetsPanel", ImVec2(0, 400), true);
-
-            // Target count with display of active targets
-            int activeTargets = 0;
-            for (const auto &target : m_targets)
-            {
-                if (target && target->isActive())
+                beginCard("ScenarioSummaryCard", 150.0f);
+                drawCardHeader("Scenario Pace", "Primary runtime controls and launch-stage propulsion settings.");
+                if (ImGui::BeginTable("ScenarioSummaryTable", 2, readoutTableFlags))
                 {
-                    activeTargets++;
-                }
-            }
-
-            ImGui::Text("Active Targets: %d/%d", activeTargets, (int)m_targets.size());
-
-            if (ImGui::SliderInt("Target Count", &m_targetCount, 1, 10, "%d"))
-            {
-                resetTargets();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Number of targets to create");
-
-            ImGui::SliderFloat("Target Spawn Distance", &m_targetSpawnDistance, 50.0f, 500.0f, "%.0f m");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How far targets spawn from origin");
-
-            ImGui::Separator();
-            ImGui::Text("Target Movement:");
-
-            // Target movement controls with better organization
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            if (ImGui::Checkbox("Moving Targets", &m_targetsMove))
-            {
-                for (const auto &target : m_targets)
-                {
-                    if (target && !m_targetsMove)
+                    char buffer[96];
+                    std::snprintf(buffer, sizeof(buffer), "%.1fx", m_simulationSpeed);
+                    drawReadoutRow("Simulation speed", buffer, textBright);
+                    std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
+                    drawReadoutRow("Flight timer", buffer, textBright);
+                    if (m_closestTargetDistance < 999999.0f)
                     {
-                        target->setMovementPattern(TargetMovementPattern::STATIONARY);
+                        std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance);
+                        drawReadoutRow("Closest pass", buffer, textBright);
                     }
-                }
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Enable/disable target movement");
-
-            if (m_targetsMove)
-            {
-                ImGui::Indent(20);
-
-                ImGui::Checkbox("Randomize Patterns", &m_randomizeTargetMovement);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Each target gets a random movement pattern");
-
-                if (!m_randomizeTargetMovement)
-                {
-                    const char *patternItems[] = {
-                        "Stationary", "Linear", "Circular", "Sinusoidal", "Random"};
-
-                    int currentPattern = static_cast<int>(m_targetMovementPattern);
-                    if (ImGui::Combo("Movement Pattern", &currentPattern, patternItems, IM_ARRAYSIZE(patternItems)))
+                    else
                     {
-                        m_targetMovementPattern = static_cast<TargetMovementPattern>(currentPattern);
+                        drawReadoutRow("Closest pass", "Not available", textDim);
                     }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Select how targets will move");
+                    std::snprintf(buffer, sizeof(buffer), "%d active", activeTargets);
+                    drawReadoutRow("Target group", buffer, textBright);
+                    ImGui::EndTable();
+                }
+                ImGui::SliderFloat("Simulation speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
+                endCard();
+
+                beginCard("PropulsionCard", 160.0f);
+                drawCardHeader("Propulsion Profile", "These values are staged for the next launch and rearm.");
+                ImGui::SliderFloat("Thrust output", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N");
+                ImGui::SliderFloat("Fuel load", &m_missileFuel, 10.0f, 1000.0f, "%.1f kg");
+                ImGui::SliderFloat("Fuel burn rate", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.2f kg/s");
+                endCard();
+
+                beginCard("EnvironmentCard", 200.0f);
+                drawCardHeader("World Settings", "Gravity, atmosphere, and ground interaction affect every flight.");
+                float gravity = m_physicsEngine->getGravity();
+                float airDensity = m_physicsEngine->getAirDensity();
+                if (ImGui::SliderFloat("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s^2"))
+                {
+                    m_physicsEngine->setGravity(gravity);
+                }
+                if (ImGui::SliderFloat("Air density", &airDensity, 0.0f, 2.0f, "%.3f kg/m^3"))
+                {
+                    m_physicsEngine->setAirDensity(airDensity);
+                }
+                if (ImGui::Checkbox("Ground collision enabled", &m_groundEnabled))
+                {
+                    m_physicsEngine->setGroundEnabled(m_groundEnabled);
+                }
+                if (m_groundEnabled)
+                {
+                    if (ImGui::SliderFloat("Ground restitution", &m_groundRestitution, 0.0f, 1.0f, "%.2f"))
+                    {
+                        m_physicsEngine->setGroundRestitution(m_groundRestitution);
+                    }
+                    ImGui::TextDisabled("0.0 is fully deadened, 1.0 is a perfect bounce.");
+                }
+                else
+                {
+                    ImGui::TextDisabled("Ground interaction is disabled.");
+                }
+                endCard();
+
+                beginCard("RecoveryCard", 100.0f);
+                drawCardHeader("Recovery", "Quick resets without leaving the control deck.");
+                const float recoveryWidth = (ImGui::GetContentRegionAvail().x - deckStyle.ItemSpacing.x) * 0.5f;
+                pushButtonPalette(accentRed, accentRedHover, accentRedActive);
+                if (ImGui::Button("Reset Missile", ImVec2(recoveryWidth, 36.0f)))
+                {
+                    resetMissile();
+                }
+                popButtonPalette();
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Targets", ImVec2(recoveryWidth, 36.0f)))
+                {
+                    resetTargets();
+                }
+                endCard();
+
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Missile"))
+            {
+                beginCard("MissileLaunchCard", 170.0f);
+                drawCardHeader("Launch State", "Edit the staged missile position and initial velocity vectors.");
+                ImGui::InputFloat3("Spawn position", m_initialPosition);
+                ImGui::InputFloat3("Launch velocity", m_initialVelocity);
+                ImGui::TextDisabled("Rearm to rebuild the missile with these staged values.");
+                endCard();
+
+                beginCard("MissileAirframeCard", 188.0f);
+                drawCardHeader("Airframe", "Mass and aerodynamic coefficients determine stability and energy retention.");
+                ImGui::SliderFloat("Mass", &m_mass, 10.0f, 1000.0f, "%.1f kg");
+                ImGui::SliderFloat("Drag coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
+                ImGui::SliderFloat("Cross-sectional area", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m^2");
+                ImGui::SliderFloat("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
+                endCard();
+
+                beginCard("MissileGuidanceCard", 168.0f);
+                drawCardHeader("Guidance", "Tune proportional navigation response and available control authority.");
+                ImGui::Checkbox("Guidance enabled", &m_guidanceEnabled);
+                ImGui::SliderFloat("Navigation gain", &m_navigationGain, 0.1f, 10.0f, "%.2f");
+                ImGui::SliderFloat("Max steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
+                endCard();
+
+                beginCard("MissileApplyCard", 112.0f);
+                drawCardHeader("Apply", "Push staged values into the current missile or rebuild it cleanly.");
+                pushButtonPalette(accentGreen, accentGreenHover, accentGreenActive);
+                if (ImGui::Button("Apply To Live Missile", ImVec2(-1.0f, 36.0f)))
+                {
+                    applyLiveMissileConfig();
+                }
+                popButtonPalette();
+                if (ImGui::Button("Rearm Missile From Staged Config", ImVec2(-1.0f, 32.0f)))
+                {
+                    resetMissile();
+                }
+                endCard();
+
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Targets"))
+            {
+                beginCard("TargetPopulationCard", 140.0f);
+                drawCardHeader("Target Group", "Population, spawn radius, and active roster status.");
+                char targetStatus[96];
+                std::snprintf(targetStatus, sizeof(targetStatus), "%d active of %zu total", activeTargets, m_targets.size());
+                ImGui::TextDisabled("%s", targetStatus);
+
+                ImGui::SliderInt("Target count", &m_targetCount, 1, 10);
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                {
+                    resetTargets();
                 }
 
-                ImGui::SliderFloat("Movement Speed", &m_targetMovementSpeed, 1.0f, 50.0f, "%.1f m/s");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("How fast targets move");
-
-                ImGui::SliderFloat("Movement Range", &m_targetMovementAmplitude, 10.0f, 200.0f, "%.1f m");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Maximum distance targets move from their center point");
-
-                ImGui::SliderFloat("Movement Period", &m_targetMovementPeriod, 2.0f, 30.0f, "%.1f s");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Time to complete one movement cycle");
-
-                // Apply button
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.5f, 0.2f, 0.8f));
-                if (ImGui::Button("Apply Movement Settings", ImVec2(-1, 25)))
+                ImGui::SliderFloat("Spawn distance", &m_targetSpawnDistance, 50.0f, 500.0f, "%.0f m");
+                if (ImGui::IsItemDeactivatedAfterEdit())
                 {
-                    // Update all targets with new settings
+                    resetTargets();
+                }
+                endCard();
+
+                beginCard("TargetMovementCard", 240.0f);
+                drawCardHeader("Movement Profile", "Choose how targets maneuver and when the profile is applied.");
+                if (ImGui::Checkbox("Moving targets", &m_targetsMove) && !m_targetsMove)
+                {
                     for (const auto &target : m_targets)
                     {
                         if (target)
                         {
+                            target->setMovementPattern(TargetMovementPattern::STATIONARY);
+                        }
+                    }
+                }
+
+                if (m_targetsMove)
+                {
+                    ImGui::Checkbox("Randomize patterns", &m_randomizeTargetMovement);
+                    if (!m_randomizeTargetMovement)
+                    {
+                        const char *patternItems[] = {"Stationary", "Linear", "Circular", "Sinusoidal", "Random"};
+                        int currentPattern = static_cast<int>(m_targetMovementPattern);
+                        if (ImGui::Combo("Movement pattern", &currentPattern, patternItems, IM_ARRAYSIZE(patternItems)))
+                        {
+                            m_targetMovementPattern = static_cast<TargetMovementPattern>(currentPattern);
+                        }
+                    }
+                    ImGui::SliderFloat("Movement speed", &m_targetMovementSpeed, 1.0f, 50.0f, "%.1f m/s");
+                    ImGui::SliderFloat("Movement range", &m_targetMovementAmplitude, 10.0f, 200.0f, "%.1f m");
+                    ImGui::SliderFloat("Movement period", &m_targetMovementPeriod, 2.0f, 30.0f, "%.1f s");
+
+                    pushButtonPalette(accentBlue, accentBlueHover, accentBlueActive);
+                    if (ImGui::Button("Apply Movement Profile", ImVec2(-1.0f, 34.0f)))
+                    {
+                        for (const auto &target : m_targets)
+                        {
+                            if (!target)
+                            {
+                                continue;
+                            }
+
                             if (m_targetsMove)
                             {
-                                // Only change pattern if not randomizing
                                 if (!m_randomizeTargetMovement)
                                 {
                                     target->setMovementPattern(m_targetMovementPattern);
                                 }
-
                                 target->setMovementSpeed(m_targetMovementSpeed);
                                 target->setMovementAmplitude(m_targetMovementAmplitude);
                                 target->setMovementPeriod(m_targetMovementPeriod);
@@ -1312,261 +1647,228 @@ void Application::setupUI()
                             }
                         }
                     }
+                    popButtonPalette();
                 }
-                ImGui::PopStyleColor();
-
-                ImGui::Unindent(20);
-            }
-            ImGui::PopStyleColor();
-
-            ImGui::Separator();
-
-            // Target status display
-            if (ImGui::CollapsingHeader("Target Status"))
-            {
-                for (size_t i = 0; i < m_targets.size(); i++)
+                else
                 {
-                    const auto &target = m_targets[i];
-                    const glm::vec3 &pos = target->getPosition();
+                    ImGui::TextDisabled("Movement is disabled. Targets will hold position.");
+                }
+                endCard();
 
-                    ImGui::PushID(static_cast<int>(i));
-                    if (target->isActive())
+                beginCard("TargetRosterCard", 280.0f);
+                drawCardHeader("Live Roster", "Read-only status table for every spawned target.");
+                if (m_targets.empty())
+                {
+                    ImGui::TextDisabled("No targets are currently loaded.");
+                }
+                else if (ImGui::BeginTable("TargetRosterTable", 4, readoutTableFlags))
+                {
+                    ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+                    ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+                    ImGui::TableSetupColumn("Pattern", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+                    ImGui::TableSetupColumn("Range", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableHeadersRow();
+
+                    for (size_t i = 0; i < m_targets.size(); ++i)
                     {
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
-                                           "Target %d: (%.1f, %.1f, %.1f)",
-                                           (int)i + 1, pos.x, pos.y, pos.z);
-
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("(?)");
-                        if (ImGui::IsItemHovered())
+                        const auto &target = m_targets[i];
+                        if (!target)
                         {
-                            ImGui::BeginTooltip();
-                            ImGui::Text("Pattern: %d, Speed: %.1f",
-                                        static_cast<int>(target->getMovementPattern()),
-                                        target->getMovementSpeed());
-                            ImGui::EndTooltip();
+                            continue;
+                        }
+
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("%zu", i + 1);
+
+                        ImGui::TableSetColumnIndex(1);
+                        const bool isActive = target->isActive();
+                        ImGui::TextColored(isActive ? accentGreen : textDim, "%s", isActive ? "Active" : "Destroyed");
+
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextUnformatted(movementPatternName(target->getMovementPattern()));
+
+                        ImGui::TableSetColumnIndex(3);
+                        if (isActive)
+                        {
+                            ImGui::Text("%.1f m", glm::distance(missilePosition, target->getPosition()));
+                        }
+                        else
+                        {
+                            ImGui::TextDisabled("--");
                         }
                     }
-                    else
-                    {
-                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                                           "Target %d: Destroyed", (int)i + 1);
-                    }
-                    ImGui::PopID();
+
+                    ImGui::EndTable();
                 }
+
+                pushButtonPalette(accentRed, accentRedHover, accentRedActive);
+                if (ImGui::Button("Rebuild Target Group", ImVec2(-1.0f, 34.0f)))
+                {
+                    resetTargets();
+                }
+                popButtonPalette();
+                endCard();
+
+                ImGui::EndTabItem();
             }
 
-            ImGui::Separator();
-
-            // Reset button
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.1f, 0.1f, 0.8f));
-            if (ImGui::Button("Reset All Targets", ImVec2(-1, 30)))
+            if (ImGui::BeginTabItem("View"))
             {
-                resetTargets();
-            }
-            ImGui::PopStyleColor();
+                beginCard("CameraCard", 150.0f);
+                drawCardHeader("Camera", "Viewport look controls and movement speed.");
+                float fov = m_renderer->getCameraFOV();
+                if (ImGui::SliderFloat("Field of view", &fov, 10.0f, 120.0f, "%.1f deg"))
+                {
+                    m_renderer->setCameraFOV(fov);
+                }
 
-            ImGui::EndChild();
-            ImGui::EndTabItem();
+                float cameraSpeed = m_renderer->getCameraSpeed();
+                if (ImGui::SliderFloat("Camera speed", &cameraSpeed, 0.1f, 10.0f, "%.1f"))
+                {
+                    m_renderer->setCameraSpeed(cameraSpeed);
+                }
+
+                ImGui::TextDisabled("Camera position: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+                endCard();
+
+                beginCard("OverlayCard", 230.0f);
+                drawCardHeader("Overlays", "Enable debug visuals without digging through the runtime inspector.");
+                ImGui::Checkbox("Show predicted trajectory", &m_showTrajectory);
+                ImGui::Checkbox("Show target labels", &m_showTargetInfo);
+                ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
+                ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
+                ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 300);
+                ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 10.0f, "%.1f s");
+                endCard();
+
+                beginCard("HelpCard", 118.0f);
+                drawCardHeader("Controls", "Keep the simulation visible while still knowing how to drive the camera.");
+                ImGui::TextUnformatted("Right mouse hold: free look");
+                ImGui::TextUnformatted("W / A / S / D: move camera");
+                ImGui::TextUnformatted("Space / Left Ctrl: move up or down");
+                ImGui::TextDisabled(m_enableMouseCamera ? "Mouse capture is active." : "Mouse is currently in UI mode.");
+                endCard();
+
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
+        ImGui::End();
 
-        // Visualization tab
-        if (ImGui::BeginTabItem("Visualization"))
+        ImGui::SetNextWindowPos(ImVec2(workPos.x + workSize.x - rightPanelWidth - outerPadding, panelTop), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(rightPanelWidth, panelHeight), ImGuiCond_Always);
+        ImGui::Begin("Flight Inspector", nullptr, panelFlags);
+
+        beginCard("EngagementOverviewCard", 158.0f);
+        drawCardHeader("Engagement Overview", "High-level mission state, target lock, and current fight geometry.");
+        if (ImGui::BeginTable("EngagementOverviewTable", 2, readoutTableFlags))
         {
-            ImGui::BeginChild("VisualizationPanel", ImVec2(0, 400), true);
-
-            // Camera controls
-            ImGui::Text("Camera Controls:");
-            ImGui::TextWrapped("Right-click and drag to look around. WASD to move.");
-
-            ImGui::Separator();
-
-            // Camera settings
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            float fov = m_renderer->getCameraFOV();
-            if (ImGui::SliderFloat("Field of View", &fov, 10.0f, 120.0f, "%.1f°"))
+            char buffer[96];
+            drawReadoutRow("Mission state", missionState, missionStateColor);
+            std::snprintf(buffer, sizeof(buffer), "%d / %zu", activeTargets, m_targets.size());
+            drawReadoutRow("Targets active", buffer, textBright);
+            if (trackedTargetIndex > 0)
             {
-                m_renderer->setCameraFOV(fov);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Camera field of view (zoom level)");
-
-            float cameraSpeed = m_renderer->getCameraSpeed();
-            if (ImGui::SliderFloat("Camera Speed", &cameraSpeed, 0.1f, 10.0f, "%.1f"))
-            {
-                m_renderer->setCameraSpeed(cameraSpeed);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Movement speed when using WASD keys");
-            ImGui::PopStyleColor();
-
-            // Display current camera position
-            glm::vec3 cameraPos = m_renderer->getCameraPosition();
-            ImGui::Text("Camera Position: (%.1f, %.1f, %.1f)", cameraPos.x, cameraPos.y, cameraPos.z);
-
-            ImGui::Separator();
-            ImGui::Text("Visualization Options:");
-
-            // Visualization options
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.2f, 0.8f));
-            ImGui::Checkbox("Show Trajectory", &m_showTrajectory);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Display predicted missile path");
-
-            ImGui::Checkbox("Show Target Info", &m_showTargetInfo);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Display distance labels on targets");
-
-            ImGui::SliderInt("Trajectory Points", &m_trajectoryPoints, 10, 300);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Number of points to calculate (higher = more detail but slower)");
-
-            ImGui::SliderFloat("Trajectory Time (s)", &m_trajectoryTime, 0.5f, 10.0f, "%.1f s");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How far into the future to predict");
-
-            // Add guidance visualization options
-            ImGui::Separator();
-            ImGui::Text("Guidance Visualization:");
-
-            static bool showPredictedTargetPath = true;
-            if (ImGui::Checkbox("Show Target Prediction", &showPredictedTargetPath))
-            {
-                // Update the flag in the trajectory renderer
-                m_showPredictedTargetPath = showPredictedTargetPath;
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Show dots indicating predicted target positions");
-
-            static bool showInterceptPoint = true;
-            if (ImGui::Checkbox("Show Intercept Point", &showInterceptPoint))
-            {
-                // Update the flag in the trajectory renderer
-                m_showInterceptPoint = showInterceptPoint;
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Show the predicted missile-target intercept point");
-            ImGui::PopStyleColor();
-
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-
-        // Status tab for missile telemetry
-        if (ImGui::BeginTabItem("Telemetry"))
-        {
-            ImGui::BeginChild("TelemetryPanel", ImVec2(0, 400), true);
-
-            // Position and velocity data
-            ImGui::Text("Missile Data:");
-
-            glm::vec3 position = m_missile->getPosition();
-            glm::vec3 velocity = m_missile->getVelocity();
-            glm::vec3 acceleration = m_missile->getAcceleration();
-
-            ImGui::Columns(2);
-
-            // Position data
-            ImGui::Text("Position:");
-            ImGui::Indent(10);
-            ImGui::Text("X: %.2f m", position.x);
-            ImGui::Text("Y: %.2f m", position.y);
-            ImGui::Text("Z: %.2f m", position.z);
-            ImGui::Unindent(10);
-
-            ImGui::NextColumn();
-
-            // Velocity data
-            ImGui::Text("Velocity:");
-            ImGui::Indent(10);
-            ImGui::Text("X: %.2f m/s", velocity.x);
-            ImGui::Text("Y: %.2f m/s", velocity.y);
-            ImGui::Text("Z: %.2f m/s", velocity.z);
-            ImGui::Text("Speed: %.2f m/s", glm::length(velocity));
-            ImGui::Unindent(10);
-
-            ImGui::Columns(1);
-
-            // Acceleration vector
-            ImGui::Text("Acceleration: (%.2f, %.2f, %.2f) m/s²",
-                        acceleration.x, acceleration.y, acceleration.z);
-
-            ImGui::Separator();
-
-            // Thrust information in a styled box
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.2f, 0.7f));
-            ImGui::BeginChild("ThrustInfo", ImVec2(0, 120), true);
-
-            ImGui::Text("Engine Status:");
-
-            bool thrustEnabled = m_missile->isThrustEnabled();
-            float fuel = m_missile->getFuel();
-            float thrust = m_missile->getThrust();
-
-            // Engine status with appropriate colors
-            if (thrustEnabled)
-            {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "● ENGINE ACTIVE");
+                std::snprintf(buffer, sizeof(buffer), "Target %d", trackedTargetIndex);
+                drawReadoutRow("Tracked target", buffer, guidanceLocked ? accentGreen : textBright);
             }
             else
             {
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "○ ENGINE OFF");
+                drawReadoutRow("Tracked target", "None", textDim);
             }
-
-            // Thrust force
-            ImGui::Text("Thrust Force: %.0f N", thrust);
-
-            // Fuel gauge with color gradient
-            float fuelPercent = fuel / m_missileFuel;
-            ImGui::Text("Fuel Remaining: %.1f kg (%.1f%%)", fuel, fuelPercent * 100.0f);
-
-            // Color the progress bar based on remaining fuel
-            ImVec4 fuelColor;
-            if (fuelPercent > 0.5f)
+            if (guidanceLocked)
             {
-                fuelColor = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
-            }
-            else if (fuelPercent > 0.25f)
-            {
-                fuelColor = ImVec4(0.8f, 0.8f, 0.0f, 1.0f);
+                std::snprintf(buffer, sizeof(buffer), "%.1f m", trackedTargetRange);
+                drawReadoutRow("Target range", buffer, textBright);
             }
             else
             {
-                fuelColor = ImVec4(0.8f, 0.0f, 0.0f, 1.0f);
+                drawReadoutRow("Target range", "No lock", textDim);
             }
-
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, fuelColor);
-            ImGui::ProgressBar(fuelPercent, ImVec2(-1, 0), "");
-            ImGui::PopStyleColor();
-
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-
-            ImGui::Spacing();
-
-            // Status information
-            if (position.y <= 0.001f && m_groundEnabled)
+            if (m_closestTargetDistance < 999999.0f)
             {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "⚠ Missile is on the ground");
+                std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance);
+                drawReadoutRow("Closest pass", buffer, textBright);
             }
-
-            if (m_missile->isGuidanceEnabled() && m_missile->hasTarget())
+            else
             {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Guidance active - Target locked");
+                drawReadoutRow("Closest pass", "Not available", textDim);
             }
-            else if (m_missile->isGuidanceEnabled())
-            {
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "⚠ Guidance active - No target");
-            }
-
-            ImGui::EndChild();
-            ImGui::EndTabItem();
+            ImGui::EndTable();
         }
+        endCard();
 
-        ImGui::EndTabBar();
+        beginCard("TelemetryCard", 220.0f);
+        drawCardHeader("Missile Telemetry", "Live position, kinematics, and altitude readout for the current missile object.");
+        if (ImGui::BeginTable("TelemetryTable", 2, readoutTableFlags))
+        {
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m", missilePosition.x, missilePosition.y, missilePosition.z);
+            drawReadoutRow("Position", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s", missileVelocity.x, missileVelocity.y, missileVelocity.z);
+            drawReadoutRow("Velocity", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s^2", missileAcceleration.x, missileAcceleration.y, missileAcceleration.z);
+            drawReadoutRow("Acceleration", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m/s", missileSpeed);
+            drawReadoutRow("Speed", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", missileAltitude);
+            drawReadoutRow("Altitude", buffer, missileAltitude > 0.0f ? textBright : accentAmber);
+            std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
+            drawReadoutRow("Flight time", buffer, textBright);
+            ImGui::EndTable();
+        }
+        endCard();
+
+        beginCard("EngineCard", 208.0f);
+        drawCardHeader("Engine And Guidance", "Propulsion reserve, seeker state, and live control authority.");
+        ImGui::TextColored(thrustEnabled ? accentGreen : textDim, "%s", thrustEnabled ? "BOOSTER ACTIVE" : "BOOSTER OFF");
+        ImGui::TextColored(guidanceLocked ? accentGreen : (guidanceEnabled ? accentAmber : textDim),
+                           "%s",
+                           guidanceLocked ? "SEEKER LOCKED" : (guidanceEnabled ? "SEEKER SEARCHING" : "GUIDANCE DISABLED"));
+        ImGui::Text("Fuel remaining: %.1f kg", fuel);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, fuelColor);
+        ImGui::ProgressBar(fuelPercent, ImVec2(-1.0f, 10.0f), "");
+        ImGui::PopStyleColor();
+
+        if (ImGui::BeginTable("EngineTable", 2, readoutTableFlags))
+        {
+            char buffer[96];
+            std::snprintf(buffer, sizeof(buffer), "%.0f N", m_missile->getThrust());
+            drawReadoutRow("Thrust command", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
+            drawReadoutRow("Burn rate", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.2f", m_navigationGain);
+            drawReadoutRow("Navigation gain", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.0f N", m_maxSteeringForce);
+            drawReadoutRow("Max steering", buffer, textBright);
+            ImGui::EndTable();
+        }
+        endCard();
+
+        beginCard("SceneCard", 162.0f);
+        drawCardHeader("Scene Monitor", "Quick camera and environment readout while the simulation keeps running.");
+        if (ImGui::BeginTable("SceneMonitorTable", 2, readoutTableFlags))
+        {
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+            drawReadoutRow("Camera position", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f deg", m_renderer->getCameraFOV());
+            drawReadoutRow("Camera FOV", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f", m_renderer->getCameraSpeed());
+            drawReadoutRow("Camera speed", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.2f m/s^2", m_physicsEngine->getGravity());
+            drawReadoutRow("Gravity", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", m_physicsEngine->getAirDensity());
+            drawReadoutRow("Air density", buffer, textBright);
+            ImGui::EndTable();
+        }
+        ImGui::TextDisabled(m_enableMouseCamera ? "Mouse capture enabled." : "Mouse capture released.");
+        endCard();
+
+        ImGui::End();
     }
-
-    ImGui::End();
 }
 
 void Application::createTarget(const glm::vec3 &position, float radius)

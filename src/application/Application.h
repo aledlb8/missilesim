@@ -104,6 +104,7 @@ private:
     float m_groundRestitution = 0.5f;
     
     // UI properties
+    bool m_showUI = true;
     float m_initialVelocity[3] = {0.0f, 0.0f, 50.0f};  // Initial velocity in m/s
     float m_initialPosition[3] = {0.0f, 0.0f, 0.0f};   // Initial position in m
     float m_mass = 100.0f;                            // Mass in kg
