@@ -1713,17 +1713,22 @@ void Application::updateFighterJetCamera()
         return;
     }
 
-    Target *trackedTarget = getTrackedMissileTarget();
-    if (trackedTarget == nullptr)
+    Target *focusTarget = getTrackedMissileTarget();
+    if (focusTarget == nullptr)
+    {
+        focusTarget = findBestTarget();
+    }
+
+    if (focusTarget == nullptr)
     {
         return;
     }
 
     const glm::vec3 fallbackForward = safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f));
-    glm::vec3 forward = safeNormalize(trackedTarget->getVelocity(), glm::vec3(0.0f));
+    glm::vec3 forward = safeNormalize(focusTarget->getVelocity(), glm::vec3(0.0f));
     if (glm::length2(forward) < 0.0001f && m_missile)
     {
-        forward = safeNormalize(trackedTarget->getPosition() - m_missile->getPosition(), fallbackForward);
+        forward = safeNormalize(focusTarget->getPosition() - m_missile->getPosition(), fallbackForward);
     }
     if (glm::length2(forward) < 0.0001f)
     {
@@ -1731,9 +1736,9 @@ void Application::updateFighterJetCamera()
     }
 
     const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-    const glm::vec3 targetPosition = trackedTarget->getPosition();
-    const float targetSpeed = glm::length(trackedTarget->getVelocity());
-    const float targetRadius = std::max(trackedTarget->getRadius(), 1.0f);
+    const glm::vec3 targetPosition = focusTarget->getPosition();
+    const float targetSpeed = glm::length(focusTarget->getVelocity());
+    const float targetRadius = std::max(focusTarget->getRadius(), 1.0f);
     const float chaseDistance = std::clamp(targetRadius * 4.0f + targetSpeed * 0.05f, 12.0f, 40.0f);
     const float chaseHeight = std::clamp(targetRadius * 1.5f + targetSpeed * 0.008f, 3.0f, 12.0f);
     const float lookAhead = std::clamp(targetRadius * 10.0f + targetSpeed * 0.15f, 20.0f, 150.0f);
