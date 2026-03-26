@@ -148,6 +148,13 @@ private:
     void launchMissile();
     void resetMissile();
     Target *findBestTarget();
+    bool projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
+    Target *findSeekerCueTarget() const;
+    Target *getTrackedMissileTarget() const;
+    const char *getMissileSeekerStateLabel() const;
+    const char *getMissileSeekerTrackLabel() const;
+    void updatePreLaunchSeekerLock();
+    void renderPreLaunchSeekerCue() const;
     void terminateMissileFlight(const glm::vec3 &position, bool createEffect = true);
 
     // Visual effects
@@ -201,6 +208,8 @@ private:
     float m_trajectoryTime = 12.0f;        // Time in seconds to predict trajectory
     TrajectoryPreviewCache m_trajectoryPreviewCache;
     std::chrono::milliseconds m_trajectoryPreviewRefreshInterval{100};
+    bool m_seekerCueEnabled = false;
+    float m_seekerCueRadiusPixels = 44.0f;
 
     // Simulation properties
     float m_timeStep = 0.01f; // Physics time step in seconds

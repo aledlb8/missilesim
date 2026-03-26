@@ -245,55 +245,82 @@ void Missile::clearTarget()
     m_selfDestructRequested = false;
 }
 
-void Missile::updateHeatSeeker(const std::vector<Flare *> &flares, float deltaTime)
+void Missile::updateHeatSeeker(const std::vector<Target *> &targets, const std::vector<Flare *> &flares, float deltaTime)
 {
-    if (!m_hasTarget || deltaTime <= 0.0f)
+    if (!m_guidanceEnabled || !m_thrustEnabled || deltaTime <= 0.0f)
     {
         return;
     }
 
-    if (m_targetObject == nullptr || !m_targetObject->isActive())
-    {
-        return;
-    }
-
-    const glm::vec3 seekerForward = normalizeOrFallback(m_velocity, m_thrustDirection);
+    const glm::vec3 seekerForward = (!m_thrustEnabled || glm::length2(m_velocity) < 0.0001f)
+                                        ? normalizeOrFallback(m_thrustDirection, m_velocity)
+                                        : normalizeOrFallback(m_velocity, m_thrustDirection);
     const float seekerCosLimit = std::cos(glm::radians(m_trackingAngleDegrees));
-    const glm::vec3 primaryTargetPosition = m_targetObject->getPosition();
-    const glm::vec3 primaryTargetVelocity = m_targetObject->getVelocity();
-    const glm::vec3 primaryRelativePosition = primaryTargetPosition - m_position;
-    const float primaryDistanceSq = std::max(glm::dot(primaryRelativePosition, primaryRelativePosition), 1.0f);
-    const glm::vec3 primaryDirection = normalizeOrFallback(primaryRelativePosition, seekerForward);
-    const float primaryAlignment = glm::clamp(glm::dot(seekerForward, primaryDirection), -1.0f, 1.0f);
     const float resistanceBlend = glm::clamp(m_countermeasureResistance, 0.0f, 1.0f);
 
-    float bestScore = -1.0f;
-    float primaryScore = -1.0f;
+    Target *bestTarget = nullptr;
+    float bestTargetScore = -1.0f;
+    for (Target *target : targets)
+    {
+        if (target == nullptr || !target->isActive())
+        {
+            continue;
+        }
+
+        const glm::vec3 targetPosition = target->getPosition();
+        const glm::vec3 targetVelocity = target->getVelocity();
+        const glm::vec3 relativePosition = targetPosition - m_position;
+        const float distanceSq = std::max(glm::dot(relativePosition, relativePosition), 1.0f);
+        const glm::vec3 directionToTarget = normalizeOrFallback(relativePosition, seekerForward);
+        const float alignment = glm::clamp(glm::dot(seekerForward, directionToTarget), -1.0f, 1.0f);
+        if (alignment < seekerCosLimit)
+        {
+            continue;
+        }
+
+        float targetHeat = std::max(target->getHeatSignature(), 0.0f);
+        const float targetSpeed = glm::length(targetVelocity);
+        if (targetSpeed > 0.5f)
+        {
+            const glm::vec3 exhaustDirection = -glm::normalize(targetVelocity);
+            const glm::vec3 missileFromTarget = normalizeOrFallback(m_position - targetPosition, exhaustDirection);
+            const float rearAspect = glm::clamp(glm::dot(missileFromTarget, exhaustDirection), 0.0f, 1.0f);
+            targetHeat *= glm::mix(0.55f, 1.0f, rearAspect);
+        }
+
+        const float angleWeight = glm::smoothstep(seekerCosLimit, 1.0f, alignment);
+        const bool retainingPrimaryTrack = !m_trackingDecoy && target == m_targetObject;
+        const float primaryTrackBias = retainingPrimaryTrack
+                                           ? (1.0f + m_lockRetentionBias + (resistanceBlend * 1.35f))
+                                           : 1.0f;
+        const float score = (targetHeat / distanceSq) * angleWeight * primaryTrackBias;
+        if (score > bestTargetScore)
+        {
+            bestTargetScore = score;
+            bestTarget = target;
+        }
+    }
+
+    if (bestTarget == nullptr)
+    {
+        clearTarget();
+        return;
+    }
+
+    const glm::vec3 primaryTargetPosition = bestTarget->getPosition();
+    const glm::vec3 primaryTargetVelocity = bestTarget->getVelocity();
+    const glm::vec3 primaryRelativePosition = primaryTargetPosition - m_position;
+    const glm::vec3 primaryDirection = normalizeOrFallback(primaryRelativePosition, seekerForward);
+    float bestScore = bestTargetScore;
+    float primaryScore = bestTargetScore;
     glm::vec3 bestPosition = primaryTargetPosition;
     glm::vec3 bestVelocity = primaryTargetVelocity;
     const Flare *bestFlare = nullptr;
     bool bestIsDecoy = false;
 
-    if (primaryAlignment >= seekerCosLimit)
-    {
-        float targetHeat = std::max(m_targetObject->getHeatSignature(), 0.0f);
-        const float targetSpeed = glm::length(primaryTargetVelocity);
-        if (targetSpeed > 0.5f)
-        {
-            const glm::vec3 exhaustDirection = -glm::normalize(primaryTargetVelocity);
-            const glm::vec3 missileFromTarget = normalizeOrFallback(m_position - primaryTargetPosition, exhaustDirection);
-            const float rearAspect = glm::clamp(glm::dot(missileFromTarget, exhaustDirection), 0.0f, 1.0f);
-            targetHeat *= glm::mix(0.55f, 1.0f, rearAspect);
-        }
-
-        const float angleWeight = glm::smoothstep(seekerCosLimit, 1.0f, primaryAlignment);
-        const bool retainingPrimaryTrack = !m_trackingDecoy;
-        const float primaryTrackBias = retainingPrimaryTrack
-                                           ? (1.0f + m_lockRetentionBias + (resistanceBlend * 1.35f))
-                                           : 1.0f;
-        primaryScore = (targetHeat / primaryDistanceSq) * angleWeight * primaryTrackBias;
-        bestScore = primaryScore;
-    }
+    m_targetObject = bestTarget;
+    m_hasTarget = true;
+    m_selfDestructRequested = false;
 
     for (Flare *flare : flares)
     {

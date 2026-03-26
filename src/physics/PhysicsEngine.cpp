@@ -75,7 +75,7 @@ void PhysicsEngine::update(float deltaTime)
             {
                 Missile *missile = static_cast<Missile *>(object);
                 missile->setGroundReferenceAltitude(m_groundLevel);
-                missile->updateHeatSeeker(m_flares, deltaTime);
+                missile->updateHeatSeeker(m_targets, m_flares, deltaTime);
 
                 // Apply missile guidance
                 if (missile->isGuidanceEnabled() && missile->hasTarget())

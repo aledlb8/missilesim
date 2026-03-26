@@ -71,7 +71,7 @@ public:
     bool isTrackingDecoy() const { return m_trackingDecoy; }
 
     // Apply guidance force
-    void updateHeatSeeker(const std::vector<Flare *> &flares, float deltaTime);
+    void updateHeatSeeker(const std::vector<Target *> &targets, const std::vector<Flare *> &flares, float deltaTime);
     void applyGuidance(float deltaTime);
     bool consumeSelfDestructRequest();
 

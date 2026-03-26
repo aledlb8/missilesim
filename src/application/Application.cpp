@@ -738,6 +738,7 @@ void Application::processInput(float deltaTime)
 
     if (uiCapturesKeyboard)
     {
+        updatePreLaunchSeekerLock();
         return;
     }
 
@@ -802,6 +803,26 @@ void Application::processInput(float deltaTime)
             m_renderer->moveCameraUp(-cameraStep);
         }
     }
+
+    static bool seekerCuePressed = false;
+    if (glfwGetKey(m_window, GLFW_KEY_R) == GLFW_PRESS)
+    {
+        if (!seekerCuePressed)
+        {
+            m_seekerCueEnabled = !m_seekerCueEnabled;
+            if (!m_seekerCueEnabled && !m_missileInFlight && m_missile)
+            {
+                m_missile->clearTarget();
+            }
+            seekerCuePressed = true;
+        }
+    }
+    else
+    {
+        seekerCuePressed = false;
+    }
+
+    updatePreLaunchSeekerLock();
 
     static bool launchKeyPressed = false;
     if (glfwGetKey(m_window, GLFW_KEY_F) == GLFW_PRESS)
@@ -1293,6 +1314,8 @@ void Application::render()
                     }
                 }
 
+                renderPreLaunchSeekerCue();
+
                 ImGui::Render();
                 ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             }
@@ -1334,17 +1357,12 @@ void Application::renderMinimalHUD()
         }
     }
 
-    Target *trackedTarget = m_missile->getTargetObject();
-    if ((trackedTarget == nullptr || !trackedTarget->isActive()) && m_cameraMode == CameraMode::FIGHTER_JET)
-    {
-        trackedTarget = findBestTarget();
-    }
-
-    const bool validTrackedTarget = (trackedTarget != nullptr && trackedTarget->isActive());
+    Target *trackedTarget = getTrackedMissileTarget();
+    const bool validTrackedTarget = (trackedTarget != nullptr);
     const bool missileWarning = validTrackedTarget && trackedTarget->isMissileWarningActive();
-    const char *seekerTrack = m_missile->isTrackingDecoy() ? "FLARE" : "AIRFRAME";
+    const char *seekerTrack = getMissileSeekerTrackLabel();
 
-    ImGui::SetNextWindowSize(ImVec2(320.0f, 230.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 270.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Flight HUD"))
     {
         ImGui::Text("Fuel: %.1f kg", fuel);
@@ -1374,6 +1392,16 @@ void Application::renderMinimalHUD()
         if (ImGui::Button("Fighter Jet"))
         {
             setCameraMode(CameraMode::FIGHTER_JET);
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (ImGui::Button("Reset Missile", ImVec2(-1.0f, 0.0f)))
+        {
+            resetMissile();
+        }
+        if (ImGui::Button("Reset Target", ImVec2(-1.0f, 0.0f)))
+        {
+            resetTargets();
         }
         ImGui::TextDisabled(m_cameraMode == CameraMode::FREE
                                 ? "Free cam: RMB look, WASD move, C frame."
@@ -1698,13 +1726,8 @@ void Application::updateFighterJetCamera()
         return;
     }
 
-    Target *trackedTarget = m_missile ? m_missile->getTargetObject() : nullptr;
-    if (trackedTarget == nullptr || !trackedTarget->isActive())
-    {
-        trackedTarget = findBestTarget();
-    }
-
-    if (trackedTarget == nullptr || !trackedTarget->isActive())
+    Target *trackedTarget = getTrackedMissileTarget();
+    if (trackedTarget == nullptr)
     {
         return;
     }
@@ -2106,7 +2129,7 @@ void Application::renderPredictedTrajectory()
 
     try
     {
-        Target *target = findBestTarget();
+        Target *target = getTrackedMissileTarget();
         if (!target)
         {
             invalidateTrajectoryPreviewCache();
@@ -2324,17 +2347,13 @@ void Application::setupUI()
     const bool thrustEnabled = m_missile->isThrustEnabled();
     const bool guidanceEnabled = m_missile->isGuidanceEnabled();
     const bool boosterBurnedOut = !thrustEnabled && fuel <= 0.0f;
-    const char *seekerState = m_missile->isTrackingDecoy() ? "Tracking flare" : "Tracking airframe";
+    const char *seekerState = getMissileSeekerStateLabel();
     const Atmosphere::State missileAtmosphere = m_physicsEngine->getAtmosphereState(missileAltitude);
     const float missileMach = (missileAtmosphere.speedOfSoundMetersPerSecond > 0.0f)
                                   ? (missileSpeed / missileAtmosphere.speedOfSoundMetersPerSecond)
                                   : 0.0f;
 
-    Target *trackedTarget = m_missile->getTargetObject();
-    if ((trackedTarget == nullptr || !trackedTarget->isActive()) && activeTargets > 0)
-    {
-        trackedTarget = findBestTarget();
-    }
+    Target *trackedTarget = getTrackedMissileTarget();
 
     int trackedTargetIndex = -1;
     if (trackedTarget != nullptr)
@@ -2349,7 +2368,7 @@ void Application::setupUI()
         }
     }
 
-    const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr && trackedTarget->isActive();
+    const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr;
     const bool missileWarning = guidanceLocked && trackedTarget->isMissileWarningActive();
     const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
 
@@ -2607,7 +2626,7 @@ void Application::setupUI()
         ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
 
         ImGui::TextDisabled("Camera: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
-        ImGui::TextDisabled("Controls: RMB look, WASD move (Free cam), Space/Ctrl vertical, Enter pause, F launch, C frame free cam, Tab toggle UI");
+        ImGui::TextDisabled("Controls: RMB look, WASD move (Free cam), Space/Ctrl vertical, Enter pause, R seeker cue, F fire on lock, C frame free cam, Tab toggle UI");
     }
     ImGui::End();
 
@@ -2916,7 +2935,7 @@ void Application::setupUI()
 
             const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
             ImGui::TextDisabled("Camera: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
-            ImGui::TextDisabled("Controls: RMB look, WASD move (Free cam), Space/Ctrl vertical, Enter pause, F launch, C frame free cam, Tab toggle UI");
+            ImGui::TextDisabled("Controls: RMB look, WASD move (Free cam), Space/Ctrl vertical, Enter pause, R seeker cue, F fire on lock, C frame free cam, Tab toggle UI");
         }
 
         const int activeTargets = countActiveTargets();
@@ -2934,17 +2953,13 @@ void Application::setupUI()
         const bool thrustEnabled = m_missile->isThrustEnabled();
         const bool guidanceEnabled = m_missile->isGuidanceEnabled();
         const bool boosterBurnedOut = !thrustEnabled && fuel <= 0.0f;
-        const char *seekerState = m_missile->isTrackingDecoy() ? "Tracking flare" : "Tracking airframe";
+        const char *seekerState = getMissileSeekerStateLabel();
         Atmosphere::State missileAtmosphere = m_physicsEngine->getAtmosphereState(missileAltitude);
         const float missileMach = (missileAtmosphere.speedOfSoundMetersPerSecond > 0.0f)
                                       ? (missileSpeed / missileAtmosphere.speedOfSoundMetersPerSecond)
                                       : 0.0f;
 
-        Target *trackedTarget = m_missile->getTargetObject();
-        if ((trackedTarget == nullptr || !trackedTarget->isActive()) && activeTargets > 0)
-        {
-            trackedTarget = findBestTarget();
-        }
+        Target *trackedTarget = getTrackedMissileTarget();
 
         int trackedTargetIndex = -1;
         if (trackedTarget != nullptr)
@@ -2959,7 +2974,7 @@ void Application::setupUI()
             }
         }
 
-        const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr && trackedTarget->isActive();
+        const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr;
         const bool missileWarning = guidanceLocked && trackedTarget->isMissileWarningActive();
         const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
 
@@ -3388,11 +3403,7 @@ void Application::setupUI()
             fuelColor = accentAmber;
         }
 
-        Target *trackedTarget = m_missile->getTargetObject();
-        if ((trackedTarget == nullptr || !trackedTarget->isActive()) && activeTargets > 0)
-        {
-            trackedTarget = findBestTarget();
-        }
+        Target *trackedTarget = getTrackedMissileTarget();
 
         int trackedTargetIndex = -1;
         if (trackedTarget != nullptr)
@@ -3407,7 +3418,7 @@ void Application::setupUI()
             }
         }
 
-        const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr && trackedTarget->isActive();
+        const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr;
         const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
 
         const char *missionState = "Standby";
@@ -3514,7 +3525,7 @@ void Application::setupUI()
             popButtonPalette();
 
             ImGui::PushStyleColor(ImGuiCol_Text, textDim);
-            ImGui::TextUnformatted(m_missileInFlight ? "Live flight in progress" : "Launch hotkey: F");
+            ImGui::TextUnformatted(m_missileInFlight ? "Live flight in progress" : "Press R to arm seeker, center target, then press F");
             ImGui::PopStyleColor();
 
             ImGui::EndTable();
@@ -4109,6 +4120,10 @@ void Application::resetTargets()
         }
 
         // Clear existing targets
+        if (m_missile)
+        {
+            m_missile->clearTarget();
+        }
         m_targets.clear();
         clearFlares();
         invalidateTrajectoryPreviewCache();
@@ -4238,84 +4253,37 @@ void Application::launchMissile()
 {
     try
     {
-        // Reset missile position and velocity
-        resetMissile();
+        if (m_missileInFlight)
+        {
+            return;
+        }
 
-        // Safety check for null missile
+        if (!m_missile)
+        {
+            resetMissile();
+        }
+
         if (!m_missile)
         {
             std::cerr << "ERROR: Missile is null in launchMissile()" << std::endl;
             return;
         }
 
-        // Debug target count
-        std::cout << "Target count: " << m_targets.size() << std::endl;
-
-        // Validate targets before finding the best one
-        if (m_targets.empty())
+        Target *lockedTarget = getTrackedMissileTarget();
+        if (!lockedTarget)
         {
-            std::cout << "No targets available, creating new ones" << std::endl;
-            resetTargets();
-            if (m_targets.empty())
-            {
-                std::cerr << "ERROR: Failed to create targets" << std::endl;
-                return;
-            }
+            std::cout << "Launch blocked: seeker has no target lock" << std::endl;
+            return;
         }
 
-        // Find the best target to track
-        Target *target = findBestTarget();
+        const glm::vec3 stagedVelocity(m_initialVelocity[0], m_initialVelocity[1], m_initialVelocity[2]);
+        const glm::vec3 cameraForward = m_renderer
+                                            ? safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f))
+                                            : glm::vec3(0.0f, 0.0f, 1.0f);
+        const glm::vec3 thrustDirection = safeNormalize(cameraForward, safeNormalize(stagedVelocity, glm::vec3(0.0f, 0.0f, 1.0f)));
 
-        // Debug target found
-        if (target)
-        {
-            std::cout << "Found target at position: ("
-                      << target->getPosition().x << ", "
-                      << target->getPosition().y << ", "
-                      << target->getPosition().z << ")" << std::endl;
-
-            // Validate target position
-            const glm::vec3 &targetPos = target->getPosition();
-            if (std::isnan(targetPos.x) || std::isnan(targetPos.y) || std::isnan(targetPos.z) ||
-                std::isinf(targetPos.x) || std::isinf(targetPos.y) || std::isinf(targetPos.z))
-            {
-                std::cerr << "ERROR: Target position contains invalid values" << std::endl;
-                return;
-            }
-        }
-        else
-        {
-            std::cout << "No active target found, creating new targets" << std::endl;
-            resetTargets();
-            target = findBestTarget();
-            if (!target)
-            {
-                std::cerr << "ERROR: Still no active target found after reset" << std::endl;
-                return;
-            }
-        }
-
-        // Set the target for guidance if a valid target was found
-        if (target)
-        {
-            m_physicsEngine->setMissileTarget(m_missile.get(), target);
-        }
-
-        // Apply initial thrust to the missile
-        glm::vec3 thrustDirection;
-
-        // If we have a target, aim initial thrust toward it
-        if (target)
-        {
-            thrustDirection = glm::normalize(target->getPosition() - m_missile->getPosition());
-        }
-        // Otherwise launch upward with a slight forward tilt
-        else
-        {
-            thrustDirection = glm::normalize(glm::vec3(0.0f, 0.5f, 1.0f));
-        }
-
-        // Set thrust parameters
+        // Set thrust parameters and preserve the pre-launch lock.
+        m_missile->setGuidanceEnabled(m_guidanceEnabled);
         m_missile->setThrust(m_missileThrust);
         m_missile->setThrustDirection(thrustDirection);
         m_missile->setFuel(m_missileFuel);
@@ -4324,14 +4292,19 @@ void Application::launchMissile()
         // Enable thrust engine
         m_missile->setThrustEnabled(true);
 
-        // Apply an initial impulse in the thrust direction
-        float initialSpeed = m_missileThrust / 50.0f; // Scale down for reasonable initial velocity
+        // Fire in the player's aim direction after a valid seeker lock.
+        float initialSpeed = glm::length(stagedVelocity);
+        if (initialSpeed < 0.1f)
+        {
+            initialSpeed = std::max(m_missileThrust / 50.0f, 40.0f);
+        }
         m_missile->setVelocity(thrustDirection * initialSpeed);
 
         // Log launch
         std::cout << "Missile launched with thrust: " << m_missileThrust
-                  << " N, fuel: " << m_missileFuel << " kg" << std::endl;
+                  << " N, fuel: " << m_missileFuel << " kg, target lock retained" << std::endl;
 
+        m_seekerCueEnabled = false;
         m_missileInFlight = true;
         m_missileFlightTime = 0.0f;
         m_closestTargetDistance = 1000000.0f;
@@ -4489,6 +4462,213 @@ Target *Application::findBestTarget()
 
     // No active targets found
     return nullptr;
+}
+
+bool Application::projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter) const
+{
+    if (!m_renderer || !target || !target->isActive())
+    {
+        return false;
+    }
+
+    const int safeHeight = std::max(m_height, 1);
+    const float aspectRatio = static_cast<float>(m_width) / static_cast<float>(safeHeight);
+    const float tanHalfFovY = std::tan(glm::radians(m_renderer->getCameraFOV() * 0.5f));
+    if (tanHalfFovY <= 0.0f)
+    {
+        return false;
+    }
+
+    const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
+    const glm::vec3 cameraForward = safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 cameraRight = safeNormalize(m_renderer->getCameraRight(), glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 cameraUp = safeNormalize(m_renderer->getCameraUp(), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    const glm::vec3 aimPoint = target->getPosition() + glm::vec3(0.0f, target->getRadius() * 0.3f, 0.0f);
+    const glm::vec3 toTarget = aimPoint - cameraPosition;
+    const float forwardDepth = glm::dot(toTarget, cameraForward);
+    if (forwardDepth <= 0.1f)
+    {
+        return false;
+    }
+
+    const float ndcX = glm::dot(toTarget, cameraRight) / (forwardDepth * tanHalfFovY * aspectRatio);
+    const float ndcY = glm::dot(toTarget, cameraUp) / (forwardDepth * tanHalfFovY);
+    if (std::abs(ndcX) > 1.0f || std::abs(ndcY) > 1.0f)
+    {
+        return false;
+    }
+
+    screenPosition.x = (ndcX + 1.0f) * 0.5f * m_width;
+    screenPosition.y = (1.0f - ((ndcY + 1.0f) * 0.5f)) * safeHeight;
+
+    if (pixelDistanceFromCenter != nullptr)
+    {
+        const float offsetX = screenPosition.x - (m_width * 0.5f);
+        const float offsetY = screenPosition.y - (safeHeight * 0.5f);
+        *pixelDistanceFromCenter = std::sqrt((offsetX * offsetX) + (offsetY * offsetY));
+    }
+
+    return true;
+}
+
+Target *Application::findSeekerCueTarget() const
+{
+    if (!m_renderer || !m_missile || m_missileInFlight || !m_seekerCueEnabled || !m_guidanceEnabled)
+    {
+        return nullptr;
+    }
+
+    Target *lockedTarget = getTrackedMissileTarget();
+    ImVec2 lockedScreenPosition(0.0f, 0.0f);
+    if (lockedTarget != nullptr && projectTargetToSeekerScreen(lockedTarget, lockedScreenPosition, nullptr))
+    {
+        return lockedTarget;
+    }
+
+    const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
+    Target *bestTarget = nullptr;
+    float bestPixelDistance = std::numeric_limits<float>::max();
+    float bestRange = std::numeric_limits<float>::max();
+
+    for (const auto &target : m_targets)
+    {
+        if (!target || !target->isActive())
+        {
+            continue;
+        }
+
+        ImVec2 screenPosition(0.0f, 0.0f);
+        float pixelDistance = 0.0f;
+        if (!projectTargetToSeekerScreen(target.get(), screenPosition, &pixelDistance))
+        {
+            continue;
+        }
+
+        if (pixelDistance > m_seekerCueRadiusPixels)
+        {
+            continue;
+        }
+
+        const float targetRange = glm::length(target->getPosition() - cameraPosition);
+        if (pixelDistance < bestPixelDistance || (std::abs(pixelDistance - bestPixelDistance) < 0.5f && targetRange < bestRange))
+        {
+            bestTarget = target.get();
+            bestPixelDistance = pixelDistance;
+            bestRange = targetRange;
+        }
+    }
+
+    return bestTarget;
+}
+
+Target *Application::getTrackedMissileTarget() const
+{
+    if (!m_missile || !m_missile->hasTarget())
+    {
+        return nullptr;
+    }
+
+    Target *trackedTarget = m_missile->getTargetObject();
+    if (trackedTarget == nullptr)
+    {
+        return nullptr;
+    }
+
+    for (const auto &target : m_targets)
+    {
+        if (target.get() == trackedTarget)
+        {
+            return target->isActive() ? target.get() : nullptr;
+        }
+    }
+
+    return nullptr;
+}
+
+const char *Application::getMissileSeekerStateLabel() const
+{
+    if (!m_missile || !m_missile->isGuidanceEnabled())
+    {
+        return "Disabled";
+    }
+
+    if (!m_missileInFlight && !m_seekerCueEnabled)
+    {
+        return "Standby";
+    }
+
+    if (!m_missile->hasTarget())
+    {
+        return "Searching";
+    }
+
+    return m_missile->isTrackingDecoy() ? "Tracking flare" : "Tracking airframe";
+}
+
+const char *Application::getMissileSeekerTrackLabel() const
+{
+    if (!m_missile || !m_missile->isGuidanceEnabled())
+    {
+        return "DISABLED";
+    }
+
+    if (!m_missileInFlight && !m_seekerCueEnabled)
+    {
+        return "STBY";
+    }
+
+    if (!m_missile->hasTarget())
+    {
+        return "SEARCH";
+    }
+
+    return m_missile->isTrackingDecoy() ? "FLARE" : "AIRFRAME";
+}
+
+void Application::updatePreLaunchSeekerLock()
+{
+    if (!m_missile || m_missileInFlight)
+    {
+        return;
+    }
+
+    if (!m_seekerCueEnabled || !m_guidanceEnabled)
+    {
+        m_missile->clearTarget();
+        return;
+    }
+
+    Target *cueTarget = findSeekerCueTarget();
+    if (cueTarget)
+    {
+        m_missile->setTargetObject(cueTarget);
+    }
+    else
+    {
+        m_missile->clearTarget();
+    }
+}
+
+void Application::renderPreLaunchSeekerCue() const
+{
+    if (!m_seekerCueEnabled || !m_renderer || !m_missile || m_missileInFlight || ImGui::GetCurrentContext() == nullptr)
+    {
+        return;
+    }
+
+    ImVec2 cueCenter(m_width * 0.5f, m_height * 0.5f);
+    bool hasLock = false;
+    if (Target *trackedTarget = getTrackedMissileTarget())
+    {
+        hasLock = projectTargetToSeekerScreen(trackedTarget, cueCenter, nullptr);
+    }
+
+    const ImU32 ringColor = hasLock ? IM_COL32(255, 76, 76, 255) : IM_COL32(255, 255, 255, 240);
+    ImDrawList *drawList = ImGui::GetForegroundDrawList();
+    drawList->AddCircle(cueCenter, m_seekerCueRadiusPixels, ringColor, 64, 2.2f);
+    drawList->AddLine(ImVec2(cueCenter.x - 7.0f, cueCenter.y), ImVec2(cueCenter.x + 7.0f, cueCenter.y), ringColor, 1.2f);
+    drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - 7.0f), ImVec2(cueCenter.x, cueCenter.y + 7.0f), ringColor, 1.2f);
 }
 
 void Application::terminateMissileFlight(const glm::vec3 &position, bool createEffect)
