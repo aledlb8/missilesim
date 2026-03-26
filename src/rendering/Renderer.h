@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstddef>
+#include <filesystem>
 #include <vector>
 #include <memory>
 #include <string>
@@ -91,6 +92,14 @@ private:
     void renderWorldGuides();
     void renderGroundCircle(float radius, const glm::vec3 &color, int segments = 48);
     void renderAirspaceBeacon(const glm::vec3 &basePosition, float height, const glm::vec3 &color);
+    bool loadObjModel(const std::string &relativePath,
+                      std::vector<Vertex> &vertices,
+                      std::vector<unsigned int> &indices,
+                      const glm::vec3 &baseColor,
+                      const glm::mat4 &preTransform,
+                      float targetExtent);
+    std::filesystem::path resolveAssetPath(const std::string &relativePath) const;
+    void normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const;
     void ensureDebugBufferCapacity(std::size_t vertexCount);
     void updateCameraVectors();
     glm::mat4 buildViewMatrix() const;

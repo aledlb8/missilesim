@@ -81,10 +81,27 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # Link libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui)
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    MISSILESIM_SOURCE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+)
+
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${INCLUDES}
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/missile.obj
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/missile.obj
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/jet.obj
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/jet.obj
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/THIRD_PARTY_ASSETS.md
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/THIRD_PARTY_ASSETS.md
 )

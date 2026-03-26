@@ -4,10 +4,72 @@
 #include "../objects/Target.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
+#include <sstream>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/norm.hpp>
+
+#ifndef MISSILESIM_SOURCE_ASSET_DIR
+#define MISSILESIM_SOURCE_ASSET_DIR ""
+#endif
+
+namespace
+{
+struct ObjVertexRef
+{
+    int position = 0;
+    int normal = 0;
+    bool hasNormal = false;
+};
+
+int resolveObjIndex(int rawIndex, std::size_t count)
+{
+    if (rawIndex > 0)
+    {
+        return rawIndex - 1;
+    }
+    if (rawIndex < 0)
+    {
+        return static_cast<int>(count) + rawIndex;
+    }
+    return -1;
+}
+
+bool parseObjVertexRef(const std::string &token, ObjVertexRef &result)
+{
+    std::stringstream tokenStream(token);
+    std::string positionToken;
+    std::string texcoordToken;
+    std::string normalToken;
+
+    if (!std::getline(tokenStream, positionToken, '/') || positionToken.empty())
+    {
+        return false;
+    }
+
+    std::getline(tokenStream, texcoordToken, '/');
+    std::getline(tokenStream, normalToken, '/');
+
+    try
+    {
+        result.position = std::stoi(positionToken);
+        if (!normalToken.empty())
+        {
+            result.normal = std::stoi(normalToken);
+            result.hasNormal = true;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+}
 
 // Vertex shader source
 const char *vertexShaderSource = R"(
@@ -342,6 +404,210 @@ void Renderer::createShaders()
     glDeleteShader(fragmentShader);
 }
 
+std::filesystem::path Renderer::resolveAssetPath(const std::string &relativePath) const
+{
+    const std::filesystem::path requested(relativePath);
+    const std::filesystem::path sourceAssetRoot(MISSILESIM_SOURCE_ASSET_DIR);
+
+    const std::filesystem::path candidates[] = {
+        requested,
+        std::filesystem::current_path() / requested,
+        std::filesystem::current_path() / "assets" / requested,
+        sourceAssetRoot.empty() ? std::filesystem::path() : sourceAssetRoot / requested
+    };
+
+    for (const auto &candidate : candidates)
+    {
+        if (!candidate.empty() && std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return {};
+}
+
+void Renderer::normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const
+{
+    if (vertices.empty() || targetExtent <= 0.0f)
+    {
+        return;
+    }
+
+    glm::vec3 minCorner(std::numeric_limits<float>::max());
+    glm::vec3 maxCorner(std::numeric_limits<float>::lowest());
+
+    for (const Vertex &vertex : vertices)
+    {
+        minCorner = glm::min(minCorner, vertex.position);
+        maxCorner = glm::max(maxCorner, vertex.position);
+    }
+
+    const glm::vec3 center = (minCorner + maxCorner) * 0.5f;
+    const glm::vec3 extents = maxCorner - minCorner;
+    const float maxExtent = std::max(extents.x, std::max(extents.y, extents.z));
+    if (maxExtent <= 0.0001f)
+    {
+        return;
+    }
+
+    const float scale = targetExtent / maxExtent;
+    for (Vertex &vertex : vertices)
+    {
+        vertex.position = (vertex.position - center) * scale;
+        if (glm::length2(vertex.normal) > 0.000001f)
+        {
+            vertex.normal = glm::normalize(vertex.normal);
+        }
+        else
+        {
+            vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+    }
+}
+
+bool Renderer::loadObjModel(const std::string &relativePath,
+                            std::vector<Vertex> &vertices,
+                            std::vector<unsigned int> &indices,
+                            const glm::vec3 &baseColor,
+                            const glm::mat4 &preTransform,
+                            float targetExtent)
+{
+    vertices.clear();
+    indices.clear();
+
+    const std::filesystem::path assetPath = resolveAssetPath(relativePath);
+    if (assetPath.empty())
+    {
+        return false;
+    }
+
+    std::ifstream input(assetPath);
+    if (!input.is_open())
+    {
+        std::cerr << "Failed to open model asset: " << assetPath << std::endl;
+        return false;
+    }
+
+    std::vector<glm::vec3> positions;
+    std::vector<glm::vec3> normals;
+    const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(preTransform)));
+
+    std::string line;
+    while (std::getline(input, line))
+    {
+        if (line.empty() || line[0] == '#')
+        {
+            continue;
+        }
+
+        std::istringstream stream(line);
+        std::string prefix;
+        stream >> prefix;
+
+        if (prefix == "v")
+        {
+            glm::vec3 position(0.0f);
+            stream >> position.x >> position.y >> position.z;
+            positions.push_back(position);
+        }
+        else if (prefix == "vn")
+        {
+            glm::vec3 normal(0.0f, 1.0f, 0.0f);
+            stream >> normal.x >> normal.y >> normal.z;
+            normals.push_back(glm::normalize(normal));
+        }
+        else if (prefix == "f")
+        {
+            std::vector<ObjVertexRef> faceRefs;
+            std::string token;
+            while (stream >> token)
+            {
+                ObjVertexRef ref;
+                if (parseObjVertexRef(token, ref))
+                {
+                    faceRefs.push_back(ref);
+                }
+            }
+
+            if (faceRefs.size() < 3)
+            {
+                continue;
+            }
+
+            for (std::size_t i = 1; i + 1 < faceRefs.size(); ++i)
+            {
+                const ObjVertexRef triangleRefs[3] = {faceRefs[0], faceRefs[i], faceRefs[i + 1]};
+                glm::vec3 transformedPositions[3];
+                glm::vec3 transformedNormals[3];
+                bool validTriangle = true;
+                bool hasTriangleNormals = true;
+
+                for (int j = 0; j < 3; ++j)
+                {
+                    const int positionIndex = resolveObjIndex(triangleRefs[j].position, positions.size());
+                    if (positionIndex < 0 || positionIndex >= static_cast<int>(positions.size()))
+                    {
+                        validTriangle = false;
+                        hasTriangleNormals = false;
+                        break;
+                    }
+
+                    transformedPositions[j] = glm::vec3(preTransform * glm::vec4(positions[static_cast<std::size_t>(positionIndex)], 1.0f));
+
+                    if (triangleRefs[j].hasNormal)
+                    {
+                        const int normalIndex = resolveObjIndex(triangleRefs[j].normal, normals.size());
+                        if (normalIndex >= 0 && normalIndex < static_cast<int>(normals.size()))
+                        {
+                            transformedNormals[j] = glm::normalize(normalMatrix * normals[static_cast<std::size_t>(normalIndex)]);
+                        }
+                        else
+                        {
+                            hasTriangleNormals = false;
+                        }
+                    }
+                    else
+                    {
+                        hasTriangleNormals = false;
+                    }
+                }
+
+                if (!validTriangle)
+                {
+                    continue;
+                }
+
+                glm::vec3 faceNormal = glm::cross(transformedPositions[1] - transformedPositions[0],
+                                                 transformedPositions[2] - transformedPositions[0]);
+                if (glm::length2(faceNormal) <= 0.000001f)
+                {
+                    faceNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+                }
+                else
+                {
+                    faceNormal = glm::normalize(faceNormal);
+                }
+
+                for (int j = 0; j < 3; ++j)
+                {
+                    vertices.push_back({transformedPositions[j], hasTriangleNormals ? transformedNormals[j] : faceNormal, baseColor});
+                    indices.push_back(static_cast<unsigned int>(vertices.size() - 1));
+                }
+            }
+        }
+    }
+
+    if (vertices.empty())
+    {
+        std::cerr << "Loaded empty model asset: " << assetPath << std::endl;
+        return false;
+    }
+
+    normalizeMesh(vertices, targetExtent);
+    return true;
+}
+
 void Renderer::createSimpleCube()
 {
     // Clear previous vertices and indices
@@ -413,6 +679,16 @@ void Renderer::createMissileModel()
     // Clear previous vertices and indices
     m_vertices.clear();
     m_indices.clear();
+
+    if (loadObjModel("models/missile.obj",
+                     m_vertices,
+                     m_indices,
+                     glm::vec3(0.78f, 0.79f, 0.82f),
+                     glm::mat4(1.0f),
+                     2.0f))
+    {
+        return;
+    }
 
     // Simplified missile model (elongated cylinder with nose cone)
     const int segments = 12;
@@ -617,6 +893,17 @@ void Renderer::createTargetModel()
     // Clear previous target vertices and indices
     m_targetVertices.clear();
     m_targetIndices.clear();
+
+    const glm::mat4 jetOrientation = glm::rotate(glm::mat4(1.0f), -glm::half_pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
+    if (loadObjModel("models/jet.obj",
+                     m_targetVertices,
+                     m_targetIndices,
+                     glm::vec3(0.70f, 0.74f, 0.78f),
+                     jetOrientation,
+                     2.0f))
+    {
+        return;
+    }
 
     // Create a simple sphere for the target
     const int stacks = 16;
@@ -946,6 +1233,33 @@ float computeFogDensity(float sceneFarPlane)
 {
     return 1.0f / std::max(sceneFarPlane * 0.45f, 6000.0f);
 }
+
+glm::mat4 buildTargetOrientationMatrix(const glm::vec3 &velocity)
+{
+    const glm::vec3 forward = glm::normalize(velocity);
+    glm::vec3 desiredUp(0.0f, 1.0f, 0.0f);
+    if (std::abs(glm::dot(forward, desiredUp)) > 0.98f)
+    {
+        desiredUp = glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    desiredUp = glm::normalize(desiredUp - (forward * glm::dot(desiredUp, forward)));
+    glm::vec3 right = glm::cross(desiredUp, forward);
+    if (glm::length2(right) <= 0.0001f)
+    {
+        right = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    else
+    {
+        right = glm::normalize(right);
+    }
+
+    glm::mat4 rotation(1.0f);
+    rotation[0] = glm::vec4(right, 0.0f);
+    rotation[1] = glm::vec4(forward, 0.0f);
+    rotation[2] = glm::vec4(-desiredUp, 0.0f);
+    return rotation;
+}
 }
 
 void Renderer::updateCameraVectors()
@@ -1015,6 +1329,14 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
                 }
             }
         }
+        else if (object->getType() == "Target")
+        {
+            glm::vec3 velocity = object->getVelocity();
+            if (glm::length(velocity) > 0.001f)
+            {
+                model *= buildTargetOrientationMatrix(velocity);
+            }
+        }
 
         // Scale based on the type of object
         if (object->getType() == "Missile")
@@ -1042,8 +1364,9 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
         }
         else if (object->getType() == "Target")
         {
-            // Scale for target
-            model = glm::scale(model, glm::vec3(2.0f, 2.0f, 2.0f));
+            const Target *targetObject = static_cast<Target *>(object);
+            const float targetScale = std::max(targetObject->getRadius(), 1.0f);
+            model = glm::scale(model, glm::vec3(targetScale));
             glBindVertexArray(m_targetVAO);
 
             glUseProgram(m_shaderProgram);
@@ -1077,7 +1400,11 @@ void Renderer::render(PhysicsObject *object)
 
     // If the object is moving, orient it along the velocity vector
     glm::vec3 velocity = object->getVelocity();
-    if (glm::length(velocity) > 0.001f)
+    if (object->getType() == "Target" && glm::length(velocity) > 0.001f)
+    {
+        model *= buildTargetOrientationMatrix(velocity);
+    }
+    else if (glm::length(velocity) > 0.001f)
     {
         // Use velocity direction for facing the object
         glm::vec3 direction = glm::normalize(velocity);
@@ -1140,8 +1467,9 @@ void Renderer::render(PhysicsObject *object)
     }
     else if (object->getType() == "Target")
     {
-        // Scale for target
-        model = glm::scale(model, glm::vec3(2.0f, 2.0f, 2.0f));
+        const Target *targetObject = static_cast<Target *>(object);
+        const float targetScale = std::max(targetObject->getRadius(), 1.0f);
+        model = glm::scale(model, glm::vec3(targetScale));
 
         // Pass updated model matrix with scale
         glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));

@@ -35,6 +35,31 @@ public:
     void shutdown();
     
 private:
+    enum class CameraMode
+    {
+        FREE,
+        MISSILE,
+        FIGHTER_JET
+    };
+
+    struct FreeCameraState
+    {
+        glm::vec3 position{0.0f};
+        glm::vec3 target{0.0f};
+        float fov = 50.0f;
+        float speed = 35.0f;
+        bool valid = false;
+    };
+
+    struct ChaseCameraState
+    {
+        float yaw = 0.0f;
+        float pitch = 0.0f;
+        float distance = 0.0f;
+        float returnBlend = 0.0f;
+        bool initialized = false;
+    };
+
     struct TrajectoryPreviewConfig
     {
         glm::vec3 thrustDirection{0.0f};
@@ -82,6 +107,20 @@ private:
     void setupUI();
     void renderMinimalHUD();
     void frameEngagementCamera();
+    void setCameraMode(CameraMode mode, bool frameFreeCamera = false);
+    void updateActiveCameraMode();
+    void updateMissileCamera();
+    void updateFighterJetCamera();
+    void captureFreeCameraState();
+    void restoreFreeCameraState();
+    void resetChaseCameraState();
+    void primeChaseCameraState(const glm::vec3 &focusPoint);
+    void updateChaseOrbit(float yawDeltaDegrees, float pitchDeltaDegrees);
+    void applyChaseCamera(const glm::vec3 &focusPoint,
+                          const glm::vec3 &defaultPosition,
+                          const glm::vec3 &defaultTarget);
+    void releaseMouseCameraCapture();
+    const char *getCameraModeLabel() const;
     void updateEnvironmentScale();
     float computeEngagementRadius() const;
     std::string buildSettingsSnapshot() const;
@@ -134,6 +173,10 @@ private:
     float m_lastMouseY;
     bool m_firstMouse;
     bool m_enableMouseCamera = false;
+    CameraMode m_cameraMode = CameraMode::FREE;
+    FreeCameraState m_freeCameraState;
+    ChaseCameraState m_chaseCameraState;
+    float m_lastFrameDeltaTime = 0.016f;
     
     // Simulation components
     std::unique_ptr<PhysicsEngine> m_physicsEngine;

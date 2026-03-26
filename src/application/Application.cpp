@@ -105,6 +105,15 @@ std::string formatVec3Value(const glm::vec3 &value)
     stream << value.x << "," << value.y << "," << value.z;
     return stream.str();
 }
+
+glm::vec3 safeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
+{
+    if (glm::length2(value) > 0.0001f)
+    {
+        return glm::normalize(value);
+    }
+    return fallback;
+}
 }
 
 Application::Application(int width, int height, const std::string &title)
@@ -626,6 +635,8 @@ void Application::run()
                     deltaTime = 0.016f; // ~60 FPS
                 }
 
+                m_lastFrameDeltaTime = deltaTime;
+
                 // Process input
                 try
                 {
@@ -750,7 +761,7 @@ void Application::processInput(float deltaTime)
     {
         if (!focusPressed)
         {
-            frameEngagementCamera();
+            setCameraMode(CameraMode::FREE, true);
             focusPressed = true;
         }
     }
@@ -759,34 +770,37 @@ void Application::processInput(float deltaTime)
         focusPressed = false;
     }
 
-    const bool speedBoost = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                            glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-    const float cameraStep = deltaTime * (speedBoost ? 2.8f : 1.0f);
+    if (m_cameraMode == CameraMode::FREE)
+    {
+        const bool speedBoost = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                                glfwGetKey(m_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+        const float cameraStep = deltaTime * (speedBoost ? 2.8f : 1.0f);
 
-    if (glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS)
-    {
-        m_renderer->moveCameraForward(cameraStep);
-    }
-    if (glfwGetKey(m_window, GLFW_KEY_S) == GLFW_PRESS)
-    {
-        m_renderer->moveCameraForward(-cameraStep);
-    }
-    if (glfwGetKey(m_window, GLFW_KEY_A) == GLFW_PRESS)
-    {
-        m_renderer->moveCameraRight(-cameraStep);
-    }
-    if (glfwGetKey(m_window, GLFW_KEY_D) == GLFW_PRESS)
-    {
-        m_renderer->moveCameraRight(cameraStep);
-    }
-    if (glfwGetKey(m_window, GLFW_KEY_SPACE) == GLFW_PRESS)
-    {
-        m_renderer->moveCameraUp(cameraStep);
-    }
-    if (glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-        glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
-    {
-        m_renderer->moveCameraUp(-cameraStep);
+        if (glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS)
+        {
+            m_renderer->moveCameraForward(cameraStep);
+        }
+        if (glfwGetKey(m_window, GLFW_KEY_S) == GLFW_PRESS)
+        {
+            m_renderer->moveCameraForward(-cameraStep);
+        }
+        if (glfwGetKey(m_window, GLFW_KEY_A) == GLFW_PRESS)
+        {
+            m_renderer->moveCameraRight(-cameraStep);
+        }
+        if (glfwGetKey(m_window, GLFW_KEY_D) == GLFW_PRESS)
+        {
+            m_renderer->moveCameraRight(cameraStep);
+        }
+        if (glfwGetKey(m_window, GLFW_KEY_SPACE) == GLFW_PRESS)
+        {
+            m_renderer->moveCameraUp(cameraStep);
+        }
+        if (glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+            glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
+        {
+            m_renderer->moveCameraUp(-cameraStep);
+        }
     }
 
     static bool launchKeyPressed = false;
@@ -807,7 +821,8 @@ void Application::processInput(float deltaTime)
 void Application::mouseCallback(double xpos, double ypos)
 {
     // Skip if camera rotation is disabled or imgui has focus
-    if (!m_enableMouseCamera || (m_showUI && ImGui::GetIO().WantCaptureMouse))
+    if (!m_enableMouseCamera ||
+        (m_showUI && ImGui::GetIO().WantCaptureMouse))
         return;
 
     if (m_firstMouse)
@@ -830,9 +845,14 @@ void Application::mouseCallback(double xpos, double ypos)
     xoffset *= sensitivity;
     yoffset *= sensitivity;
 
-    // Apply rotation to camera
-    m_renderer->rotateCameraYaw(xoffset);
-    m_renderer->rotateCameraPitch(yoffset);
+    if (m_cameraMode == CameraMode::FREE)
+    {
+        m_renderer->rotateCameraYaw(xoffset);
+        m_renderer->rotateCameraPitch(yoffset);
+        return;
+    }
+
+    updateChaseOrbit(xoffset, -yoffset);
 }
 
 void Application::mouseButtonCallback(int button, int action)
@@ -846,12 +866,15 @@ void Application::mouseButtonCallback(int button, int action)
             m_enableMouseCamera = true;
             glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
             m_firstMouse = true; // Reset first mouse flag to avoid jumps
+            if (m_cameraMode != CameraMode::FREE)
+            {
+                m_chaseCameraState.initialized = false;
+                m_chaseCameraState.returnBlend = 1.0f;
+            }
         }
         else if (action == GLFW_RELEASE)
         {
-            // Disable camera rotation and show cursor
-            m_enableMouseCamera = false;
-            glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            releaseMouseCameraCapture();
         }
     }
 }
@@ -1084,6 +1107,7 @@ void Application::render()
             return;
         }
 
+        updateActiveCameraMode();
         m_renderer->clearDebugPrimitives();
         updateEnvironmentScale();
         m_renderer->renderEnvironment();
@@ -1315,7 +1339,7 @@ void Application::renderMinimalHUD()
     const bool missileWarning = validTrackedTarget && trackedTarget->isMissileWarningActive();
     const char *seekerTrack = m_missile->isTrackingDecoy() ? "FLARE" : "AIRFRAME";
 
-    ImGui::SetNextWindowSize(ImVec2(280.0f, 180.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320.0f, 230.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Flight HUD"))
     {
         ImGui::Text("Fuel: %.1f kg", fuel);
@@ -1328,6 +1352,27 @@ void Application::renderMinimalHUD()
             ImGui::Text("Defense: %s", missileWarning ? "MAWS active" : "No cue");
             ImGui::Text("Target flares: %d", trackedTarget->getRemainingFlares());
         }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Camera: %s", getCameraModeLabel());
+        if (ImGui::Button("Free"))
+        {
+            setCameraMode(CameraMode::FREE);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Missile"))
+        {
+            setCameraMode(CameraMode::MISSILE);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Fighter Jet"))
+        {
+            setCameraMode(CameraMode::FIGHTER_JET);
+        }
+        ImGui::TextDisabled(m_cameraMode == CameraMode::FREE
+                                ? "Free cam: RMB look, WASD move, C frame."
+                                : "Chase cam: hold RMB to orbit, release to recenter.");
     }
     ImGui::End();
 }
@@ -1433,6 +1478,319 @@ void Application::frameEngagementCamera()
     m_renderer->setCameraFOV(50.0f);
     m_renderer->setCameraPosition(cameraPosition);
     m_renderer->setCameraTarget(lookTarget);
+
+    if (m_cameraMode == CameraMode::FREE)
+    {
+        captureFreeCameraState();
+    }
+}
+
+void Application::setCameraMode(CameraMode mode, bool frameFreeCamera)
+{
+    if (!m_renderer)
+    {
+        m_cameraMode = mode;
+        return;
+    }
+
+    const CameraMode previousMode = m_cameraMode;
+    if (mode == previousMode && !(mode == CameraMode::FREE && frameFreeCamera))
+    {
+        if (mode != CameraMode::FREE)
+        {
+            updateActiveCameraMode();
+        }
+        return;
+    }
+
+    if (previousMode == CameraMode::FREE)
+    {
+        captureFreeCameraState();
+    }
+
+    if (mode != CameraMode::FREE)
+    {
+        releaseMouseCameraCapture();
+    }
+
+    if (mode != previousMode)
+    {
+        resetChaseCameraState();
+    }
+
+    m_cameraMode = mode;
+
+    if (mode == CameraMode::FREE)
+    {
+        if (frameFreeCamera || !m_freeCameraState.valid)
+        {
+            frameEngagementCamera();
+        }
+        else
+        {
+            restoreFreeCameraState();
+        }
+        return;
+    }
+
+    updateActiveCameraMode();
+}
+
+void Application::updateActiveCameraMode()
+{
+    switch (m_cameraMode)
+    {
+    case CameraMode::FREE:
+        return;
+    case CameraMode::MISSILE:
+        updateMissileCamera();
+        return;
+    case CameraMode::FIGHTER_JET:
+        updateFighterJetCamera();
+        return;
+    }
+}
+
+void Application::updateMissileCamera()
+{
+    if (!m_renderer || !m_missile)
+    {
+        return;
+    }
+
+    const glm::vec3 fallbackForward = safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f));
+    glm::vec3 forward = safeNormalize(m_missile->getVelocity(), glm::vec3(0.0f));
+    if (glm::length2(forward) < 0.0001f)
+    {
+        forward = safeNormalize(m_missile->getThrustDirection(), fallbackForward);
+    }
+
+    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    const glm::vec3 missilePosition = m_missile->getPosition();
+    const float missileSpeed = glm::length(m_missile->getVelocity());
+    const float chaseDistance = std::clamp(8.0f + missileSpeed * 0.04f, 8.0f, 30.0f);
+    const float chaseHeight = std::clamp(1.4f + missileSpeed * 0.005f, 1.4f, 7.0f);
+    const float lookAhead = std::clamp(25.0f + missileSpeed * 0.12f, 25.0f, 120.0f);
+
+    const glm::vec3 focusPoint = missilePosition + worldUp * 0.8f;
+    const glm::vec3 cameraPosition = missilePosition - forward * chaseDistance + worldUp * chaseHeight;
+    const glm::vec3 lookTarget = missilePosition + forward * lookAhead + worldUp * 0.8f;
+
+    applyChaseCamera(focusPoint, cameraPosition, lookTarget);
+}
+
+void Application::updateFighterJetCamera()
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    Target *trackedTarget = m_missile ? m_missile->getTargetObject() : nullptr;
+    if (trackedTarget == nullptr || !trackedTarget->isActive())
+    {
+        trackedTarget = findBestTarget();
+    }
+
+    if (trackedTarget == nullptr || !trackedTarget->isActive())
+    {
+        return;
+    }
+
+    const glm::vec3 fallbackForward = safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f));
+    glm::vec3 forward = safeNormalize(trackedTarget->getVelocity(), glm::vec3(0.0f));
+    if (glm::length2(forward) < 0.0001f && m_missile)
+    {
+        forward = safeNormalize(trackedTarget->getPosition() - m_missile->getPosition(), fallbackForward);
+    }
+    if (glm::length2(forward) < 0.0001f)
+    {
+        forward = fallbackForward;
+    }
+
+    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    const glm::vec3 targetPosition = trackedTarget->getPosition();
+    const float targetSpeed = glm::length(trackedTarget->getVelocity());
+    const float targetRadius = std::max(trackedTarget->getRadius(), 1.0f);
+    const float chaseDistance = std::clamp(targetRadius * 4.0f + targetSpeed * 0.05f, 12.0f, 40.0f);
+    const float chaseHeight = std::clamp(targetRadius * 1.5f + targetSpeed * 0.008f, 3.0f, 12.0f);
+    const float lookAhead = std::clamp(targetRadius * 10.0f + targetSpeed * 0.15f, 20.0f, 150.0f);
+
+    const glm::vec3 focusPoint = targetPosition + worldUp * (targetRadius * 0.35f);
+    const glm::vec3 cameraPosition = targetPosition - forward * chaseDistance + worldUp * chaseHeight;
+    const glm::vec3 lookTarget = targetPosition + forward * lookAhead + worldUp * (targetRadius * 0.35f);
+
+    applyChaseCamera(focusPoint, cameraPosition, lookTarget);
+}
+
+void Application::captureFreeCameraState()
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    m_freeCameraState.position = m_renderer->getCameraPosition();
+    m_freeCameraState.target = m_renderer->getCameraTarget();
+    m_freeCameraState.fov = m_renderer->getCameraFOV();
+    m_freeCameraState.speed = m_renderer->getCameraSpeed();
+    m_freeCameraState.valid = true;
+}
+
+void Application::restoreFreeCameraState()
+{
+    if (!m_renderer || !m_freeCameraState.valid)
+    {
+        return;
+    }
+
+    m_renderer->setCameraFOV(m_freeCameraState.fov);
+    m_renderer->setCameraSpeed(m_freeCameraState.speed);
+    m_renderer->setCameraPosition(m_freeCameraState.position);
+    m_renderer->setCameraTarget(m_freeCameraState.target);
+}
+
+void Application::resetChaseCameraState()
+{
+    m_chaseCameraState = {};
+}
+
+void Application::primeChaseCameraState(const glm::vec3 &focusPoint)
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    glm::vec3 offset = m_renderer->getCameraPosition() - focusPoint;
+    float distance = glm::length(offset);
+    if (distance <= 0.0001f)
+    {
+        offset = -safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f)) * 12.0f;
+        distance = glm::length(offset);
+    }
+
+    const glm::vec3 direction = offset / std::max(distance, 0.0001f);
+    m_chaseCameraState.yaw = glm::degrees(std::atan2(direction.z, direction.x));
+    m_chaseCameraState.pitch = glm::degrees(std::asin(glm::clamp(direction.y, -1.0f, 1.0f)));
+    m_chaseCameraState.distance = distance;
+    m_chaseCameraState.returnBlend = 1.0f;
+    m_chaseCameraState.initialized = true;
+}
+
+void Application::updateChaseOrbit(float yawDeltaDegrees, float pitchDeltaDegrees)
+{
+    if (m_cameraMode == CameraMode::FREE)
+    {
+        return;
+    }
+
+    if (!m_chaseCameraState.initialized)
+    {
+        return;
+    }
+
+    m_chaseCameraState.yaw += yawDeltaDegrees;
+    m_chaseCameraState.pitch = glm::clamp(m_chaseCameraState.pitch + pitchDeltaDegrees, -80.0f, 80.0f);
+    m_chaseCameraState.returnBlend = 1.0f;
+}
+
+void Application::applyChaseCamera(const glm::vec3 &focusPoint,
+                                   const glm::vec3 &defaultPosition,
+                                   const glm::vec3 &defaultTarget)
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    auto buildOrbitPosition = [&]() -> glm::vec3
+    {
+        const float yaw = glm::radians(m_chaseCameraState.yaw);
+        const float pitch = glm::radians(m_chaseCameraState.pitch);
+        const float cosPitch = std::cos(pitch);
+        glm::vec3 offset(cosPitch * std::cos(yaw),
+                         std::sin(pitch),
+                         cosPitch * std::sin(yaw));
+
+        if (glm::length2(offset) <= 0.0001f)
+        {
+            offset = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        else
+        {
+            offset = glm::normalize(offset);
+        }
+
+        return focusPoint + (offset * std::max(m_chaseCameraState.distance, 1.0f));
+    };
+
+    if (m_enableMouseCamera)
+    {
+        if (!m_chaseCameraState.initialized)
+        {
+            primeChaseCameraState(focusPoint);
+        }
+
+        if (m_chaseCameraState.initialized)
+        {
+            m_renderer->setCameraPosition(buildOrbitPosition());
+            m_renderer->setCameraTarget(focusPoint);
+            m_chaseCameraState.returnBlend = 1.0f;
+            return;
+        }
+    }
+
+    if (m_chaseCameraState.initialized && m_chaseCameraState.returnBlend > 0.001f)
+    {
+        const glm::vec3 orbitPosition = buildOrbitPosition();
+        const float blend = glm::clamp(m_chaseCameraState.returnBlend, 0.0f, 1.0f);
+        m_renderer->setCameraPosition(glm::mix(defaultPosition, orbitPosition, blend));
+        m_renderer->setCameraTarget(glm::mix(defaultTarget, focusPoint, blend));
+
+        const float blendDecay = glm::clamp(m_lastFrameDeltaTime, 0.0f, 0.05f) * 3.5f;
+        m_chaseCameraState.returnBlend = std::max(0.0f, blend - blendDecay);
+        if (m_chaseCameraState.returnBlend <= 0.0f)
+        {
+            m_chaseCameraState.initialized = false;
+        }
+        return;
+    }
+
+    m_renderer->setCameraPosition(defaultPosition);
+    m_renderer->setCameraTarget(defaultTarget);
+}
+
+void Application::releaseMouseCameraCapture()
+{
+    const bool wasCapturing = m_enableMouseCamera;
+    m_enableMouseCamera = false;
+    m_firstMouse = true;
+
+    if (wasCapturing && m_cameraMode != CameraMode::FREE && m_chaseCameraState.initialized)
+    {
+        m_chaseCameraState.returnBlend = 1.0f;
+    }
+
+    if (m_window)
+    {
+        glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+}
+
+const char *Application::getCameraModeLabel() const
+{
+    switch (m_cameraMode)
+    {
+    case CameraMode::FREE:
+        return "Free";
+    case CameraMode::MISSILE:
+        return "Missile";
+    case CameraMode::FIGHTER_JET:
+        return "Fighter Jet";
+    }
+
+    return "Free";
 }
 
 Application::TrajectoryPreviewConfig Application::captureTrajectoryPreviewConfig() const
@@ -1924,7 +2282,7 @@ void Application::setupUI()
         }
         if (ImGui::Button("Frame Camera"))
         {
-            frameEngagementCamera();
+            setCameraMode(CameraMode::FREE, true);
         }
 
         ImGui::Separator();
@@ -2094,7 +2452,7 @@ void Application::setupUI()
         ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
 
         ImGui::TextDisabled("Camera: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
-        ImGui::TextDisabled("Controls: RMB look, WASD move, Space/Ctrl vertical, Enter pause, F launch, C frame camera, Tab toggle UI");
+        ImGui::TextDisabled("Controls: RMB look, WASD move (Free cam), Space/Ctrl vertical, Enter pause, F launch, C frame free cam, Tab toggle UI");
     }
     ImGui::End();
 
@@ -2211,7 +2569,7 @@ void Application::setupUI()
         ImGui::SameLine();
         if (ImGui::Button("Frame Camera"))
         {
-            frameEngagementCamera();
+            setCameraMode(CameraMode::FREE, true);
         }
 
         ImGui::Separator();
@@ -2382,7 +2740,7 @@ void Application::setupUI()
 
             const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
             ImGui::TextDisabled("Camera: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
-            ImGui::TextDisabled("Controls: RMB look, WASD move, Space/Ctrl vertical, Enter pause, F launch, C frame camera, Tab toggle UI");
+            ImGui::TextDisabled("Controls: RMB look, WASD move (Free cam), Space/Ctrl vertical, Enter pause, F launch, C frame free cam, Tab toggle UI");
         }
 
         const int activeTargets = countActiveTargets();
@@ -3282,11 +3640,15 @@ void Application::setupUI()
 
                 beginCard("HelpCard", 118.0f);
                 drawCardHeader("Controls", "Keep the simulation visible while still knowing how to drive the camera.");
-                ImGui::TextUnformatted("Right mouse hold: free look");
-    ImGui::TextUnformatted("W / A / S / D: move camera");
-    ImGui::TextUnformatted("Space / Ctrl: move up or down");
-    ImGui::TextUnformatted("Enter: pause or resume simulation");
-                ImGui::TextDisabled(m_enableMouseCamera ? "Mouse capture is active." : "Mouse is currently in UI mode.");
+                ImGui::TextUnformatted("Right mouse hold: free look or orbit tracked object");
+                ImGui::TextUnformatted("W / A / S / D: move camera in Free mode");
+                ImGui::TextUnformatted("Space / Ctrl: move up or down");
+                ImGui::TextUnformatted("Enter: pause or resume simulation");
+                ImGui::TextDisabled(m_cameraMode == CameraMode::FREE
+                                        ? (m_enableMouseCamera ? "Free camera active. Mouse capture is active."
+                                                               : "Free camera active. Mouse is currently in UI mode.")
+                                        : (m_enableMouseCamera ? "Chase camera active. Orbit is active."
+                                                               : "Chase camera active. Release RMB recenters smoothly."));
                 endCard();
 
                 ImGui::EndTabItem();
@@ -3429,7 +3791,11 @@ void Application::setupUI()
             drawReadoutRow("Sea-level density", buffer, textBright);
             ImGui::EndTable();
         }
-        ImGui::TextDisabled(m_enableMouseCamera ? "Mouse capture enabled." : "Mouse capture released.");
+        ImGui::TextDisabled(m_cameraMode == CameraMode::FREE
+                                ? (m_enableMouseCamera ? "Free camera: mouse capture enabled."
+                                                       : "Free camera: mouse capture released.")
+                                : (m_enableMouseCamera ? "Chase camera: orbit enabled."
+                                                       : "Chase camera: centered."));
         endCard();
 
         ImGui::End();

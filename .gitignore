@@ -41,7 +41,6 @@
 *.pdb
 
 # Binaries and objects
-*.obj
 *.o
 *.exe
 *.dll
