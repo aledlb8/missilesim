@@ -5,77 +5,75 @@
 
 namespace
 {
-constexpr double kEarthRadiusMeters = 6356766.0;
-constexpr double kStandardGravityMetersPerSecondSquared = 9.80665;
-constexpr double kSpecificGasConstantAir = 287.05287;
-constexpr double kHeatCapacityRatioAir = 1.4;
-constexpr double kSeaLevelTemperatureKelvin = 288.15;
-constexpr double kSeaLevelPressurePascals = 101325.0;
-constexpr double kSutherlandReferenceTemperatureKelvin = 273.15;
-constexpr double kSutherlandReferenceViscosityPascalSeconds = 1.716e-5;
-constexpr double kSutherlandConstantKelvin = 110.4;
+    constexpr double kEarthRadiusMeters = 6356766.0;
+    constexpr double kStandardGravityMetersPerSecondSquared = 9.80665;
+    constexpr double kSpecificGasConstantAir = 287.05287;
+    constexpr double kHeatCapacityRatioAir = 1.4;
+    constexpr double kSeaLevelTemperatureKelvin = 288.15;
+    constexpr double kSeaLevelPressurePascals = 101325.0;
+    constexpr double kSutherlandReferenceTemperatureKelvin = 273.15;
+    constexpr double kSutherlandReferenceViscosityPascalSeconds = 1.716e-5;
+    constexpr double kSutherlandConstantKelvin = 110.4;
 
-constexpr std::array<double, 7> kLayerTopGeopotentialAltitudesMeters = {
-    11000.0,
-    20000.0,
-    32000.0,
-    47000.0,
-    51000.0,
-    71000.0,
-    84852.0
-};
+    constexpr std::array<double, 7> kLayerTopGeopotentialAltitudesMeters = {
+        11000.0,
+        20000.0,
+        32000.0,
+        47000.0,
+        51000.0,
+        71000.0,
+        84852.0};
 
-constexpr std::array<double, 7> kLayerLapseRatesKelvinPerMeter = {
-    -0.0065,
-    0.0,
-    0.0010,
-    0.0028,
-    0.0,
-    -0.0028,
-    -0.0020
-};
+    constexpr std::array<double, 7> kLayerLapseRatesKelvinPerMeter = {
+        -0.0065,
+        0.0,
+        0.0010,
+        0.0028,
+        0.0,
+        -0.0028,
+        -0.0020};
 
-double clampGeometricAltitude(double altitudeMeters)
-{
-    return std::clamp(
-        altitudeMeters,
-        static_cast<double>(Atmosphere::kMinimumSupportedAltitudeMeters),
-        static_cast<double>(Atmosphere::kMaximumSupportedAltitudeMeters));
-}
-
-double toGeopotentialAltitude(double geometricAltitudeMeters)
-{
-    return (kEarthRadiusMeters * geometricAltitudeMeters) / (kEarthRadiusMeters + geometricAltitudeMeters);
-}
-
-double calculateLayerPressure(
-    double basePressurePascals,
-    double baseTemperatureKelvin,
-    double lapseRateKelvinPerMeter,
-    double baseAltitudeMeters,
-    double targetAltitudeMeters)
-{
-    const double deltaAltitudeMeters = targetAltitudeMeters - baseAltitudeMeters;
-    if (std::abs(lapseRateKelvinPerMeter) < 1e-12)
+    double clampGeometricAltitude(double altitudeMeters)
     {
-        return basePressurePascals *
-               std::exp((-kStandardGravityMetersPerSecondSquared * deltaAltitudeMeters) /
-                        (kSpecificGasConstantAir * baseTemperatureKelvin));
+        return std::clamp(
+            altitudeMeters,
+            static_cast<double>(Atmosphere::kMinimumSupportedAltitudeMeters),
+            static_cast<double>(Atmosphere::kMaximumSupportedAltitudeMeters));
     }
 
-    const double targetTemperatureKelvin = baseTemperatureKelvin + (lapseRateKelvinPerMeter * deltaAltitudeMeters);
-    return basePressurePascals *
-           std::pow(baseTemperatureKelvin / targetTemperatureKelvin,
-                    kStandardGravityMetersPerSecondSquared / (kSpecificGasConstantAir * lapseRateKelvinPerMeter));
-}
+    double toGeopotentialAltitude(double geometricAltitudeMeters)
+    {
+        return (kEarthRadiusMeters * geometricAltitudeMeters) / (kEarthRadiusMeters + geometricAltitudeMeters);
+    }
 
-double calculateDynamicViscosity(double temperatureKelvin)
-{
-    return kSutherlandReferenceViscosityPascalSeconds *
-           std::pow(temperatureKelvin / kSutherlandReferenceTemperatureKelvin, 1.5) *
-           ((kSutherlandReferenceTemperatureKelvin + kSutherlandConstantKelvin) /
-            (temperatureKelvin + kSutherlandConstantKelvin));
-}
+    double calculateLayerPressure(
+        double basePressurePascals,
+        double baseTemperatureKelvin,
+        double lapseRateKelvinPerMeter,
+        double baseAltitudeMeters,
+        double targetAltitudeMeters)
+    {
+        const double deltaAltitudeMeters = targetAltitudeMeters - baseAltitudeMeters;
+        if (std::abs(lapseRateKelvinPerMeter) < 1e-12)
+        {
+            return basePressurePascals *
+                   std::exp((-kStandardGravityMetersPerSecondSquared * deltaAltitudeMeters) /
+                            (kSpecificGasConstantAir * baseTemperatureKelvin));
+        }
+
+        const double targetTemperatureKelvin = baseTemperatureKelvin + (lapseRateKelvinPerMeter * deltaAltitudeMeters);
+        return basePressurePascals *
+               std::pow(baseTemperatureKelvin / targetTemperatureKelvin,
+                        kStandardGravityMetersPerSecondSquared / (kSpecificGasConstantAir * lapseRateKelvinPerMeter));
+    }
+
+    double calculateDynamicViscosity(double temperatureKelvin)
+    {
+        return kSutherlandReferenceViscosityPascalSeconds *
+               std::pow(temperatureKelvin / kSutherlandReferenceTemperatureKelvin, 1.5) *
+               ((kSutherlandReferenceTemperatureKelvin + kSutherlandConstantKelvin) /
+                (temperatureKelvin + kSutherlandConstantKelvin));
+    }
 } // namespace
 
 Atmosphere::Atmosphere(float density)
@@ -156,7 +154,8 @@ Atmosphere::State Atmosphere::sample(float altitude) const
             baseTemperatureKelvin,
             lapseRateKelvinPerMeter,
             baseAltitudeMeters,
-            geopotentialAltitudeMeters) * static_cast<double>(m_densityScale);
+            geopotentialAltitudeMeters) *
+        static_cast<double>(m_densityScale);
     const double densityKgPerCubicMeter =
         (pressurePascals > 0.0 && temperatureKelvin > 0.0)
             ? pressurePascals / (kSpecificGasConstantAir * temperatureKelvin)

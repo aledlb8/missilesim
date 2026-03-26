@@ -6,14 +6,15 @@
 class PhysicsObject;
 class Atmosphere;
 
-class Drag {
+class Drag
+{
 public:
-    Drag(Atmosphere* atmosphere);
+    Drag(Atmosphere *atmosphere);
     ~Drag() = default;
-    
+
     // Apply drag force to an object
-    void applyTo(PhysicsObject* object);
-    
+    void applyTo(PhysicsObject *object);
+
 private:
-    Atmosphere* m_atmosphere; // Reference to the atmosphere model
-}; 
+    Atmosphere *m_atmosphere; // Reference to the atmosphere model
+};

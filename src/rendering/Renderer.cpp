@@ -19,56 +19,56 @@
 
 namespace
 {
-struct ObjVertexRef
-{
-    int position = 0;
-    int normal = 0;
-    bool hasNormal = false;
-};
-
-int resolveObjIndex(int rawIndex, std::size_t count)
-{
-    if (rawIndex > 0)
+    struct ObjVertexRef
     {
-        return rawIndex - 1;
-    }
-    if (rawIndex < 0)
+        int position = 0;
+        int normal = 0;
+        bool hasNormal = false;
+    };
+
+    int resolveObjIndex(int rawIndex, std::size_t count)
     {
-        return static_cast<int>(count) + rawIndex;
-    }
-    return -1;
-}
-
-bool parseObjVertexRef(const std::string &token, ObjVertexRef &result)
-{
-    std::stringstream tokenStream(token);
-    std::string positionToken;
-    std::string texcoordToken;
-    std::string normalToken;
-
-    if (!std::getline(tokenStream, positionToken, '/') || positionToken.empty())
-    {
-        return false;
-    }
-
-    std::getline(tokenStream, texcoordToken, '/');
-    std::getline(tokenStream, normalToken, '/');
-
-    try
-    {
-        result.position = std::stoi(positionToken);
-        if (!normalToken.empty())
+        if (rawIndex > 0)
         {
-            result.normal = std::stoi(normalToken);
-            result.hasNormal = true;
+            return rawIndex - 1;
         }
-        return true;
+        if (rawIndex < 0)
+        {
+            return static_cast<int>(count) + rawIndex;
+        }
+        return -1;
     }
-    catch (...)
+
+    bool parseObjVertexRef(const std::string &token, ObjVertexRef &result)
     {
-        return false;
+        std::stringstream tokenStream(token);
+        std::string positionToken;
+        std::string texcoordToken;
+        std::string normalToken;
+
+        if (!std::getline(tokenStream, positionToken, '/') || positionToken.empty())
+        {
+            return false;
+        }
+
+        std::getline(tokenStream, texcoordToken, '/');
+        std::getline(tokenStream, normalToken, '/');
+
+        try
+        {
+            result.position = std::stoi(positionToken);
+            if (!normalToken.empty())
+            {
+                result.normal = std::stoi(normalToken);
+                result.hasNormal = true;
+            }
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
     }
-}
 }
 
 // Vertex shader source
@@ -413,8 +413,7 @@ std::filesystem::path Renderer::resolveAssetPath(const std::string &relativePath
         requested,
         std::filesystem::current_path() / requested,
         std::filesystem::current_path() / "assets" / requested,
-        sourceAssetRoot.empty() ? std::filesystem::path() : sourceAssetRoot / requested
-    };
+        sourceAssetRoot.empty() ? std::filesystem::path() : sourceAssetRoot / requested};
 
     for (const auto &candidate : candidates)
     {
@@ -579,7 +578,7 @@ bool Renderer::loadObjModel(const std::string &relativePath,
                 }
 
                 glm::vec3 faceNormal = glm::cross(transformedPositions[1] - transformedPositions[0],
-                                                 transformedPositions[2] - transformedPositions[0]);
+                                                  transformedPositions[2] - transformedPositions[0]);
                 if (glm::length2(faceNormal) <= 0.000001f)
                 {
                     faceNormal = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -1229,37 +1228,37 @@ void Renderer::setEnvironmentMetrics(float groundHalfExtent, float airspaceHalfE
 
 namespace
 {
-float computeFogDensity(float sceneFarPlane)
-{
-    return 1.0f / std::max(sceneFarPlane * 0.45f, 6000.0f);
-}
-
-glm::mat4 buildTargetOrientationMatrix(const glm::vec3 &velocity)
-{
-    const glm::vec3 forward = glm::normalize(velocity);
-    glm::vec3 desiredUp(0.0f, 1.0f, 0.0f);
-    if (std::abs(glm::dot(forward, desiredUp)) > 0.98f)
+    float computeFogDensity(float sceneFarPlane)
     {
-        desiredUp = glm::vec3(0.0f, 0.0f, 1.0f);
+        return 1.0f / std::max(sceneFarPlane * 0.45f, 6000.0f);
     }
 
-    desiredUp = glm::normalize(desiredUp - (forward * glm::dot(desiredUp, forward)));
-    glm::vec3 right = glm::cross(desiredUp, forward);
-    if (glm::length2(right) <= 0.0001f)
+    glm::mat4 buildTargetOrientationMatrix(const glm::vec3 &velocity)
     {
-        right = glm::vec3(1.0f, 0.0f, 0.0f);
-    }
-    else
-    {
-        right = glm::normalize(right);
-    }
+        const glm::vec3 forward = glm::normalize(velocity);
+        glm::vec3 desiredUp(0.0f, 1.0f, 0.0f);
+        if (std::abs(glm::dot(forward, desiredUp)) > 0.98f)
+        {
+            desiredUp = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
 
-    glm::mat4 rotation(1.0f);
-    rotation[0] = glm::vec4(right, 0.0f);
-    rotation[1] = glm::vec4(forward, 0.0f);
-    rotation[2] = glm::vec4(-desiredUp, 0.0f);
-    return rotation;
-}
+        desiredUp = glm::normalize(desiredUp - (forward * glm::dot(desiredUp, forward)));
+        glm::vec3 right = glm::cross(desiredUp, forward);
+        if (glm::length2(right) <= 0.0001f)
+        {
+            right = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+        else
+        {
+            right = glm::normalize(right);
+        }
+
+        glm::mat4 rotation(1.0f);
+        rotation[0] = glm::vec4(right, 0.0f);
+        rotation[1] = glm::vec4(forward, 0.0f);
+        rotation[2] = glm::vec4(-desiredUp, 0.0f);
+        return rotation;
+    }
 }
 
 void Renderer::updateCameraVectors()

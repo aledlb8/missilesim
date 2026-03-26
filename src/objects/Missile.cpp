@@ -8,127 +8,127 @@
 
 namespace
 {
-glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
-{
-    if (glm::length2(vector) > 0.0001f)
+    glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
     {
-        return glm::normalize(vector);
-    }
-
-    if (glm::length2(fallback) > 0.0001f)
-    {
-        return glm::normalize(fallback);
-    }
-
-    return glm::vec3(0.0f, 0.0f, 1.0f);
-}
-
-glm::vec3 perpendicularTo(const glm::vec3 &direction)
-{
-    const glm::vec3 referenceAxis = (std::abs(direction.y) < 0.9f)
-                                        ? glm::vec3(0.0f, 1.0f, 0.0f)
-                                        : glm::vec3(1.0f, 0.0f, 0.0f);
-    return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
-}
-
-glm::vec3 rotateTowardsDirection(const glm::vec3 &currentDirection, const glm::vec3 &targetDirection, float maxRadiansDelta)
-{
-    const glm::vec3 current = normalizeOrFallback(currentDirection, glm::vec3(0.0f, 0.0f, 1.0f));
-    const glm::vec3 target = normalizeOrFallback(targetDirection, current);
-
-    if (maxRadiansDelta <= 0.0f)
-    {
-        return current;
-    }
-
-    const float cosTheta = glm::clamp(glm::dot(current, target), -1.0f, 1.0f);
-    const float angle = std::acos(cosTheta);
-    if (angle <= maxRadiansDelta || angle < 0.0001f)
-    {
-        return target;
-    }
-
-    glm::vec3 relative = target - (current * cosTheta);
-    if (glm::length2(relative) < 0.0001f)
-    {
-        relative = perpendicularTo(current);
-    }
-    else
-    {
-        relative = glm::normalize(relative);
-    }
-
-    return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
-}
-
-glm::vec3 predictInterceptPoint(const glm::vec3 &missilePosition,
-                                float missileSpeed,
-                                const glm::vec3 &targetPosition,
-                                const glm::vec3 &targetVelocity,
-                                float maxLookAheadTime)
-{
-    if (missileSpeed < 0.1f)
-    {
-        return targetPosition;
-    }
-
-    const glm::vec3 relativePosition = targetPosition - missilePosition;
-    const float missileSpeedSq = missileSpeed * missileSpeed;
-    const float a = glm::dot(targetVelocity, targetVelocity) - missileSpeedSq;
-    const float b = 2.0f * glm::dot(relativePosition, targetVelocity);
-    const float c = glm::dot(relativePosition, relativePosition);
-    const float epsilon = 0.0001f;
-
-    float timeToIntercept = glm::length(relativePosition) / missileSpeed;
-    bool hasInterceptSolution = false;
-
-    if (std::abs(a) < epsilon)
-    {
-        if (std::abs(b) > epsilon)
+        if (glm::length2(vector) > 0.0001f)
         {
-            const float candidate = -c / b;
-            if (candidate > 0.0f)
+            return glm::normalize(vector);
+        }
+
+        if (glm::length2(fallback) > 0.0001f)
+        {
+            return glm::normalize(fallback);
+        }
+
+        return glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    glm::vec3 perpendicularTo(const glm::vec3 &direction)
+    {
+        const glm::vec3 referenceAxis = (std::abs(direction.y) < 0.9f)
+                                            ? glm::vec3(0.0f, 1.0f, 0.0f)
+                                            : glm::vec3(1.0f, 0.0f, 0.0f);
+        return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    glm::vec3 rotateTowardsDirection(const glm::vec3 &currentDirection, const glm::vec3 &targetDirection, float maxRadiansDelta)
+    {
+        const glm::vec3 current = normalizeOrFallback(currentDirection, glm::vec3(0.0f, 0.0f, 1.0f));
+        const glm::vec3 target = normalizeOrFallback(targetDirection, current);
+
+        if (maxRadiansDelta <= 0.0f)
+        {
+            return current;
+        }
+
+        const float cosTheta = glm::clamp(glm::dot(current, target), -1.0f, 1.0f);
+        const float angle = std::acos(cosTheta);
+        if (angle <= maxRadiansDelta || angle < 0.0001f)
+        {
+            return target;
+        }
+
+        glm::vec3 relative = target - (current * cosTheta);
+        if (glm::length2(relative) < 0.0001f)
+        {
+            relative = perpendicularTo(current);
+        }
+        else
+        {
+            relative = glm::normalize(relative);
+        }
+
+        return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
+    }
+
+    glm::vec3 predictInterceptPoint(const glm::vec3 &missilePosition,
+                                    float missileSpeed,
+                                    const glm::vec3 &targetPosition,
+                                    const glm::vec3 &targetVelocity,
+                                    float maxLookAheadTime)
+    {
+        if (missileSpeed < 0.1f)
+        {
+            return targetPosition;
+        }
+
+        const glm::vec3 relativePosition = targetPosition - missilePosition;
+        const float missileSpeedSq = missileSpeed * missileSpeed;
+        const float a = glm::dot(targetVelocity, targetVelocity) - missileSpeedSq;
+        const float b = 2.0f * glm::dot(relativePosition, targetVelocity);
+        const float c = glm::dot(relativePosition, relativePosition);
+        const float epsilon = 0.0001f;
+
+        float timeToIntercept = glm::length(relativePosition) / missileSpeed;
+        bool hasInterceptSolution = false;
+
+        if (std::abs(a) < epsilon)
+        {
+            if (std::abs(b) > epsilon)
             {
-                timeToIntercept = candidate;
-                hasInterceptSolution = true;
+                const float candidate = -c / b;
+                if (candidate > 0.0f)
+                {
+                    timeToIntercept = candidate;
+                    hasInterceptSolution = true;
+                }
             }
         }
-    }
-    else
-    {
-        const float discriminant = (b * b) - (4.0f * a * c);
-        if (discriminant >= 0.0f)
+        else
         {
-            const float sqrtDiscriminant = std::sqrt(discriminant);
-            const float t1 = (-b - sqrtDiscriminant) / (2.0f * a);
-            const float t2 = (-b + sqrtDiscriminant) / (2.0f * a);
+            const float discriminant = (b * b) - (4.0f * a * c);
+            if (discriminant >= 0.0f)
+            {
+                const float sqrtDiscriminant = std::sqrt(discriminant);
+                const float t1 = (-b - sqrtDiscriminant) / (2.0f * a);
+                const float t2 = (-b + sqrtDiscriminant) / (2.0f * a);
 
-            if (t1 > 0.0f && t2 > 0.0f)
-            {
-                timeToIntercept = std::min(t1, t2);
-                hasInterceptSolution = true;
-            }
-            else if (t1 > 0.0f)
-            {
-                timeToIntercept = t1;
-                hasInterceptSolution = true;
-            }
-            else if (t2 > 0.0f)
-            {
-                timeToIntercept = t2;
-                hasInterceptSolution = true;
+                if (t1 > 0.0f && t2 > 0.0f)
+                {
+                    timeToIntercept = std::min(t1, t2);
+                    hasInterceptSolution = true;
+                }
+                else if (t1 > 0.0f)
+                {
+                    timeToIntercept = t1;
+                    hasInterceptSolution = true;
+                }
+                else if (t2 > 0.0f)
+                {
+                    timeToIntercept = t2;
+                    hasInterceptSolution = true;
+                }
             }
         }
-    }
 
-    if (!hasInterceptSolution)
-    {
-        timeToIntercept = glm::length(relativePosition) / missileSpeed;
-    }
+        if (!hasInterceptSolution)
+        {
+            timeToIntercept = glm::length(relativePosition) / missileSpeed;
+        }
 
-    timeToIntercept = glm::clamp(timeToIntercept, 0.0f, std::max(maxLookAheadTime, 0.0f));
-    return targetPosition + (targetVelocity * timeToIntercept);
-}
+        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, std::max(maxLookAheadTime, 0.0f));
+        return targetPosition + (targetVelocity * timeToIntercept);
+    }
 } // namespace
 
 Missile::Missile(const glm::vec3 &position, const glm::vec3 &velocity,

@@ -1,8 +1,10 @@
 #pragma once
 
-class Atmosphere {
+class Atmosphere
+{
 public:
-    struct State {
+    struct State
+    {
         float geometricAltitudeMeters = 0.0f;
         float geopotentialAltitudeMeters = 0.0f;
         float temperatureKelvin = 288.15f;

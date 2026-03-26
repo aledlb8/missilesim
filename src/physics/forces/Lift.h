@@ -6,14 +6,15 @@
 class PhysicsObject;
 class Atmosphere;
 
-class Lift {
+class Lift
+{
 public:
-    Lift(Atmosphere* atmosphere);
+    Lift(Atmosphere *atmosphere);
     ~Lift() = default;
-    
+
     // Apply lift force to an object
-    void applyTo(PhysicsObject* object);
-    
+    void applyTo(PhysicsObject *object);
+
 private:
-    Atmosphere* m_atmosphere; // Reference to the atmosphere model
-}; 
+    Atmosphere *m_atmosphere; // Reference to the atmosphere model
+};

@@ -8,62 +8,62 @@
 
 namespace
 {
-constexpr float kMinimumAltitudeMeters = 40.0f;
-constexpr float kReferenceDistanceFloorMeters = 250.0f;
-constexpr float kMinimumSpeedMetersPerSecond = 40.0f;
+    constexpr float kMinimumAltitudeMeters = 40.0f;
+    constexpr float kReferenceDistanceFloorMeters = 250.0f;
+    constexpr float kMinimumSpeedMetersPerSecond = 40.0f;
 
-glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
-{
-    if (glm::length2(vector) > 0.0001f)
+    glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
     {
-        return glm::normalize(vector);
+        if (glm::length2(vector) > 0.0001f)
+        {
+            return glm::normalize(vector);
+        }
+
+        if (glm::length2(fallback) > 0.0001f)
+        {
+            return glm::normalize(fallback);
+        }
+
+        return glm::vec3(1.0f, 0.0f, 0.0f);
     }
 
-    if (glm::length2(fallback) > 0.0001f)
+    glm::vec3 perpendicularTo(const glm::vec3 &direction)
     {
-        return glm::normalize(fallback);
+        const glm::vec3 referenceAxis = (std::abs(direction.y) < 0.9f)
+                                            ? glm::vec3(0.0f, 1.0f, 0.0f)
+                                            : glm::vec3(1.0f, 0.0f, 0.0f);
+        return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
     }
 
-    return glm::vec3(1.0f, 0.0f, 0.0f);
-}
-
-glm::vec3 perpendicularTo(const glm::vec3 &direction)
-{
-    const glm::vec3 referenceAxis = (std::abs(direction.y) < 0.9f)
-                                        ? glm::vec3(0.0f, 1.0f, 0.0f)
-                                        : glm::vec3(1.0f, 0.0f, 0.0f);
-    return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
-}
-
-glm::vec3 rotateTowardsDirection(const glm::vec3 &currentDirection, const glm::vec3 &targetDirection, float maxRadiansDelta)
-{
-    const glm::vec3 current = normalizeOrFallback(currentDirection, glm::vec3(1.0f, 0.0f, 0.0f));
-    const glm::vec3 target = normalizeOrFallback(targetDirection, current);
-
-    if (maxRadiansDelta <= 0.0f)
+    glm::vec3 rotateTowardsDirection(const glm::vec3 &currentDirection, const glm::vec3 &targetDirection, float maxRadiansDelta)
     {
-        return current;
-    }
+        const glm::vec3 current = normalizeOrFallback(currentDirection, glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 target = normalizeOrFallback(targetDirection, current);
 
-    const float cosTheta = glm::clamp(glm::dot(current, target), -1.0f, 1.0f);
-    const float angle = std::acos(cosTheta);
-    if (angle <= maxRadiansDelta || angle < 0.0001f)
-    {
-        return target;
-    }
+        if (maxRadiansDelta <= 0.0f)
+        {
+            return current;
+        }
 
-    glm::vec3 relative = target - (current * cosTheta);
-    if (glm::length2(relative) < 0.0001f)
-    {
-        relative = perpendicularTo(current);
-    }
-    else
-    {
-        relative = glm::normalize(relative);
-    }
+        const float cosTheta = glm::clamp(glm::dot(current, target), -1.0f, 1.0f);
+        const float angle = std::acos(cosTheta);
+        if (angle <= maxRadiansDelta || angle < 0.0001f)
+        {
+            return target;
+        }
 
-    return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
-}
+        glm::vec3 relative = target - (current * cosTheta);
+        if (glm::length2(relative) < 0.0001f)
+        {
+            relative = perpendicularTo(current);
+        }
+        else
+        {
+            relative = glm::normalize(relative);
+        }
+
+        return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
+    }
 } // namespace
 
 Target::Target(const glm::vec3 &position, float radius)

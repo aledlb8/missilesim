@@ -6,23 +6,23 @@
 
 namespace
 {
-bool segmentIntersectsSphere(const glm::vec3 &segmentStart,
-                             const glm::vec3 &segmentEnd,
-                             const glm::vec3 &sphereCenter,
-                             float sphereRadius)
-{
-    const glm::vec3 segment = segmentEnd - segmentStart;
-    const float segmentLengthSq = glm::dot(segment, segment);
-    if (segmentLengthSq <= 0.0001f)
+    bool segmentIntersectsSphere(const glm::vec3 &segmentStart,
+                                 const glm::vec3 &segmentEnd,
+                                 const glm::vec3 &sphereCenter,
+                                 float sphereRadius)
     {
-        return glm::length(segmentStart - sphereCenter) <= sphereRadius;
-    }
+        const glm::vec3 segment = segmentEnd - segmentStart;
+        const float segmentLengthSq = glm::dot(segment, segment);
+        if (segmentLengthSq <= 0.0001f)
+        {
+            return glm::length(segmentStart - sphereCenter) <= sphereRadius;
+        }
 
-    const float projection = glm::dot(sphereCenter - segmentStart, segment) / segmentLengthSq;
-    const float clampedProjection = glm::clamp(projection, 0.0f, 1.0f);
-    const glm::vec3 closestPoint = segmentStart + (segment * clampedProjection);
-    return glm::length(closestPoint - sphereCenter) <= sphereRadius;
-}
+        const float projection = glm::dot(sphereCenter - segmentStart, segment) / segmentLengthSq;
+        const float clampedProjection = glm::clamp(projection, 0.0f, 1.0f);
+        const glm::vec3 closestPoint = segmentStart + (segment * clampedProjection);
+        return glm::length(closestPoint - sphereCenter) <= sphereRadius;
+    }
 } // namespace
 
 PhysicsEngine::PhysicsEngine()
