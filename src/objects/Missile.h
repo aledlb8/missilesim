@@ -123,7 +123,7 @@ private:
     float m_maxSteeringForce = 20000.0f; // Lateral control authority in Newtons
     float m_trackingAngleDegrees = 85.0f;
     float m_proximityFuseRadius = 18.0f;
-    float m_countermeasureResistance = 0.35f;
+    float m_countermeasureResistance = 0.65f;
     float m_lockRetentionBias = 0.25f;
     bool m_trackingDecoy = false;
     bool m_selfDestructRequested = false;

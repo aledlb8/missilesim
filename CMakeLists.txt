@@ -102,6 +102,6 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/jet.obj
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/jet.obj
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/THIRD_PARTY_ASSETS.md
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/THIRD_PARTY_ASSETS.md
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/assets.md
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/assets.md
 )

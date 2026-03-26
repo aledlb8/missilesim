@@ -4431,7 +4431,7 @@ void Application::resetMissile()
 
         if (std::isnan(m_countermeasureResistance) || std::isinf(m_countermeasureResistance))
         {
-            m_countermeasureResistance = 0.35f;
+            m_countermeasureResistance = 0.65f;
         }
         m_countermeasureResistance = glm::clamp(m_countermeasureResistance, 0.0f, 1.0f);
 

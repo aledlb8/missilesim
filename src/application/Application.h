@@ -226,7 +226,7 @@ private:
     float m_maxSteeringForce = 20000.0f;
     float m_trackingAngle = 85.0f;
     float m_proximityFuseRadius = 18.0f;
-    float m_countermeasureResistance = 0.35f;
+    float m_countermeasureResistance = 0.65f;
     bool m_terrainAvoidanceEnabled = true;
     float m_terrainClearance = 90.0f;
     float m_terrainLookAheadTime = 6.0f;

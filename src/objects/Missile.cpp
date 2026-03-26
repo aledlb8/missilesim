@@ -8,6 +8,10 @@
 
 namespace
 {
+    constexpr float kDecoyAngularSeparationMinDegrees = 0.15f;
+    constexpr float kDecoyAngularSeparationMaxDegrees = 1.6f;
+    constexpr float kMinimumVelocityCoherence = 0.05f;
+
     glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
     {
         if (glm::length2(vector) > 0.0001f)
@@ -128,6 +132,11 @@ namespace
 
         timeToIntercept = glm::clamp(timeToIntercept, 0.0f, std::max(maxLookAheadTime, 0.0f));
         return targetPosition + (targetVelocity * timeToIntercept);
+    }
+
+    float computeAngleDegreesFromDot(float dotValue)
+    {
+        return glm::degrees(std::acos(glm::clamp(dotValue, -1.0f, 1.0f)));
     }
 } // namespace
 
@@ -256,8 +265,10 @@ void Missile::updateHeatSeeker(const std::vector<Flare *> &flares, float deltaTi
     const float primaryDistanceSq = std::max(glm::dot(primaryRelativePosition, primaryRelativePosition), 1.0f);
     const glm::vec3 primaryDirection = normalizeOrFallback(primaryRelativePosition, seekerForward);
     const float primaryAlignment = glm::clamp(glm::dot(seekerForward, primaryDirection), -1.0f, 1.0f);
+    const float resistanceBlend = glm::clamp(m_countermeasureResistance, 0.0f, 1.0f);
 
     float bestScore = -1.0f;
+    float primaryScore = -1.0f;
     glm::vec3 bestPosition = primaryTargetPosition;
     glm::vec3 bestVelocity = primaryTargetVelocity;
     const Flare *bestFlare = nullptr;
@@ -277,7 +288,11 @@ void Missile::updateHeatSeeker(const std::vector<Flare *> &flares, float deltaTi
 
         const float angleWeight = glm::smoothstep(seekerCosLimit, 1.0f, primaryAlignment);
         const bool retainingPrimaryTrack = !m_trackingDecoy;
-        bestScore = (targetHeat / primaryDistanceSq) * angleWeight * (retainingPrimaryTrack ? (1.0f + m_lockRetentionBias) : 1.0f);
+        const float primaryTrackBias = retainingPrimaryTrack
+                                           ? (1.0f + m_lockRetentionBias + (resistanceBlend * 1.35f))
+                                           : 1.0f;
+        primaryScore = (targetHeat / primaryDistanceSq) * angleWeight * primaryTrackBias;
+        bestScore = primaryScore;
     }
 
     for (Flare *flare : flares)
@@ -299,12 +314,31 @@ void Missile::updateHeatSeeker(const std::vector<Flare *> &flares, float deltaTi
         float score = flare->getHeatSignature() / distanceSq;
         score *= glm::smoothstep(seekerCosLimit, 1.0f, alignment);
 
-        const float directionalCoherence = glm::mix(0.2f, 1.0f, glm::clamp(glm::dot(primaryDirection, directionToFlare), 0.0f, 1.0f));
+        const float primaryFlareAlignment = glm::clamp(glm::dot(primaryDirection, directionToFlare), 0.0f, 1.0f);
+        const float directionalCoherence = glm::mix(0.1f, 1.0f, primaryFlareAlignment);
+        const float angularSeparationDegrees = computeAngleDegreesFromDot(primaryFlareAlignment);
+        const float separationCoherence = glm::smoothstep(
+            kDecoyAngularSeparationMinDegrees,
+            kDecoyAngularSeparationMaxDegrees,
+            angularSeparationDegrees);
         const float targetSpeed = std::max(glm::length(primaryTargetVelocity), 10.0f);
         const float velocityMismatch = glm::length(flare->getVelocity() - primaryTargetVelocity) / targetSpeed;
-        const float velocityCoherence = glm::clamp(1.0f - velocityMismatch, 0.15f, 1.0f);
-        const float decoyCoherence = directionalCoherence * velocityCoherence;
-        score *= glm::mix(1.0f, decoyCoherence, m_countermeasureResistance);
+        const float velocityCoherence = glm::clamp(
+            1.0f - glm::smoothstep(0.08f, 0.45f, velocityMismatch),
+            kMinimumVelocityCoherence,
+            1.0f);
+        const float decoyCoherence = directionalCoherence * separationCoherence * velocityCoherence;
+        const float irccmBlend = 0.45f + (0.55f * resistanceBlend);
+        score *= glm::mix(1.0f, decoyCoherence, irccmBlend);
+
+        if (!m_trackingDecoy && primaryScore > 0.0f)
+        {
+            const float switchMargin = glm::mix(1.35f, 2.5f, resistanceBlend);
+            if (score <= (primaryScore * switchMargin))
+            {
+                continue;
+            }
+        }
 
         if (m_trackingDecoy && m_trackedFlare == flare)
         {
