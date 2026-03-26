@@ -11,6 +11,14 @@ namespace
     constexpr float kMinimumAltitudeMeters = 40.0f;
     constexpr float kReferenceDistanceFloorMeters = 250.0f;
     constexpr float kMinimumSpeedMetersPerSecond = 40.0f;
+    constexpr float kCruisePitchRateDegrees = 10.0f;
+    constexpr float kDefensivePitchRateDegrees = 18.0f;
+    constexpr float kCruiseMaxTurnRateDegrees = 14.0f;
+    constexpr float kDefensiveMaxTurnRateDegrees = 22.0f;
+    constexpr float kCruiseParasiticDragFactor = 0.00005f;
+    constexpr float kDefensiveParasiticDragFactor = 0.00008f;
+    constexpr float kBoundaryRecoverySoftZoneMeters = 180.0f;
+    constexpr float kBoundaryRecoveryBiasMetersPerSecond = 26.0f;
 
     glm::vec3 patrolCenterReference(float altitude)
     {
@@ -78,6 +86,22 @@ namespace
         }
 
         return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
+    }
+
+    glm::vec3 clampMagnitude(const glm::vec3 &vector, float maxMagnitude)
+    {
+        if (maxMagnitude <= 0.0f)
+        {
+            return glm::vec3(0.0f);
+        }
+
+        const float magnitudeSq = glm::length2(vector);
+        if (magnitudeSq <= maxMagnitude * maxMagnitude)
+        {
+            return vector;
+        }
+
+        return glm::normalize(vector) * maxMagnitude;
     }
 } // namespace
 
@@ -287,6 +311,7 @@ void Target::update(float deltaTime)
 void Target::updateAutonomousFlight(float deltaTime)
 {
     const glm::vec3 previousPosition = m_position;
+    const glm::vec3 previousVelocity = m_velocity;
     const float minSpeed = std::max(m_aiConfig.minSpeed, kMinimumSpeedMetersPerSecond);
     const float maxSpeed = std::max(m_aiConfig.maxSpeed, minSpeed + 10.0f);
     const float cruiseSpeed = minSpeed + ((maxSpeed - minSpeed) * 0.55f);
@@ -366,22 +391,60 @@ void Target::updateAutonomousFlight(float deltaTime)
                                                      desiredDirection.z),
                                            desiredDirection);
 
-    const glm::vec3 currentDirection = normalizeOrFallback(m_velocity, desiredDirection);
-    const float turnAcceleration = m_threatAssessment.active
-                                       ? (m_evasiveConfig.lateralAcceleration * m_evasiveConfig.speedMultiplier)
-                                       : (m_evasiveConfig.lateralAcceleration * 0.55f);
-    const float maxTurnRate = turnAcceleration / std::max(currentSpeed, minSpeed * 0.5f);
-    const glm::vec3 steeredDirection = rotateTowardsDirection(currentDirection, desiredDirection, maxTurnRate * deltaTime);
+    const glm::vec3 currentDirection = normalizeOrFallback(previousVelocity, desiredDirection);
+    const glm::vec3 desiredHorizontalDirection = normalizeOrFallback(glm::vec3(desiredDirection.x, 0.0f, desiredDirection.z),
+                                                                     glm::vec3(currentDirection.x, 0.0f, currentDirection.z));
+    const float currentPitch = std::asin(glm::clamp(currentDirection.y, -1.0f, 1.0f));
+    const float desiredPitch = std::asin(glm::clamp(desiredDirection.y, -1.0f, 1.0f));
+    const float maxPitchDelta = glm::radians(m_threatAssessment.active ? kDefensivePitchRateDegrees : kCruisePitchRateDegrees) * deltaTime;
+    const float limitedPitch = currentPitch + glm::clamp(desiredPitch - currentPitch, -maxPitchDelta, maxPitchDelta);
+    const float horizontalPitchScale = std::max(std::cos(limitedPitch), 0.05f);
+    desiredDirection = normalizeOrFallback(glm::vec3(desiredHorizontalDirection.x * horizontalPitchScale,
+                                                     std::sin(limitedPitch),
+                                                     desiredHorizontalDirection.z * horizontalPitchScale),
+                                           desiredDirection);
 
     const float desiredSpeed = computeDesiredSpeed(referenceDistance);
-    const float accelRate = m_threatAssessment.active ? 26.0f : 12.0f;
-    const float decelRate = m_threatAssessment.active ? 18.0f : 10.0f;
-    const float speedStep = glm::clamp(desiredSpeed - currentSpeed, -decelRate * deltaTime, accelRate * deltaTime);
-    m_commandedSpeed = glm::clamp(currentSpeed + speedStep, minSpeed, maxSpeed);
+    const float accelRate = m_threatAssessment.active ? 18.0f : 9.0f;
+    const float decelRate = m_threatAssessment.active ? 24.0f : 12.0f;
+    const float lateralAccelerationLimit = m_threatAssessment.active
+                                               ? (m_evasiveConfig.lateralAcceleration * 0.72f * m_evasiveConfig.speedMultiplier)
+                                               : (m_evasiveConfig.lateralAcceleration * 0.38f);
+    const float maxTurnRate = std::min(lateralAccelerationLimit / std::max(currentSpeed, minSpeed * 0.8f),
+                                       glm::radians(m_threatAssessment.active ? kDefensiveMaxTurnRateDegrees : kCruiseMaxTurnRateDegrees));
+    const glm::vec3 limitedDirection = rotateTowardsDirection(currentDirection, desiredDirection, maxTurnRate * deltaTime);
+    const glm::vec3 desiredVelocity = limitedDirection * desiredSpeed;
 
-    m_velocity = steeredDirection * m_commandedSpeed;
-    m_position += m_velocity * deltaTime;
-    m_acceleration = (m_position - previousPosition - (currentDirection * currentSpeed * deltaTime)) / std::max(deltaTime * deltaTime, 0.0001f);
+    const float longitudinalVelocity = glm::dot(desiredVelocity - previousVelocity, currentDirection);
+    const glm::vec3 lateralVelocityDelta = (desiredVelocity - previousVelocity) - (currentDirection * longitudinalVelocity);
+
+    const float maxLongitudinalDelta = ((longitudinalVelocity >= 0.0f) ? accelRate : decelRate) * deltaTime;
+    const float clampedLongitudinalDelta = glm::clamp(longitudinalVelocity, -maxLongitudinalDelta, maxLongitudinalDelta);
+    const glm::vec3 clampedLateralDelta = clampMagnitude(lateralVelocityDelta, lateralAccelerationLimit * deltaTime);
+
+    const float lateralDeltaMagnitude = glm::length(clampedLateralDelta);
+    const float lateralAccelFraction = glm::clamp(lateralDeltaMagnitude / std::max(lateralAccelerationLimit * deltaTime, 0.0001f), 0.0f, 1.0f);
+    const float climbPenalty = std::max(limitedDirection.y, 0.0f) * glm::mix(1.5f, 4.0f, lateralAccelFraction);
+    const float inducedDrag = lateralAccelFraction * lateralAccelFraction * (m_threatAssessment.active ? 16.0f : 8.5f);
+    const float aoaPenalty = std::abs(desiredPitch - currentPitch) * (m_threatAssessment.active ? 9.0f : 5.0f);
+    const float parasiticDrag = currentSpeed * currentSpeed *
+                                (m_threatAssessment.active ? kDefensiveParasiticDragFactor : kCruiseParasiticDragFactor);
+    const float energyLossDelta = (climbPenalty + inducedDrag + aoaPenalty + parasiticDrag) * deltaTime;
+
+    glm::vec3 updatedVelocity = previousVelocity +
+                                (currentDirection * clampedLongitudinalDelta) +
+                                clampedLateralDelta;
+
+    const float updatedSpeed = glm::length(updatedVelocity);
+    glm::vec3 updatedDirection = normalizeOrFallback(updatedVelocity, limitedDirection);
+    float clampedSpeed = updatedSpeed - energyLossDelta;
+    clampedSpeed = glm::clamp(clampedSpeed, minSpeed, maxSpeed);
+
+    // Keep the target flying the turn rather than teleporting to a new heading.
+    m_velocity = updatedDirection * clampedSpeed;
+    m_commandedSpeed = desiredSpeed;
+    m_position += (previousVelocity + m_velocity) * (0.5f * deltaTime);
+    m_acceleration = (m_velocity - previousVelocity) / std::max(deltaTime, 0.0001f);
 }
 
 float Target::computeDesiredSpeed(float referenceDistance) const
@@ -399,7 +462,7 @@ float Target::computeDesiredSpeed(float referenceDistance) const
     if (m_threatAssessment.active)
     {
         const float threatBlend = 1.0f - glm::clamp(m_threatAssessment.timeToClosestApproach / std::max(m_mawsConfig.reactionTimeWindow, 0.1f), 0.0f, 1.0f);
-        desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, 0.72f + (0.28f * threatBlend));
+        desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, 0.48f + (0.24f * threatBlend));
     }
     else if (outerRecaptureBlend > 0.0f)
     {
@@ -473,15 +536,35 @@ void Target::enforceAirspaceConstraint()
 
         glm::vec2 horizontalVelocity = horizontalComponents(m_velocity);
         const float outwardSpeed = glm::dot(horizontalVelocity, radialDirection);
+        const glm::vec2 currentHorizontalDirection = (glm::length2(horizontalVelocity) > 0.0001f)
+                                                         ? glm::normalize(horizontalVelocity)
+                                                         : glm::vec2(-radialDirection.y, radialDirection.x);
+        glm::vec2 tangentDirection(-radialDirection.y, radialDirection.x);
+        if (glm::dot(tangentDirection, currentHorizontalDirection) < 0.0f)
+        {
+            tangentDirection = -tangentDirection;
+        }
+
+        const float overshootDistance = horizontalDistance - maximumHorizontalDistance;
+        const float recoveryBlend = glm::clamp(overshootDistance / kBoundaryRecoverySoftZoneMeters, 0.0f, 1.0f);
         if (outwardSpeed > 0.0f)
         {
-            horizontalVelocity -= radialDirection * (outwardSpeed + std::min(m_commandedSpeed * 0.35f, 90.0f));
+            horizontalVelocity -= radialDirection * (outwardSpeed * (0.92f + (0.08f * recoveryBlend)));
         }
 
         if (glm::length2(horizontalVelocity) < 0.0001f)
         {
-            horizontalVelocity = -radialDirection * std::min(std::max(m_aiConfig.minSpeed, m_commandedSpeed * 0.65f), m_aiConfig.maxSpeed);
+            horizontalVelocity = tangentDirection * std::min(std::max(m_aiConfig.minSpeed * 0.7f, m_commandedSpeed * 0.55f), m_aiConfig.maxSpeed);
         }
+
+        const float tangentialSpeed = glm::dot(horizontalVelocity, tangentDirection);
+        const float minimumTangentialSpeed = std::min(std::max(m_aiConfig.minSpeed * 0.48f, 55.0f), m_aiConfig.maxSpeed * 0.68f);
+        if (tangentialSpeed < minimumTangentialSpeed)
+        {
+            horizontalVelocity += tangentDirection * (minimumTangentialSpeed - tangentialSpeed);
+        }
+
+        horizontalVelocity -= radialDirection * (kBoundaryRecoveryBiasMetersPerSecond * (0.35f + (0.65f * recoveryBlend)));
 
         m_velocity.x = horizontalVelocity.x;
         m_velocity.z = horizontalVelocity.y;

@@ -70,6 +70,31 @@ namespace
             return false;
         }
     }
+
+    glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
+    {
+        if (glm::length2(vector) > 0.000001f)
+        {
+            return glm::normalize(vector);
+        }
+
+        if (glm::length2(fallback) > 0.000001f)
+        {
+            return glm::normalize(fallback);
+        }
+
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+
+    glm::vec3 rotateAroundAxis(const glm::vec3 &vector, const glm::vec3 &axis, float angleRadians)
+    {
+        const glm::vec3 normalizedAxis = normalizeOrFallback(axis, glm::vec3(0.0f, 1.0f, 0.0f));
+        const float cosine = std::cos(angleRadians);
+        const float sine = std::sin(angleRadians);
+        return (vector * cosine) +
+               (glm::cross(normalizedAxis, vector) * sine) +
+               (normalizedAxis * glm::dot(normalizedAxis, vector) * (1.0f - cosine));
+    }
 }
 
 // Vertex shader source
@@ -1344,17 +1369,29 @@ namespace
         return 1.0f / std::max(sceneFarPlane * 0.45f, 6000.0f);
     }
 
-    glm::mat4 buildTargetOrientationMatrix(const glm::vec3 &velocity)
+    glm::mat4 buildTargetOrientationMatrix(const glm::vec3 &velocity, const glm::vec3 &acceleration)
     {
         const glm::vec3 forward = glm::normalize(velocity);
-        glm::vec3 desiredUp(0.0f, 1.0f, 0.0f);
+        const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+        glm::vec3 desiredUp = worldUp;
+        glm::vec3 right = glm::cross(worldUp, forward);
+        if (glm::length2(right) > 0.0001f)
+        {
+            right = glm::normalize(right);
+            const float lateralAcceleration = glm::dot(acceleration, right);
+            const float bankAngle = glm::clamp(std::atan2(lateralAcceleration, 9.81f),
+                                               -glm::radians(68.0f),
+                                               glm::radians(68.0f));
+            desiredUp = rotateAroundAxis(worldUp, forward, -bankAngle);
+        }
+
         if (std::abs(glm::dot(forward, desiredUp)) > 0.98f)
         {
             desiredUp = glm::vec3(0.0f, 0.0f, 1.0f);
         }
 
         desiredUp = glm::normalize(desiredUp - (forward * glm::dot(desiredUp, forward)));
-        glm::vec3 right = glm::cross(desiredUp, forward);
+        right = glm::cross(desiredUp, forward);
         if (glm::length2(right) <= 0.0001f)
         {
             right = glm::vec3(1.0f, 0.0f, 0.0f);
@@ -1444,7 +1481,7 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             glm::vec3 velocity = object->getVelocity();
             if (glm::length(velocity) > 0.001f)
             {
-                model *= buildTargetOrientationMatrix(velocity);
+                model *= buildTargetOrientationMatrix(velocity, object->getAcceleration());
             }
         }
 
@@ -1512,7 +1549,7 @@ void Renderer::render(PhysicsObject *object)
     glm::vec3 velocity = object->getVelocity();
     if (object->getType() == "Target" && glm::length(velocity) > 0.001f)
     {
-        model *= buildTargetOrientationMatrix(velocity);
+        model *= buildTargetOrientationMatrix(velocity, object->getAcceleration());
     }
     else if (glm::length(velocity) > 0.001f)
     {
