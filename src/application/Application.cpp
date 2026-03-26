@@ -17,103 +17,103 @@
 
 namespace
 {
-std::string trimWhitespace(const std::string &value)
-{
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])))
+    std::string trimWhitespace(const std::string &value)
     {
-        ++start;
+        size_t start = 0;
+        while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])))
+        {
+            ++start;
+        }
+
+        size_t end = value.size();
+        while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])))
+        {
+            --end;
+        }
+
+        return value.substr(start, end - start);
     }
 
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])))
+    bool parseBoolValue(const std::string &value, bool fallback)
     {
-        --end;
-    }
-
-    return value.substr(start, end - start);
-}
-
-bool parseBoolValue(const std::string &value, bool fallback)
-{
-    const std::string normalized = trimWhitespace(value);
-    if (normalized == "true" || normalized == "1")
-    {
-        return true;
-    }
-    if (normalized == "false" || normalized == "0")
-    {
-        return false;
-    }
-    return fallback;
-}
-
-float parseFloatValue(const std::string &value, float fallback)
-{
-    try
-    {
-        return std::stof(trimWhitespace(value));
-    }
-    catch (...)
-    {
+        const std::string normalized = trimWhitespace(value);
+        if (normalized == "true" || normalized == "1")
+        {
+            return true;
+        }
+        if (normalized == "false" || normalized == "0")
+        {
+            return false;
+        }
         return fallback;
     }
-}
 
-int parseIntValue(const std::string &value, int fallback)
-{
-    try
+    float parseFloatValue(const std::string &value, float fallback)
     {
-        return std::stoi(trimWhitespace(value));
+        try
+        {
+            return std::stof(trimWhitespace(value));
+        }
+        catch (...)
+        {
+            return fallback;
+        }
     }
-    catch (...)
+
+    int parseIntValue(const std::string &value, int fallback)
     {
+        try
+        {
+            return std::stoi(trimWhitespace(value));
+        }
+        catch (...)
+        {
+            return fallback;
+        }
+    }
+
+    glm::vec3 parseVec3Value(const std::string &value, const glm::vec3 &fallback)
+    {
+        std::stringstream stream(value);
+        std::string component;
+        glm::vec3 parsed = fallback;
+
+        if (std::getline(stream, component, ','))
+        {
+            parsed.x = parseFloatValue(component, fallback.x);
+        }
+        if (std::getline(stream, component, ','))
+        {
+            parsed.y = parseFloatValue(component, fallback.y);
+        }
+        if (std::getline(stream, component, ','))
+        {
+            parsed.z = parseFloatValue(component, fallback.z);
+        }
+
+        return parsed;
+    }
+
+    std::string formatBoolValue(bool value)
+    {
+        return value ? "true" : "false";
+    }
+
+    std::string formatVec3Value(const glm::vec3 &value)
+    {
+        std::ostringstream stream;
+        stream << value.x << "," << value.y << "," << value.z;
+        return stream.str();
+    }
+
+    glm::vec3 safeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
+    {
+        if (glm::length2(value) > 0.0001f)
+        {
+            return glm::normalize(value);
+        }
         return fallback;
     }
-}
-
-glm::vec3 parseVec3Value(const std::string &value, const glm::vec3 &fallback)
-{
-    std::stringstream stream(value);
-    std::string component;
-    glm::vec3 parsed = fallback;
-
-    if (std::getline(stream, component, ','))
-    {
-        parsed.x = parseFloatValue(component, fallback.x);
-    }
-    if (std::getline(stream, component, ','))
-    {
-        parsed.y = parseFloatValue(component, fallback.y);
-    }
-    if (std::getline(stream, component, ','))
-    {
-        parsed.z = parseFloatValue(component, fallback.z);
-    }
-
-    return parsed;
-}
-
-std::string formatBoolValue(bool value)
-{
-    return value ? "true" : "false";
-}
-
-std::string formatVec3Value(const glm::vec3 &value)
-{
-    std::ostringstream stream;
-    stream << value.x << "," << value.y << "," << value.z;
-    return stream.str();
-}
-
-glm::vec3 safeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
-{
-    if (glm::length2(value) > 0.0001f)
-    {
-        return glm::normalize(value);
-    }
-    return fallback;
-}
 }
 
 Application::Application(int width, int height, const std::string &title)
@@ -986,7 +986,7 @@ void Application::update(float deltaTime)
                         terminateFlight = true;
                     }
 
-                    Target* trackedTarget = m_missile->getTargetObject();
+                    Target *trackedTarget = m_missile->getTargetObject();
                     if (!terminateFlight && trackedTarget && trackedTarget->isActive())
                     {
                         const glm::vec3 toTarget = trackedTarget->getPosition() - missilePos;
@@ -1335,6 +1335,11 @@ void Application::renderMinimalHUD()
     }
 
     Target *trackedTarget = m_missile->getTargetObject();
+    if ((trackedTarget == nullptr || !trackedTarget->isActive()) && m_cameraMode == CameraMode::FIGHTER_JET)
+    {
+        trackedTarget = findBestTarget();
+    }
+
     const bool validTrackedTarget = (trackedTarget != nullptr && trackedTarget->isActive());
     const bool missileWarning = validTrackedTarget && trackedTarget->isMissileWarningActive();
     const char *seekerTrack = m_missile->isTrackingDecoy() ? "FLARE" : "AIRFRAME";
@@ -1375,6 +1380,113 @@ void Application::renderMinimalHUD()
                                 : "Chase cam: hold RMB to orbit, release to recenter.");
     }
     ImGui::End();
+
+    if (m_cameraMode == CameraMode::FIGHTER_JET)
+    {
+        constexpr float rwrWindowWidth = 268.0f;
+        constexpr float rwrWindowHeight = 340.0f;
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+        ImVec2 windowPos(20.0f, 20.0f);
+        if (viewport != nullptr)
+        {
+            windowPos.x = viewport->WorkPos.x + viewport->WorkSize.x - rwrWindowWidth - 20.0f;
+            windowPos.y = viewport->WorkPos.y + ((viewport->WorkSize.y - rwrWindowHeight) * 0.5f);
+        }
+
+        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(rwrWindowWidth, rwrWindowHeight), ImGuiCond_Always);
+        const ImGuiWindowFlags rwrFlags = ImGuiWindowFlags_NoMove |
+                                          ImGuiWindowFlags_NoResize |
+                                          ImGuiWindowFlags_NoCollapse |
+                                          ImGuiWindowFlags_NoSavedSettings;
+        if (ImGui::Begin("RWR", nullptr, rwrFlags))
+        {
+            const float availableWidth = std::max(ImGui::GetContentRegionAvail().x, 220.0f);
+            const float scopeSize = std::min(availableWidth, 220.0f);
+            const float scopeOffsetX = std::max(0.0f, (availableWidth - scopeSize) * 0.5f);
+            if (scopeOffsetX > 0.0f)
+            {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + scopeOffsetX);
+            }
+
+            const ImVec2 scopeOrigin = ImGui::GetCursorScreenPos();
+            const ImVec2 scopeDimensions(scopeSize, scopeSize);
+            ImGui::InvisibleButton("FighterJetRwrScope", scopeDimensions);
+
+            ImDrawList *drawList = ImGui::GetWindowDrawList();
+            const ImVec2 center(scopeOrigin.x + (scopeDimensions.x * 0.5f),
+                                scopeOrigin.y + (scopeDimensions.y * 0.5f));
+            const float radius = scopeSize * 0.40f;
+            const ImU32 scopeBackground = IM_COL32(8, 16, 24, 210);
+            const ImU32 ringColor = IM_COL32(84, 132, 156, 235);
+            const ImU32 axisColor = IM_COL32(66, 96, 116, 220);
+            const ImU32 labelColor = IM_COL32(166, 212, 232, 255);
+            const ImU32 cueColor = missileWarning ? IM_COL32(255, 92, 92, 255) : IM_COL32(110, 224, 154, 255);
+
+            drawList->AddCircleFilled(center, radius + 12.0f, scopeBackground, 64);
+            drawList->AddCircle(center, radius, ringColor, 64, 2.0f);
+            drawList->AddCircle(center, radius * 0.58f, axisColor, 64, 1.0f);
+            drawList->AddLine(ImVec2(center.x - radius, center.y), ImVec2(center.x + radius, center.y), axisColor, 1.0f);
+            drawList->AddLine(ImVec2(center.x, center.y - radius), ImVec2(center.x, center.y + radius), axisColor, 1.0f);
+            drawList->AddTriangleFilled(ImVec2(center.x, center.y - radius - 10.0f),
+                                        ImVec2(center.x - 6.0f, center.y - radius + 2.0f),
+                                        ImVec2(center.x + 6.0f, center.y - radius + 2.0f),
+                                        labelColor);
+            drawList->AddText(ImVec2(center.x - 4.0f, center.y - radius - 26.0f), labelColor, "F");
+            drawList->AddText(ImVec2(center.x - 4.0f, center.y + radius + 8.0f), labelColor, "B");
+            drawList->AddText(ImVec2(center.x - radius - 16.0f, center.y - 6.0f), labelColor, "L");
+            drawList->AddText(ImVec2(center.x + radius + 8.0f, center.y - 6.0f), labelColor, "R");
+
+            float bearingDegrees = 0.0f;
+            bool hasRwrThreat = validTrackedTarget && trackedTarget->hasThreatAssessment();
+            if (hasRwrThreat)
+            {
+                const glm::vec3 targetForward = safeNormalize(trackedTarget->getVelocity(), glm::vec3(0.0f, 0.0f, 1.0f));
+                const glm::vec3 flatForward = safeNormalize(glm::vec3(targetForward.x, 0.0f, targetForward.z), glm::vec3(0.0f, 0.0f, 1.0f));
+                const glm::vec3 targetRight = safeNormalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), flatForward), glm::vec3(1.0f, 0.0f, 0.0f));
+                const glm::vec3 incomingOffset = trackedTarget->getThreatMissilePosition() - trackedTarget->getPosition();
+                glm::vec2 planarCue(-glm::dot(incomingOffset, targetRight), glm::dot(incomingOffset, flatForward));
+                const float planarCueLength = glm::length(planarCue);
+                if (planarCueLength > 0.001f)
+                {
+                    planarCue /= planarCueLength;
+                }
+                else
+                {
+                    planarCue = glm::vec2(0.0f, 1.0f);
+                }
+
+                bearingDegrees = std::fmod(glm::degrees(std::atan2(planarCue.x, planarCue.y)) + 360.0f, 360.0f);
+                const float cueRadius = radius * 0.78f;
+                const ImVec2 cuePosition(center.x + (planarCue.x * cueRadius),
+                                         center.y - (planarCue.y * cueRadius));
+                drawList->AddLine(center, cuePosition, IM_COL32(255, 118, 118, 180), 1.5f);
+                drawList->AddCircleFilled(cuePosition, 6.0f, cueColor, 18);
+                drawList->AddCircle(cuePosition, 12.0f, IM_COL32(255, 160, 160, 160), 24, 1.5f);
+            }
+
+            ImGui::Spacing();
+            if (hasRwrThreat)
+            {
+                char buffer[96];
+                ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.42f, 1.0f), "MAWS: INBOUND");
+                std::snprintf(buffer, sizeof(buffer), "Bearing: %.0f deg", bearingDegrees);
+                ImGui::TextUnformatted(buffer);
+                std::snprintf(buffer, sizeof(buffer), "Range: %.0f m", trackedTarget->getThreatDistance());
+                ImGui::TextUnformatted(buffer);
+                std::snprintf(buffer, sizeof(buffer), "TCA: %.1f s  CPA: %.0f m",
+                              trackedTarget->getThreatTimeToClosestApproach(),
+                              trackedTarget->getThreatClosestApproachDistance());
+                ImGui::TextUnformatted(buffer);
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.48f, 0.92f, 0.68f, 1.0f), "MAWS: CLEAR");
+                ImGui::TextDisabled("No inbound missile inside the MAWS cue window.");
+            }
+        }
+        ImGui::End();
+    }
 }
 
 float Application::computeEngagementRadius() const
@@ -2242,11 +2354,26 @@ void Application::setupUI()
     const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
 
     const char *missionState = "Standby";
-    if (m_isPaused) { missionState = "Paused"; }
-    else if (m_missileInFlight && guidanceLocked && thrustEnabled) { missionState = "Intercept"; }
-    else if (m_missileInFlight && guidanceLocked) { missionState = "Glide Track"; }
-    else if (m_missileInFlight && thrustEnabled) { missionState = "Boost"; }
-    else if (m_missileInFlight) { missionState = "Ballistic"; }
+    if (m_isPaused)
+    {
+        missionState = "Paused";
+    }
+    else if (m_missileInFlight && guidanceLocked && thrustEnabled)
+    {
+        missionState = "Intercept";
+    }
+    else if (m_missileInFlight && guidanceLocked)
+    {
+        missionState = "Glide Track";
+    }
+    else if (m_missileInFlight && thrustEnabled)
+    {
+        missionState = "Boost";
+    }
+    else if (m_missileInFlight)
+    {
+        missionState = "Ballistic";
+    }
 
     auto drawReadoutRow = [](const char *label, const char *value)
     {
@@ -2414,13 +2541,41 @@ void Application::setupUI()
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(aiStateName(target->getAIState()));
                 ImGui::TableSetColumnIndex(3);
-                if (isActive) { ImGui::Text("%.0f m", targetAltitude); } else { ImGui::TextDisabled("--"); }
+                if (isActive)
+                {
+                    ImGui::Text("%.0f m", targetAltitude);
+                }
+                else
+                {
+                    ImGui::TextDisabled("--");
+                }
                 ImGui::TableSetColumnIndex(4);
-                if (isActive) { ImGui::Text("%.0f m/s", targetSpeed); } else { ImGui::TextDisabled("--"); }
+                if (isActive)
+                {
+                    ImGui::Text("%.0f m/s", targetSpeed);
+                }
+                else
+                {
+                    ImGui::TextDisabled("--");
+                }
                 ImGui::TableSetColumnIndex(5);
-                if (isActive) { ImGui::Text("%.1f m", targetRange); } else { ImGui::TextDisabled("--"); }
+                if (isActive)
+                {
+                    ImGui::Text("%.1f m", targetRange);
+                }
+                else
+                {
+                    ImGui::TextDisabled("--");
+                }
                 ImGui::TableSetColumnIndex(6);
-                if (isActive) { ImGui::Text("%d", target->getRemainingFlares()); } else { ImGui::TextDisabled("--"); }
+                if (isActive)
+                {
+                    ImGui::Text("%d", target->getRemainingFlares());
+                }
+                else
+                {
+                    ImGui::TextDisabled("--");
+                }
             }
 
             ImGui::EndTable();
@@ -2467,12 +2622,33 @@ void Application::setupUI()
             drawReadoutRow("Mission state", missionState);
             std::snprintf(buffer, sizeof(buffer), "%d / %zu", activeTargets, m_targets.size());
             drawReadoutRow("Targets active", buffer);
-            if (trackedTargetIndex > 0) { std::snprintf(buffer, sizeof(buffer), "Target %d", trackedTargetIndex); drawReadoutRow("Tracked target", buffer); }
-            else { drawReadoutRow("Tracked target", "None"); }
-            if (guidanceLocked) { std::snprintf(buffer, sizeof(buffer), "%.1f m", trackedTargetRange); drawReadoutRow("Target range", buffer); }
-            else { drawReadoutRow("Target range", "No lock"); }
-            if (m_closestTargetDistance < 999999.0f) { std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance); drawReadoutRow("Closest pass", buffer); }
-            else { drawReadoutRow("Closest pass", "Not available"); }
+            if (trackedTargetIndex > 0)
+            {
+                std::snprintf(buffer, sizeof(buffer), "Target %d", trackedTargetIndex);
+                drawReadoutRow("Tracked target", buffer);
+            }
+            else
+            {
+                drawReadoutRow("Tracked target", "None");
+            }
+            if (guidanceLocked)
+            {
+                std::snprintf(buffer, sizeof(buffer), "%.1f m", trackedTargetRange);
+                drawReadoutRow("Target range", buffer);
+            }
+            else
+            {
+                drawReadoutRow("Target range", "No lock");
+            }
+            if (m_closestTargetDistance < 999999.0f)
+            {
+                std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance);
+                drawReadoutRow("Closest pass", buffer);
+            }
+            else
+            {
+                drawReadoutRow("Closest pass", "Not available");
+            }
             std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
             drawReadoutRow("Flight time", buffer);
             ImGui::EndTable();
@@ -4378,7 +4554,8 @@ void Application::updateExplosions(float deltaTime)
 void Application::renderExplosions()
 {
     // Call renderer to draw each active explosion
-    for (const auto& explosion : m_explosions) {
+    for (const auto &explosion : m_explosions)
+    {
         m_renderer->renderExplosion(explosion.position, explosion.size);
     }
 }

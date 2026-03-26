@@ -80,6 +80,11 @@ public:
     int getRemainingFlares() const { return m_remainingFlares; }
     float getThreatTimeToClosestApproach() const { return m_threatTimeToClosestApproach; }
     float getThreatClosestApproachDistance() const { return m_threatClosestApproachDistance; }
+    bool hasThreatAssessment() const { return m_threatAssessment.active; }
+    const glm::vec3 &getThreatMissilePosition() const { return m_threatAssessment.missilePosition; }
+    const glm::vec3 &getThreatMissileVelocity() const { return m_threatAssessment.missileVelocity; }
+    float getThreatDistance() const { return m_threatAssessment.distance; }
+    float getThreatClosingSpeed() const { return m_threatAssessment.closingSpeed; }
 
     void updateThreatAssessment(const std::vector<Missile *> &missiles);
     std::vector<FlareLaunchRequest> consumePendingFlareLaunches();
