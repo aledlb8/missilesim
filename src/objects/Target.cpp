@@ -12,6 +12,21 @@ namespace
     constexpr float kReferenceDistanceFloorMeters = 250.0f;
     constexpr float kMinimumSpeedMetersPerSecond = 40.0f;
 
+    glm::vec3 patrolCenterReference(float altitude)
+    {
+        return glm::vec3(0.0f, altitude, 0.0f);
+    }
+
+    float horizontalDistanceFromCenter(const glm::vec3 &position)
+    {
+        return glm::length(glm::vec2(position.x, position.z));
+    }
+
+    glm::vec2 horizontalComponents(const glm::vec3 &vector)
+    {
+        return glm::vec2(vector.x, vector.z);
+    }
+
     glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
     {
         if (glm::length2(vector) > 0.0001f)
@@ -89,6 +104,9 @@ Target::Target(const glm::vec3 &position, float radius)
 
     m_orbitDirection = ((position.x + position.z) >= 0.0f) ? 1 : -1;
     setAIConfig(m_aiConfig);
+    m_referencePosition = patrolCenterReference(m_homeAnchor.y);
+    m_referenceVelocity = glm::vec3(0.0f);
+    m_referenceDistance = horizontalDistanceFromCenter(m_position);
 
     const glm::vec3 radialFromOrigin = normalizeOrFallback(glm::vec3(m_position.x, 0.0f, m_position.z), glm::vec3(1.0f, 0.0f, 0.0f));
     const glm::vec3 tangent = normalizeOrFallback(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), radialFromOrigin) * static_cast<float>(m_orbitDirection),
@@ -111,6 +129,9 @@ void Target::setActive(bool active)
     const glm::vec3 tangent = normalizeOrFallback(perpendicularTo(glm::vec3(m_position.x, 0.0f, m_position.z)), glm::vec3(0.0f, 0.0f, 1.0f));
     m_commandedSpeed = glm::clamp(cruiseSpeed, m_aiConfig.minSpeed, m_aiConfig.maxSpeed);
     m_velocity = tangent * m_commandedSpeed;
+    m_referencePosition = patrolCenterReference(m_homeAnchor.y);
+    m_referenceVelocity = glm::vec3(0.0f);
+    m_referenceDistance = horizontalDistanceFromCenter(m_position);
     m_remainingFlares = m_flareConfig.inventory;
     resetCountermeasureState();
 }
@@ -141,7 +162,9 @@ void Target::setAIConfig(const TargetAIConfig &config)
 void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
 {
     ThreatAssessment bestThreat;
-    ThreatAssessment nearestContact;
+    m_referencePosition = patrolCenterReference(m_homeAnchor.y);
+    m_referenceVelocity = glm::vec3(0.0f);
+    m_referenceDistance = horizontalDistanceFromCenter(m_position);
 
     if (!m_isActive)
     {
@@ -149,9 +172,6 @@ void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
         m_missileWarningActive = false;
         m_threatTimeToClosestApproach = std::numeric_limits<float>::infinity();
         m_threatClosestApproachDistance = std::numeric_limits<float>::infinity();
-        m_referencePosition = m_homeAnchor;
-        m_referenceVelocity = glm::vec3(0.0f);
-        m_referenceDistance = glm::length(m_position - m_homeAnchor);
         return;
     }
 
@@ -164,13 +184,6 @@ void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
 
         const glm::vec3 relativePosition = missile->getPosition() - m_position;
         const float distance = glm::length(relativePosition);
-        if (distance < nearestContact.distance && distance >= 0.1f)
-        {
-            nearestContact.active = true;
-            nearestContact.distance = distance;
-            nearestContact.missilePosition = missile->getPosition();
-            nearestContact.missileVelocity = missile->getVelocity();
-        }
 
         if (!m_mawsConfig.enabled || distance > m_mawsConfig.detectionRange || distance < 0.1f)
         {
@@ -215,19 +228,6 @@ void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
             bestThreat.closestApproachDistance = closestApproachDistance;
             bestThreat.closingSpeed = closingSpeed;
         }
-    }
-
-    if (nearestContact.active)
-    {
-        m_referencePosition = nearestContact.missilePosition;
-        m_referenceVelocity = nearestContact.missileVelocity;
-        m_referenceDistance = nearestContact.distance;
-    }
-    else
-    {
-        m_referencePosition = m_homeAnchor;
-        m_referenceVelocity = glm::vec3(0.0f);
-        m_referenceDistance = glm::length(m_position - m_homeAnchor);
     }
 
     m_threatAssessment = bestThreat;
@@ -320,6 +320,13 @@ void Target::updateAutonomousFlight(float deltaTime)
     const float distanceCorrection = glm::clamp((m_aiConfig.preferredDistance - referenceDistance) / distanceBand, -1.0f, 1.0f);
     glm::vec3 desiredDirection = normalizeOrFallback((tangentDirection * 1.15f) + (awayDirection * distanceCorrection * 0.85f),
                                                      tangentDirection);
+    const float outerRecaptureRange = std::max(m_aiConfig.preferredDistance * 0.35f, 250.0f);
+    const float outerRecaptureBlend = glm::clamp((referenceDistance - (m_aiConfig.preferredDistance * 1.08f)) / outerRecaptureRange, 0.0f, 1.0f);
+    if (outerRecaptureBlend > 0.0f)
+    {
+        const glm::vec3 recaptureDirection = normalizeOrFallback((-awayDirection * 1.75f) + (tangentDirection * 0.30f), -awayDirection);
+        desiredDirection = normalizeOrFallback(glm::mix(desiredDirection, recaptureDirection, outerRecaptureBlend), recaptureDirection);
+    }
 
     const float energyFraction = glm::clamp((currentSpeed - minSpeed) / std::max(maxSpeed - minSpeed, 1.0f), 0.0f, 1.0f);
     if (m_threatAssessment.active)
@@ -384,6 +391,8 @@ float Target::computeDesiredSpeed(float referenceDistance) const
     const float cruiseSpeed = minSpeed + ((maxSpeed - minSpeed) * 0.55f);
     const float distanceBand = std::max(m_aiConfig.preferredDistance * 0.18f, 120.0f);
     const float distanceError = glm::clamp((m_aiConfig.preferredDistance - referenceDistance) / distanceBand, -1.0f, 1.0f);
+    const float outerRecaptureRange = std::max(m_aiConfig.preferredDistance * 0.35f, 250.0f);
+    const float outerRecaptureBlend = glm::clamp((referenceDistance - (m_aiConfig.preferredDistance * 1.08f)) / outerRecaptureRange, 0.0f, 1.0f);
 
     float desiredSpeed = cruiseSpeed;
 
@@ -391,6 +400,10 @@ float Target::computeDesiredSpeed(float referenceDistance) const
     {
         const float threatBlend = 1.0f - glm::clamp(m_threatAssessment.timeToClosestApproach / std::max(m_mawsConfig.reactionTimeWindow, 0.1f), 0.0f, 1.0f);
         desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, 0.72f + (0.28f * threatBlend));
+    }
+    else if (outerRecaptureBlend > 0.0f)
+    {
+        desiredSpeed = glm::mix(cruiseSpeed, minSpeed, outerRecaptureBlend);
     }
     else if (distanceError > 0.15f)
     {
@@ -445,6 +458,34 @@ void Target::enforceAirspaceConstraint()
 {
     const float minimumAltitude = std::max(m_radius + 2.0f, kMinimumAltitudeMeters);
     const float maximumAltitude = std::max(minimumAltitude + 120.0f, glm::clamp(m_aiConfig.preferredDistance * 0.4f, 220.0f, 800.0f));
+    const float patrolRadius = std::max(m_aiConfig.preferredDistance, kReferenceDistanceFloorMeters);
+    const float maximumHorizontalDistance = std::max(patrolRadius * (m_threatAssessment.active ? 1.90f : 1.45f),
+                                                     patrolRadius + (m_threatAssessment.active ? 1600.0f : 700.0f));
+
+    const glm::vec2 horizontalPosition = horizontalComponents(m_position);
+    const float horizontalDistance = glm::length(horizontalPosition);
+    if (horizontalDistance > maximumHorizontalDistance && horizontalDistance > 0.001f)
+    {
+        const glm::vec2 radialDirection = horizontalPosition / horizontalDistance;
+        const glm::vec2 constrainedPosition = radialDirection * maximumHorizontalDistance;
+        m_position.x = constrainedPosition.x;
+        m_position.z = constrainedPosition.y;
+
+        glm::vec2 horizontalVelocity = horizontalComponents(m_velocity);
+        const float outwardSpeed = glm::dot(horizontalVelocity, radialDirection);
+        if (outwardSpeed > 0.0f)
+        {
+            horizontalVelocity -= radialDirection * (outwardSpeed + std::min(m_commandedSpeed * 0.35f, 90.0f));
+        }
+
+        if (glm::length2(horizontalVelocity) < 0.0001f)
+        {
+            horizontalVelocity = -radialDirection * std::min(std::max(m_aiConfig.minSpeed, m_commandedSpeed * 0.65f), m_aiConfig.maxSpeed);
+        }
+
+        m_velocity.x = horizontalVelocity.x;
+        m_velocity.z = horizontalVelocity.y;
+    }
 
     if (m_position.y < minimumAltitude)
     {
