@@ -1117,8 +1117,21 @@ void Application::render()
             }
         }
 
+        struct WorldLabelLine
+        {
+            std::string text;
+            ImU32 color;
+            float screenYOffset;
+        };
+
+        struct WorldLabel
+        {
+            glm::vec3 position;
+            std::vector<WorldLabelLine> lines;
+        };
+
         // Collect target positions for UI display
-        std::vector<std::pair<glm::vec3, std::string>> targetLabels;
+        std::vector<WorldLabel> targetLabels;
 
         // Render targets
         for (const auto &target : m_targets)
@@ -1132,14 +1145,27 @@ void Application::render()
                     // Render target debug info if enabled, or always in hidden HUD mode.
                     if (m_missile && (m_showTargetInfo || !m_showUI))
                     {
-                        float distance = glm::length(target->getPosition() - m_missile->getPosition());
-                        std::string label = "Target: " + std::to_string(static_cast<int>(distance)) + "m";
+                        const float distance = glm::length(target->getPosition() - m_missile->getPosition());
+                        const float targetAltitude = std::max(target->getPosition().y, 0.0f);
+                        const float targetSpeed = glm::length(target->getVelocity());
+                        WorldLabel label;
+                        label.position = target->getPosition();
+                        label.lines.push_back({"Target: " + std::to_string(static_cast<int>(distance)) + "m",
+                                               IM_COL32(255, 234, 120, 255), 0.0f});
+
+                        char buffer[96];
+                        std::snprintf(buffer, sizeof(buffer), "ALT %.0f m", targetAltitude);
+                        label.lines.push_back({buffer, IM_COL32(255, 214, 132, 255), 16.0f});
+
+                        std::snprintf(buffer, sizeof(buffer), "SPD %.0f m/s", targetSpeed);
+                        label.lines.push_back({buffer, IM_COL32(255, 196, 142, 255), 32.0f});
+
                         if (target->isMissileWarningActive())
                         {
-                            label += " | MAWS";
-                            label += " | Flares " + std::to_string(target->getRemainingFlares());
+                            label.lines.push_back({"MAWS | Flares " + std::to_string(target->getRemainingFlares()),
+                                                   IM_COL32(255, 164, 124, 255), 48.0f});
                         }
-                        targetLabels.push_back(std::make_pair(target->getPosition(), label));
+                        targetLabels.push_back(std::move(label));
                     }
                 }
             }
@@ -1222,7 +1248,11 @@ void Application::render()
 
                     for (const auto &targetLabel : targetLabels)
                     {
-                        drawWorldText(targetLabel.first + glm::vec3(0.0f, 3.0f, 0.0f), targetLabel.second, IM_COL32(255, 234, 120, 255));
+                        const glm::vec3 labelAnchor = targetLabel.position + glm::vec3(0.0f, 3.0f, 0.0f);
+                        for (const auto &line : targetLabel.lines)
+                        {
+                            drawWorldText(labelAnchor, line.text, line.color, line.screenYOffset);
+                        }
                     }
 
                     if (!m_showUI)
