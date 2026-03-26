@@ -4905,7 +4905,7 @@ void Application::emitFrameVisualEffects(float deltaTime)
         const float fuelFraction = (m_missileFuel > 0.0f)
                                        ? glm::clamp(m_missile->getFuel() / m_missileFuel, 0.0f, 1.0f)
                                        : 1.0f;
-        const float plumeIntensity = glm::clamp(glm::mix(0.52f, 0.88f, fuelFraction), 0.5f, 0.95f);
+        const float plumeIntensity = glm::clamp(glm::mix(0.38f, 0.68f, fuelFraction), 0.36f, 0.74f);
         m_renderer->emitMissileExhaust(previousEmitter, currentEmitter, missileForward, m_missile->getVelocity(), plumeIntensity);
     }
 
@@ -4929,8 +4929,8 @@ void Application::emitFrameVisualEffects(float deltaTime)
         const float speed = glm::length(target->getVelocity());
         const float speedBand = std::max(config.maxSpeed - config.minSpeed, 1.0f);
         const float speedFraction = glm::clamp((speed - config.minSpeed) / speedBand, 0.0f, 1.0f);
-        const float afterburnerIntensity = glm::clamp(0.52f + (speedFraction * 0.32f) + (target->isMissileWarningActive() ? 0.10f : 0.0f),
-                                                      0.42f, 1.0f);
+        const float afterburnerIntensity = glm::clamp(0.46f + (speedFraction * 0.26f) + (target->isMissileWarningActive() ? 0.08f : 0.0f),
+                                                      0.40f, 0.82f);
 
         m_renderer->emitJetAfterburner(previousBase - lateralOffset,
                                        currentBase - lateralOffset,

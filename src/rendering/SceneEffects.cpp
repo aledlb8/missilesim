@@ -1313,9 +1313,31 @@ void SceneEffects::emitEngineTrail(const glm::vec3 &start,
     const glm::vec3 exhaustDirection = safeNormalize(-forward, glm::vec3(0.0f, -1.0f, 0.0f));
     const glm::vec3 lateralDirection = perpendicularTo(exhaustDirection);
     const glm::vec3 verticalDirection = safeNormalize(glm::cross(exhaustDirection, lateralDirection), glm::vec3(0.0f, 1.0f, 0.0f));
-    const float spacing = missilePreset ? 1.25f : 1.35f;
-    const float segmentLength = glm::length(end - start);
-    const int sampleCount = std::max(1, static_cast<int>(std::ceil(segmentLength / spacing)) + 1);
+    const float sweepLength = glm::length(end - start);
+    const auto computeSweepCount = [sweepLength](float spacing, int maxCount)
+    {
+        if (sweepLength <= spacing * 0.35f)
+        {
+            return 1;
+        }
+
+        return std::clamp(static_cast<int>(std::ceil(sweepLength / spacing)) + 1, 2, maxCount);
+    };
+
+    // Fill the swept nozzle path so fast movers keep a continuous plume between frames.
+    const int plumeSweepCount = computeSweepCount(missilePreset ? 0.45f : 0.60f,
+                                                  missilePreset ? 24 : 16);
+    const int smokeSweepCount = computeSweepCount(missilePreset ? 1.05f : 1.35f,
+                                                  missilePreset ? 8 : 6);
+    const int hazeSweepCount = computeSweepCount(missilePreset ? 0.85f : 1.10f,
+                                                 missilePreset ? 7 : 5);
+    const glm::vec3 advectedVelocity = carrierVelocity * (missilePreset ? 0.07f : 0.05f);
+    const glm::vec3 smokeAdvectedVelocity = carrierVelocity * (missilePreset ? 0.14f : 0.08f);
+    const glm::vec3 hazeAdvectedVelocity = carrierVelocity * (missilePreset ? 0.08f : 0.06f);
+    const int plumeLayerCount = missilePreset ? 2 : 3;
+    const float plumeClusterLength = missilePreset ? 0.09f : 0.07f;
+    const float smokeClusterLength = missilePreset ? 0.26f : 0.20f;
+    const float hazeClusterLength = missilePreset ? 0.16f : 0.12f;
 
     const glm::vec3 flameColor = missilePreset
                                      ? glm::vec3(1.0f, 0.68f, 0.24f)
@@ -1324,65 +1346,94 @@ void SceneEffects::emitEngineTrail(const glm::vec3 &start,
                                          ? glm::vec3(1.0f, 0.95f, 0.82f)
                                          : glm::vec3(0.86f, 0.94f, 1.0f);
 
-    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    for (int sweepIndex = 0; sweepIndex < plumeSweepCount; ++sweepIndex)
     {
-        const float interpolation = (sampleCount == 1) ? 1.0f : static_cast<float>(sampleIndex) / static_cast<float>(sampleCount - 1);
-        const glm::vec3 center = glm::mix(start, end, interpolation);
-        const float jitterSpan = missilePreset ? 0.035f : 0.05f;
-        const glm::vec3 nozzleJitter = (lateralDirection * randomRange(-jitterSpan, jitterSpan) * intensity) +
-                                       (verticalDirection * randomRange(-jitterSpan, jitterSpan) * intensity);
+        const float sweepInterpolation = (plumeSweepCount == 1) ? 1.0f : static_cast<float>(sweepIndex) / static_cast<float>(plumeSweepCount - 1);
+        const float sampleIntensity = intensity * glm::mix(0.84f, 1.0f, sweepInterpolation);
+        const float sampleScale = glm::mix(0.90f, 1.0f, sweepInterpolation);
+        const glm::vec3 trailEnd = glm::mix(start, end, sweepInterpolation);
 
-        EffectParticle core{};
-        core.position = center + nozzleJitter;
-        core.velocity = (carrierVelocity * 0.18f) + (exhaustDirection * randomRange(18.0f, 34.0f) * intensity);
-        core.axis = exhaustDirection;
-        core.color = glm::vec4(flameHighlight, 1.0f);
-        core.lifetime = missilePreset ? randomRange(0.12f, 0.18f) : randomRange(0.08f, 0.12f);
-        core.startSize = missilePreset ? 0.14f : 0.10f;
-        core.endSize = missilePreset ? 0.42f * intensity : 0.34f * intensity;
-        core.stretch = missilePreset ? 1.8f : 1.5f;
-        core.softness = 1.0f;
-        core.emissive = missilePreset ? 1.1f : 1.0f;
-        core.seed = randomRange(0.0f, 1000.0f);
-        core.drag = 3.0f;
-        core.material = ParticleMaterial::GLOW;
-        core.blendMode = BlendMode::ADDITIVE;
-        addParticle(core);
+        for (int sampleIndex = 0; sampleIndex < plumeLayerCount; ++sampleIndex)
+        {
+            const float interpolation = (plumeLayerCount == 1) ? 0.0f : static_cast<float>(sampleIndex) / static_cast<float>(plumeLayerCount - 1);
+            const glm::vec3 center = trailEnd +
+                                     (exhaustDirection * (glm::mix(0.0f, plumeClusterLength, interpolation) +
+                                                          randomRange(0.0f, plumeClusterLength * 0.15f)));
+            const float jitterSpan = missilePreset ? 0.018f : 0.024f;
+            const glm::vec3 nozzleJitter = (lateralDirection * randomRange(-jitterSpan, jitterSpan) * sampleIntensity) +
+                                           (verticalDirection * randomRange(-jitterSpan, jitterSpan) * sampleIntensity);
 
-        EffectParticle flame{};
-        flame.position = center + nozzleJitter + (exhaustDirection * randomRange(0.12f, 0.26f));
-        flame.velocity = (carrierVelocity * 0.25f) + (exhaustDirection * randomRange(24.0f, missilePreset ? 48.0f : 38.0f) * intensity) +
-                         (randomInUnitSphere() * (missilePreset ? 2.4f : 2.0f));
-        flame.axis = exhaustDirection;
-        flame.color = glm::vec4(glm::mix(flameColor, flameHighlight, randomRange(0.08f, 0.22f)), 1.0f);
-        flame.lifetime = missilePreset ? randomRange(0.18f, 0.28f) : randomRange(0.14f, 0.22f);
-        flame.startSize = missilePreset ? 0.18f : 0.14f;
-        flame.endSize = missilePreset ? randomRange(0.9f, 1.5f) * intensity : randomRange(0.7f, 1.1f) * intensity;
-        flame.stretch = missilePreset ? randomRange(2.4f, 3.4f) : randomRange(2.1f, 3.0f);
-        flame.rotation = randomRange(0.0f, 6.28318f);
-        flame.angularVelocity = randomRange(-2.0f, 2.0f);
-        flame.softness = 0.92f;
-        flame.emissive = missilePreset ? 0.95f : 0.9f;
-        flame.seed = randomRange(0.0f, 1000.0f);
-        flame.drag = 1.6f;
-        flame.material = ParticleMaterial::FLAME;
-        flame.blendMode = BlendMode::ADDITIVE;
-        addParticle(flame);
+            EffectParticle core{};
+            core.position = center + nozzleJitter;
+            core.velocity = advectedVelocity +
+                            (exhaustDirection * randomRange(missilePreset ? 12.0f : 8.0f,
+                                                            missilePreset ? 22.0f : 14.0f) *
+                                                   sampleIntensity);
+            core.axis = exhaustDirection;
+            core.color = glm::vec4(flameHighlight, 1.0f);
+            core.lifetime = missilePreset ? randomRange(0.08f, 0.12f) : randomRange(0.06f, 0.09f);
+            core.startSize = (missilePreset ? 0.09f : 0.11f) * sampleScale;
+            core.endSize = missilePreset ? 0.24f * sampleIntensity : 0.30f * sampleIntensity;
+            core.stretch = missilePreset ? 1.35f : 1.28f;
+            core.softness = 1.0f;
+            core.emissive = (missilePreset ? 1.1f : 1.0f) * sampleScale;
+            core.seed = randomRange(0.0f, 1000.0f);
+            core.drag = 3.0f;
+            core.material = ParticleMaterial::GLOW;
+            core.blendMode = BlendMode::ADDITIVE;
+            addParticle(core);
 
-        if ((missilePreset && sampleIndex % 3 == 0) || (!missilePreset && sampleIndex % 2 == 0))
+            EffectParticle flame{};
+            flame.position = center + nozzleJitter + (exhaustDirection * randomRange(0.03f, missilePreset ? 0.10f : 0.08f));
+            flame.velocity = (advectedVelocity * 1.2f) +
+                             (exhaustDirection * randomRange(missilePreset ? 16.0f : 12.0f,
+                                                             missilePreset ? 30.0f : 22.0f) *
+                                                    sampleIntensity) +
+                             (randomInUnitSphere() * (missilePreset ? 1.1f : 1.0f));
+            flame.axis = exhaustDirection;
+            flame.color = glm::vec4(glm::mix(flameColor, flameHighlight, randomRange(0.08f, 0.22f)), 1.0f);
+            flame.lifetime = missilePreset ? randomRange(0.11f, 0.18f) : randomRange(0.09f, 0.14f);
+            flame.startSize = (missilePreset ? 0.10f : 0.13f) * sampleScale;
+            flame.endSize = missilePreset ? randomRange(0.44f, 0.72f) * sampleIntensity : randomRange(0.64f, 0.98f) * sampleIntensity;
+            flame.stretch = missilePreset ? randomRange(1.45f, 2.05f) : randomRange(1.35f, 1.85f);
+            flame.rotation = randomRange(0.0f, 6.28318f);
+            flame.angularVelocity = randomRange(-2.0f, 2.0f);
+            flame.softness = 0.92f;
+            flame.emissive = (missilePreset ? 0.95f : 0.9f) * sampleScale;
+            flame.seed = randomRange(0.0f, 1000.0f);
+            flame.drag = 1.6f;
+            flame.material = ParticleMaterial::FLAME;
+            flame.blendMode = BlendMode::ADDITIVE;
+            addParticle(flame);
+        }
+    }
+
+    const int smokeCount = missilePreset ? 1 : 2;
+    for (int sweepIndex = 0; sweepIndex < smokeSweepCount; ++sweepIndex)
+    {
+        const float sweepInterpolation = (smokeSweepCount == 1) ? 1.0f : static_cast<float>(sweepIndex) / static_cast<float>(smokeSweepCount - 1);
+        const float sampleIntensity = intensity * glm::mix(0.78f, 1.0f, sweepInterpolation);
+        const glm::vec3 trailEnd = glm::mix(start, end, sweepInterpolation);
+
+        for (int smokeIndex = 0; smokeIndex < smokeCount; ++smokeIndex)
         {
             EffectParticle smoke{};
-            smoke.position = center + (exhaustDirection * randomRange(0.4f, 0.8f)) + (randomInUnitSphere() * 0.2f);
-            smoke.velocity = (carrierVelocity * 0.45f) + (exhaustDirection * randomRange(4.0f, missilePreset ? 10.0f : 7.0f) * intensity) +
-                             (randomInUnitSphere() * 2.2f);
+            smoke.position = trailEnd + (exhaustDirection * randomRange(missilePreset ? 0.14f : 0.10f,
+                                                                        smokeClusterLength)) +
+                             (randomInUnitSphere() * 0.10f);
+            smoke.velocity = smokeAdvectedVelocity +
+                             (exhaustDirection * randomRange(missilePreset ? 3.0f : 2.4f,
+                                                             missilePreset ? 7.0f : 5.0f) *
+                                                    sampleIntensity) +
+                             (randomInUnitSphere() * (missilePreset ? 1.1f : 0.9f));
             smoke.axis = safeNormalize(smoke.velocity, exhaustDirection);
             smoke.color = missilePreset
                               ? glm::vec4(0.30f, 0.30f, 0.32f, 0.42f)
-                              : glm::vec4(0.20f, 0.24f, 0.28f, 0.30f);
-            smoke.lifetime = missilePreset ? randomRange(0.9f, 1.35f) : randomRange(0.6f, 0.95f);
-            smoke.startSize = missilePreset ? 0.22f : 0.20f;
-            smoke.endSize = missilePreset ? randomRange(1.0f, 1.8f) * intensity : randomRange(0.8f, 1.4f) * intensity;
-            smoke.stretch = randomRange(1.0f, 1.2f);
+                              : glm::vec4(0.20f, 0.24f, 0.28f, 0.34f);
+            smoke.lifetime = missilePreset ? randomRange(0.42f, 0.68f) : randomRange(0.28f, 0.46f);
+            smoke.startSize = missilePreset ? 0.14f : 0.18f;
+            smoke.endSize = missilePreset ? randomRange(0.46f, 0.78f) * sampleIntensity : randomRange(0.60f, 0.96f) * sampleIntensity;
+            smoke.stretch = randomRange(1.0f, 1.14f);
             smoke.rotation = randomRange(0.0f, 6.28318f);
             smoke.angularVelocity = randomRange(-0.6f, 0.6f);
             smoke.softness = 0.72f;
@@ -1396,25 +1447,33 @@ void SceneEffects::emitEngineTrail(const glm::vec3 &start,
         }
     }
 
-    const int hazeCount = missilePreset ? 3 : 2;
-    for (int hazeIndex = 0; hazeIndex < hazeCount; ++hazeIndex)
+    const int hazeCount = missilePreset ? 1 : 2;
+    for (int sweepIndex = 0; sweepIndex < hazeSweepCount; ++sweepIndex)
     {
-        const float interpolation = (hazeCount == 1) ? 1.0f : static_cast<float>(hazeIndex) / static_cast<float>(hazeCount - 1);
-        HeatHazeSprite haze{};
-        haze.position = glm::mix(start, end, interpolation) +
-                        (exhaustDirection * glm::mix(0.12f, missilePreset ? 0.42f : 0.24f, interpolation));
-        haze.velocity = (carrierVelocity * 0.22f) +
-                        (exhaustDirection * glm::mix(missilePreset ? 12.0f : 6.0f, missilePreset ? 6.0f : 2.5f, interpolation));
-        haze.axis = exhaustDirection;
-        haze.lifetime = missilePreset ? randomRange(0.10f, 0.16f) : randomRange(0.08f, 0.13f);
-        haze.radius = (missilePreset ? randomRange(0.85f, 1.35f) : randomRange(0.55f, 0.95f)) * intensity;
-        haze.stretch = missilePreset ? randomRange(1.7f, 2.4f) : randomRange(1.35f, 1.9f);
-        haze.rotation = randomRange(0.0f, 6.28318f);
-        haze.angularVelocity = randomRange(-1.4f, 1.4f);
-        haze.strength = (missilePreset ? randomRange(2.4f, 3.8f) : randomRange(1.6f, 2.6f)) * intensity;
-        haze.seed = randomRange(0.0f, 1000.0f);
-        haze.drag = 1.8f;
-        addHeatHaze(haze);
+        const float sweepInterpolation = (hazeSweepCount == 1) ? 1.0f : static_cast<float>(sweepIndex) / static_cast<float>(hazeSweepCount - 1);
+        const float sampleIntensity = intensity * glm::mix(0.74f, 1.0f, sweepInterpolation);
+        const glm::vec3 trailEnd = glm::mix(start, end, sweepInterpolation);
+
+        for (int hazeIndex = 0; hazeIndex < hazeCount; ++hazeIndex)
+        {
+            const float interpolation = (hazeCount == 1) ? 1.0f : static_cast<float>(hazeIndex) / static_cast<float>(hazeCount - 1);
+            HeatHazeSprite haze{};
+            haze.position = trailEnd +
+                            (exhaustDirection * (glm::mix(0.04f, hazeClusterLength, interpolation) +
+                                                 randomRange(0.0f, hazeClusterLength * 0.12f)));
+            haze.velocity = hazeAdvectedVelocity +
+                            (exhaustDirection * glm::mix(missilePreset ? 6.5f : 3.8f, missilePreset ? 3.0f : 1.8f, interpolation));
+            haze.axis = exhaustDirection;
+            haze.lifetime = missilePreset ? randomRange(0.07f, 0.11f) : randomRange(0.06f, 0.10f);
+            haze.radius = (missilePreset ? randomRange(0.38f, 0.62f) : randomRange(0.40f, 0.66f)) * sampleIntensity;
+            haze.stretch = missilePreset ? randomRange(1.15f, 1.45f) : randomRange(1.18f, 1.50f);
+            haze.rotation = randomRange(0.0f, 6.28318f);
+            haze.angularVelocity = randomRange(-1.4f, 1.4f);
+            haze.strength = (missilePreset ? randomRange(1.6f, 2.6f) : randomRange(1.1f, 1.9f)) * sampleIntensity;
+            haze.seed = randomRange(0.0f, 1000.0f);
+            haze.drag = 1.8f;
+            addHeatHaze(haze);
+        }
     }
 }
 
