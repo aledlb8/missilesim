@@ -11,3 +11,5 @@ The runtime models in `assets/models` come from OpenGameArt:
   Source: https://opengameart.org/content/funky-aircraft
   Author: Savino
   License: CC0 1.0
+
+Audio assets in `assets/audio` are generated in-repo by `tools/generate_audio_assets.py` and do not include third-party source material.

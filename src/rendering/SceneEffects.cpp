@@ -12,8 +12,8 @@
 
 namespace
 {
-    constexpr std::size_t kMaxParticles = 6144;
-    constexpr std::size_t kMaxHeatHazeSprites = 768;
+    constexpr std::size_t kMaxParticles = 8192;
+    constexpr std::size_t kMaxHeatHazeSprites = 1024;
 
     glm::vec3 safeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
     {
@@ -317,8 +317,8 @@ namespace
             float seed = vParams.z;
 
             float radial = length(vLocalUv);
-            float mask = smoothstep(1.08, 0.1, radial);
-            if (mask <= 0.001)
+            float edgeMask = smoothstep(1.05, 0.02, radial);
+            if (edgeMask <= 0.001)
             {
                 discard;
             }
@@ -330,16 +330,39 @@ namespace
                 discard;
             }
 
-            vec2 turbulenceUv = (vLocalUv * vec2(4.0, 6.0)) + vec2(seed * 3.5, seed * 5.5) + vec2(ageNorm * 2.2, -ageNorm * 3.0);
-            vec2 offsetDirection = vec2(
-                noise(turbulenceUv) - 0.5,
-                noise(turbulenceUv + vec2(17.0, 9.0)) - 0.5);
-            float distortionMask = mask * pow(1.0 - ageNorm, 1.35);
-            vec2 offset = offsetDirection * strength * distortionMask / max(viewportSize, vec2(1.0));
-            vec2 sampleUv = clamp(vScreenUv + offset, vec2(0.001), vec2(0.999));
+            float depthFade = clamp(((depthAtPixel - fragmentDepth) * 1800.0) + 0.35, 0.0, 1.0);
+            float axialMask = smoothstep(1.18, -0.22, vLocalUv.y);
+            float lifeFade = pow(1.0 - ageNorm, 1.18);
+            float distortionMask = edgeMask * mix(0.65, 1.0, axialMask) * lifeFade * depthFade;
 
-            vec3 refracted = texture(sceneColor, sampleUv).rgb;
-            float alpha = clamp(distortionMask * 0.42, 0.0, 1.0);
+            vec2 radialDirection = (radial > 0.001) ? (vLocalUv / radial) : vec2(0.0, 1.0);
+            vec2 flowUv0 = (vLocalUv * vec2(4.8, 8.4)) + vec2(seed * 5.3, seed * 7.1) + vec2(ageNorm * 2.8, -ageNorm * 4.6);
+            vec2 flowUv1 = (flowUv0 * 1.85) + vec2(11.7, -7.9);
+            vec2 flowUv2 = (flowUv0 * 3.25) + vec2(-5.3, 13.4);
+
+            float macroNoise = noise(flowUv0);
+            float detailNoise = noise(flowUv1);
+            float filamentNoise = noise(flowUv2);
+            vec2 offsetDirection = vec2(
+                (macroNoise + filamentNoise) - 1.0,
+                (detailNoise + filamentNoise) - 1.0);
+
+            float pulse = 0.7 + (0.3 * sin((ageNorm * 11.0) + (seed * 6.28318) + (macroNoise * 4.0)));
+            offsetDirection += radialDirection * (0.14 + axialMask * 0.22);
+
+            vec2 distortion = offsetDirection * strength * distortionMask * pulse / max(viewportSize, vec2(1.0));
+            vec2 primaryUv = clamp(vScreenUv + distortion, vec2(0.001), vec2(0.999));
+            vec2 secondaryUv = clamp(vScreenUv + (distortion * 0.55), vec2(0.001), vec2(0.999));
+            vec2 tertiaryUv = clamp(vScreenUv - (distortion * 0.45), vec2(0.001), vec2(0.999));
+
+            vec3 baseColor = texture(sceneColor, clamp(vScreenUv + (distortion * 0.18), vec2(0.001), vec2(0.999))).rgb;
+            vec3 refracted = vec3(
+                texture(sceneColor, primaryUv).r,
+                texture(sceneColor, secondaryUv).g,
+                texture(sceneColor, tertiaryUv).b);
+            refracted = mix(baseColor, refracted, 0.78);
+
+            float alpha = clamp((0.14 + (strength * 0.035)) * distortionMask, 0.0, 0.55);
             FragColor = vec4(refracted, alpha);
         }
     )";
@@ -714,6 +737,10 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
 {
     const float clampedIntensity = glm::clamp(intensity, 0.5f, 2.0f);
     const glm::vec3 forwardBias = safeNormalize(velocityHint, glm::vec3(0.0f, 1.0f, 0.0f));
+    const int flameCount = std::clamp(static_cast<int>(std::round(34.0f * clampedIntensity)), 28, 72);
+    const int smokeCount = std::clamp(static_cast<int>(std::round(26.0f * clampedIntensity)), 22, 56);
+    const int sparkCount = std::clamp(static_cast<int>(std::round(22.0f * clampedIntensity)), 18, 52);
+    const int hazeCount = std::clamp(static_cast<int>(std::round(8.0f * clampedIntensity)), 6, 16);
 
     EffectParticle flash{};
     flash.position = position;
@@ -731,7 +758,6 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
     flash.blendMode = BlendMode::ADDITIVE;
     addParticle(flash);
 
-    const int flameCount = 34;
     for (int index = 0; index < flameCount; ++index)
     {
         glm::vec3 direction = randomUnitVector();
@@ -757,7 +783,6 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
         addParticle(flame);
     }
 
-    const int smokeCount = 26;
     for (int index = 0; index < smokeCount; ++index)
     {
         glm::vec3 direction = randomUnitVector();
@@ -783,7 +808,6 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
         addParticle(smoke);
     }
 
-    const int sparkCount = 22;
     for (int index = 0; index < sparkCount; ++index)
     {
         glm::vec3 direction = randomUnitVector();
@@ -806,7 +830,6 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
         addParticle(spark);
     }
 
-    const int hazeCount = 6;
     for (int index = 0; index < hazeCount; ++index)
     {
         HeatHazeSprite haze{};
@@ -822,6 +845,23 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
         haze.seed = randomRange(0.0f, 1000.0f);
         haze.drag = 0.8f;
         addHeatHaze(haze);
+    }
+
+    for (int index = 0; index < 3; ++index)
+    {
+        HeatHazeSprite shockwave{};
+        shockwave.position = position + (forwardBias * randomRange(0.2f, 1.2f) * clampedIntensity);
+        shockwave.velocity = (randomUnitVector() * randomRange(10.0f, 24.0f) * clampedIntensity) + (velocityHint * 0.12f);
+        shockwave.axis = safeNormalize(shockwave.velocity, forwardBias);
+        shockwave.lifetime = randomRange(0.20f, 0.32f);
+        shockwave.radius = randomRange(5.8f, 9.4f) * clampedIntensity;
+        shockwave.stretch = randomRange(1.6f, 2.4f);
+        shockwave.rotation = randomRange(0.0f, 6.28318f);
+        shockwave.angularVelocity = randomRange(-1.2f, 1.2f);
+        shockwave.strength = randomRange(5.6f, 8.8f) * clampedIntensity;
+        shockwave.seed = randomRange(0.0f, 1000.0f);
+        shockwave.drag = 1.1f;
+        addHeatHaze(shockwave);
     }
 }
 
@@ -1143,8 +1183,14 @@ void SceneEffects::renderHeatHazePass()
         return;
     }
 
-    std::vector<HazeInstance> instances;
-    instances.reserve(m_heatHazeSprites.size());
+    struct SortableHaze
+    {
+        float distanceSquared = 0.0f;
+        HazeInstance instance{};
+    };
+
+    std::vector<SortableHaze> sortableInstances;
+    sortableInstances.reserve(m_heatHazeSprites.size());
 
     for (const HeatHazeSprite &sprite : m_heatHazeSprites)
     {
@@ -1158,7 +1204,22 @@ void SceneEffects::renderHeatHazePass()
         instance.centerRotation = glm::vec4(sprite.position, sprite.rotation);
         instance.axisSizeX = glm::vec4(safeNormalize(sprite.axis, sprite.velocity), sprite.radius);
         instance.params0 = glm::vec4(sprite.radius * sprite.stretch, ageNorm, sprite.strength, sprite.seed);
-        instances.push_back(instance);
+        sortableInstances.push_back({glm::length2(sprite.position - m_cameraPosition), instance});
+    }
+
+    if (sortableInstances.empty())
+    {
+        return;
+    }
+
+    std::sort(sortableInstances.begin(), sortableInstances.end(), [](const SortableHaze &lhs, const SortableHaze &rhs)
+              { return lhs.distanceSquared > rhs.distanceSquared; });
+
+    std::vector<HazeInstance> instances;
+    instances.reserve(sortableInstances.size());
+    for (const SortableHaze &entry : sortableInstances)
+    {
+        instances.push_back(entry.instance);
     }
 
     if (instances.empty())
@@ -1335,19 +1396,26 @@ void SceneEffects::emitEngineTrail(const glm::vec3 &start,
         }
     }
 
-    HeatHazeSprite haze{};
-    haze.position = end + (exhaustDirection * (missilePreset ? 0.35f : 0.18f));
-    haze.velocity = (carrierVelocity * 0.22f) + (exhaustDirection * (missilePreset ? 8.0f : 4.0f));
-    haze.axis = exhaustDirection;
-    haze.lifetime = missilePreset ? 0.10f : 0.09f;
-    haze.radius = missilePreset ? (0.95f * intensity) : (0.65f * intensity);
-    haze.stretch = missilePreset ? 1.5f : 1.3f;
-    haze.rotation = randomRange(0.0f, 6.28318f);
-    haze.angularVelocity = randomRange(-1.0f, 1.0f);
-    haze.strength = missilePreset ? (2.2f * intensity) : (1.6f * intensity);
-    haze.seed = randomRange(0.0f, 1000.0f);
-    haze.drag = 2.0f;
-    addHeatHaze(haze);
+    const int hazeCount = missilePreset ? 3 : 2;
+    for (int hazeIndex = 0; hazeIndex < hazeCount; ++hazeIndex)
+    {
+        const float interpolation = (hazeCount == 1) ? 1.0f : static_cast<float>(hazeIndex) / static_cast<float>(hazeCount - 1);
+        HeatHazeSprite haze{};
+        haze.position = glm::mix(start, end, interpolation) +
+                        (exhaustDirection * glm::mix(0.12f, missilePreset ? 0.42f : 0.24f, interpolation));
+        haze.velocity = (carrierVelocity * 0.22f) +
+                        (exhaustDirection * glm::mix(missilePreset ? 12.0f : 6.0f, missilePreset ? 6.0f : 2.5f, interpolation));
+        haze.axis = exhaustDirection;
+        haze.lifetime = missilePreset ? randomRange(0.10f, 0.16f) : randomRange(0.08f, 0.13f);
+        haze.radius = (missilePreset ? randomRange(0.85f, 1.35f) : randomRange(0.55f, 0.95f)) * intensity;
+        haze.stretch = missilePreset ? randomRange(1.7f, 2.4f) : randomRange(1.35f, 1.9f);
+        haze.rotation = randomRange(0.0f, 6.28318f);
+        haze.angularVelocity = randomRange(-1.4f, 1.4f);
+        haze.strength = (missilePreset ? randomRange(2.4f, 3.8f) : randomRange(1.6f, 2.6f)) * intensity;
+        haze.seed = randomRange(0.0f, 1000.0f);
+        haze.drag = 1.8f;
+        addHeatHaze(haze);
+    }
 }
 
 float SceneEffects::randomRange(float minimum, float maximum)

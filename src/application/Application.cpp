@@ -473,6 +473,8 @@ void Application::initialize()
         // Create simulation components
         m_physicsEngine = std::make_unique<PhysicsEngine>();
         m_renderer = std::make_unique<Renderer>();
+        m_audioSystem = std::make_unique<AudioSystem>();
+        m_audioSystem->initialize();
 
         const bool loadedSettings = loadSettings();
 
@@ -530,7 +532,7 @@ void Application::shutdown()
 {
     try
     {
-        if (!m_window && !m_renderer && !m_physicsEngine)
+        if (!m_window && !m_renderer && !m_physicsEngine && !m_audioSystem)
         {
             return;
         }
@@ -553,6 +555,11 @@ void Application::shutdown()
         m_targets.clear();
 
         // Clean up physics engine and renderer before ImGui
+        if (m_audioSystem)
+        {
+            m_audioSystem->shutdown();
+            m_audioSystem.reset();
+        }
         m_physicsEngine.reset();
         m_renderer.reset();
 
@@ -1128,6 +1135,7 @@ void Application::render()
         }
 
         updateActiveCameraMode();
+        updateAudioFrame(m_lastFrameDeltaTime);
         m_renderer->beginSceneFrame(glm::vec3(0.58f, 0.69f, 0.82f));
         m_renderer->clearDebugPrimitives();
         updateEnvironmentScale();
@@ -4123,6 +4131,10 @@ void Application::resetTargets()
         {
             m_renderer->clearEffects();
         }
+        if (m_audioSystem)
+        {
+            m_audioSystem->stopMissileEmitters();
+        }
         invalidateTrajectoryPreviewCache();
 
         // Create new random targets
@@ -4176,6 +4188,10 @@ void Application::createFlare(const FlareLaunchRequest &request)
         }
 
         m_physicsEngine->addFlare(flare.get());
+        if (m_audioSystem)
+        {
+            m_audioSystem->playFlareLaunch(request.position, request.velocity, request.heatSignature);
+        }
         m_flares.push_back(std::move(flare));
     }
     catch (const std::exception &e)
@@ -4208,6 +4224,16 @@ void Application::removeInactiveFlares()
 {
     if (!m_physicsEngine)
     {
+        if (m_audioSystem)
+        {
+            for (const auto &flare : m_flares)
+            {
+                if (flare)
+                {
+                    m_audioSystem->retireFlare(flare.get());
+                }
+            }
+        }
         m_flares.clear();
         return;
     }
@@ -4219,6 +4245,10 @@ void Application::removeInactiveFlares()
         {
             if (*it)
             {
+                if (m_audioSystem)
+                {
+                    m_audioSystem->retireFlare(it->get());
+                }
                 m_physicsEngine->removeFlare(it->get());
             }
             it = m_flares.erase(it);
@@ -4232,14 +4262,21 @@ void Application::removeInactiveFlares()
 
 void Application::clearFlares()
 {
-    if (m_physicsEngine)
+    for (auto &flare : m_flares)
     {
-        for (auto &flare : m_flares)
+        if (!flare)
         {
-            if (flare)
-            {
-                m_physicsEngine->removeFlare(flare.get());
-            }
+            continue;
+        }
+
+        if (m_audioSystem)
+        {
+            m_audioSystem->retireFlare(flare.get());
+        }
+
+        if (m_physicsEngine)
+        {
+            m_physicsEngine->removeFlare(flare.get());
         }
     }
 
@@ -4297,6 +4334,11 @@ void Application::launchMissile()
         }
         m_missile->setVelocity(thrustDirection * initialSpeed);
 
+        if (m_audioSystem)
+        {
+            m_audioSystem->playLaunch(m_missile->getPosition(), m_missile->getVelocity());
+        }
+
         // Log launch
         std::cout << "Missile launched with thrust: " << m_missileThrust
                   << " N, fuel: " << m_missileFuel << " kg, target lock retained" << std::endl;
@@ -4328,6 +4370,10 @@ void Application::resetMissile()
         if (m_renderer)
         {
             m_renderer->clearEffects();
+        }
+        if (m_audioSystem)
+        {
+            m_audioSystem->stopAllEmitters();
         }
         invalidateTrajectoryPreviewCache();
 
@@ -4694,10 +4740,16 @@ void Application::terminateMissileFlight(const glm::vec3 &position, bool createE
 
 void Application::createExplosion(const glm::vec3 &position)
 {
+    const glm::vec3 velocityHint = m_missile ? m_missile->getVelocity() : glm::vec3(0.0f);
+
     if (m_renderer)
     {
-        const glm::vec3 velocityHint = m_missile ? m_missile->getVelocity() : glm::vec3(0.0f);
         m_renderer->spawnExplosionEffect(position, velocityHint, 1.0f);
+    }
+
+    if (m_audioSystem)
+    {
+        m_audioSystem->playExplosion(position, velocityHint, 1.0f);
     }
 }
 
@@ -4708,6 +4760,129 @@ void Application::updateExplosions(float deltaTime)
 
 void Application::renderExplosions()
 {
+}
+
+void Application::updateAudioFrame(float deltaTime)
+{
+    if (!m_audioSystem || !m_renderer)
+    {
+        return;
+    }
+
+    const float dt = (deltaTime > 0.0f && std::isfinite(deltaTime)) ? deltaTime : 0.016f;
+    std::vector<Target *> activeTargets;
+    activeTargets.reserve(m_targets.size());
+    for (const auto &target : m_targets)
+    {
+        if (target && target->isActive())
+        {
+            activeTargets.push_back(target.get());
+        }
+    }
+
+    std::vector<Flare *> activeFlares;
+    activeFlares.reserve(m_flares.size());
+    for (const auto &flare : m_flares)
+    {
+        if (flare && flare->isActive())
+        {
+            activeFlares.push_back(flare.get());
+        }
+    }
+
+    const bool seekerPowered = !m_missileInFlight &&
+                               m_missile != nullptr &&
+                               m_guidanceEnabled &&
+                               m_missile->isGuidanceEnabled() &&
+                               m_seekerCueEnabled;
+    Target *lockedTarget = seekerPowered ? getTrackedMissileTarget() : nullptr;
+    const bool seekerLocked = seekerPowered && lockedTarget != nullptr;
+
+    float seekerSignalStrength = 0.0f;
+    if (seekerPowered)
+    {
+        const float searchCueRadiusPixels = std::max(m_seekerCueRadiusPixels * 3.0f, m_seekerCueRadiusPixels + 1.0f);
+        float bestPixelDistance = std::numeric_limits<float>::max();
+
+        for (Target *target : activeTargets)
+        {
+            ImVec2 screenPosition(0.0f, 0.0f);
+            float pixelDistance = 0.0f;
+            if (!projectTargetToSeekerScreen(target, screenPosition, &pixelDistance))
+            {
+                continue;
+            }
+
+            if (pixelDistance > searchCueRadiusPixels)
+            {
+                continue;
+            }
+
+            bestPixelDistance = std::min(bestPixelDistance, pixelDistance);
+        }
+
+        if (bestPixelDistance < std::numeric_limits<float>::max())
+        {
+            const float normalizedSignal = 1.0f - glm::clamp(bestPixelDistance / searchCueRadiusPixels, 0.0f, 1.0f);
+            seekerSignalStrength = normalizedSignal * normalizedSignal;
+        }
+
+        if (lockedTarget != nullptr)
+        {
+            ImVec2 lockScreenPosition(0.0f, 0.0f);
+            float lockPixelDistance = 0.0f;
+            if (projectTargetToSeekerScreen(lockedTarget, lockScreenPosition, &lockPixelDistance))
+            {
+                const float lockRadius = std::max(m_seekerCueRadiusPixels, 1.0f);
+                const float lockSignal = 1.0f - glm::clamp(lockPixelDistance / lockRadius, 0.0f, 1.0f);
+                seekerSignalStrength = std::max(seekerSignalStrength, 0.66f + (lockSignal * 0.34f));
+            }
+            else
+            {
+                seekerSignalStrength = std::max(seekerSignalStrength, 0.72f);
+            }
+        }
+    }
+
+    Target *cockpitTarget = nullptr;
+    if (m_cameraMode == CameraMode::FIGHTER_JET)
+    {
+        cockpitTarget = getTrackedMissileTarget();
+        if (cockpitTarget == nullptr)
+        {
+            cockpitTarget = findBestTarget();
+        }
+    }
+
+    bool mawsThreatActive = false;
+    float mawsUrgency = 0.0f;
+    if (cockpitTarget != nullptr && cockpitTarget->isMissileWarningActive())
+    {
+        const MAWSConfig mawsDefaults{};
+        const float threatWindow = std::max(mawsDefaults.reactionTimeWindow, 0.1f);
+        const float cpaThreshold = std::max(mawsDefaults.closestApproachThreshold, 1.0f);
+        const float detectionRange = std::max(mawsDefaults.detectionRange, 1.0f);
+        const float tcaBlend = 1.0f - glm::clamp(cockpitTarget->getThreatTimeToClosestApproach() / threatWindow, 0.0f, 1.0f);
+        const float cpaBlend = 1.0f - glm::clamp(cockpitTarget->getThreatClosestApproachDistance() / cpaThreshold, 0.0f, 1.0f);
+        const float rangeBlend = 1.0f - glm::clamp(cockpitTarget->getThreatDistance() / detectionRange, 0.0f, 1.0f);
+
+        mawsThreatActive = true;
+        mawsUrgency = glm::clamp((tcaBlend * 0.55f) + (cpaBlend * 0.25f) + (rangeBlend * 0.20f), 0.0f, 1.0f);
+    }
+
+    m_audioSystem->setListener(m_renderer->getCameraPosition(),
+                               m_renderer->getCameraFront(),
+                               m_renderer->getCameraUp(),
+                               dt);
+    m_audioSystem->syncMissile(m_missile.get(), m_missileInFlight, m_missileFuel);
+    m_audioSystem->syncTargets(activeTargets);
+    m_audioSystem->syncFlares(activeFlares);
+    m_audioSystem->syncCockpitCues(seekerPowered,
+                                   seekerLocked,
+                                   seekerSignalStrength,
+                                   mawsThreatActive,
+                                   mawsUrgency);
+    m_audioSystem->update(dt);
 }
 
 void Application::emitFrameVisualEffects(float deltaTime)

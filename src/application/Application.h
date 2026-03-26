@@ -14,6 +14,7 @@
 
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
+#include "audio/AudioSystem.h"
 #include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
@@ -162,6 +163,7 @@ private:
     void updateExplosions(float deltaTime);
     void renderExplosions();
     void emitFrameVisualEffects(float deltaTime);
+    void updateAudioFrame(float deltaTime);
 
     // visualization
     void renderPredictedTrajectory();
@@ -191,6 +193,7 @@ private:
     // Simulation components
     std::unique_ptr<PhysicsEngine> m_physicsEngine;
     std::unique_ptr<Renderer> m_renderer;
+    std::unique_ptr<AudioSystem> m_audioSystem;
     std::unique_ptr<Missile> m_missile;
     std::vector<std::unique_ptr<Target>> m_targets;
     std::vector<std::unique_ptr<Flare>> m_flares;
