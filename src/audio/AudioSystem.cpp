@@ -588,8 +588,8 @@ struct AudioSystem::Impl
                     kLaunchPreset,
                     position,
                     velocity,
-                    0.88f + (speedFraction * 0.14f),
-                    0.96f + (speedFraction * 0.08f),
+                    0.96f + (speedFraction * 0.10f),
+                    0.99f + (speedFraction * 0.04f),
                     safeNormalize(-velocity, glm::vec3(0.0f, 0.0f, -1.0f)));
     }
 

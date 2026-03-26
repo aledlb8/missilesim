@@ -132,30 +132,39 @@ class LoopNoise:
 
 def render_fire_launch(duration_seconds: float) -> list[float]:
     sample_count = int(duration_seconds * SAMPLE_RATE)
-    low_noise = LoopNoise(11, 96)
-    mid_noise = LoopNoise(17, 128)
-    high_noise = LoopNoise(23, 192)
+    pressure_noise = LoopNoise(11, 96)
+    roar_noise = LoopNoise(17, 128)
+    hiss_noise = LoopNoise(23, 192)
     samples: list[float] = []
 
     for index in range(sample_count):
         t = index / SAMPLE_RATE
         x = index / sample_count
-        attack = 1.0 - math.exp(-42.0 * t)
-        body_decay = math.exp(-3.2 * x)
-        hiss_decay = math.exp(-6.8 * x)
-        pulse = 0.82 + 0.18 * math.sin(TAU * (2.4 * x + 0.1))
+        ignition_overpressure = math.exp(-96.0 * t)
+        motor_attack = 1.0 - math.exp(-34.0 * t)
+        motor_body_decay = math.exp(-2.05 * x)
+        turbulence_decay = math.exp(-4.1 * x)
+        exhaust_pulse = 0.80 + (0.20 * math.sin(TAU * (2.6 * x + 0.08)))
 
-        rumble = math.sin(TAU * (48.0 * t * (1.0 - (0.15 * x))))
-        crack = math.sin(TAU * (132.0 * t * (1.0 - (0.35 * x)))) * math.exp(-34.0 * t)
-        roar = (low_noise.sample(x * 0.7) * 0.66) + (mid_noise.sample(x * 1.8) * 0.38)
-        hiss = (high_noise.sample(x * 8.0) * 0.34) + (mid_noise.sample(x * 5.0) * 0.18)
+        low_body = (
+            math.sin(TAU * (34.0 * t * (1.0 - 0.04 * x))) * 0.34
+            + math.sin(TAU * (58.0 * t * (1.0 - 0.07 * x)) + 0.27) * 0.22
+        )
+        motor_roar = (pressure_noise.sample(x * 0.55) * 0.58) + (roar_noise.sample(x * 1.9) * 0.44)
+        bark = soft_square(TAU * (108.0 * t * (1.0 - 0.14 * x)), 2.0) * math.exp(-6.2 * x) * 0.18
+        ignition_crack = (
+            pressure_noise.sample(x * 15.0) * 0.34
+            + roar_noise.sample(x * 21.0) * 0.16
+            + math.sin(TAU * 236.0 * t) * 0.18
+        ) * ignition_overpressure
+        hiss = ((hiss_noise.sample(x * 10.0) * 0.30) + (roar_noise.sample(x * 6.0) * 0.12)) * motor_attack * turbulence_decay
 
-        sample = ((roar * 0.82) + (rumble * 0.24)) * attack * body_decay * pulse
-        sample += crack * 0.22
-        sample += hiss * attack * hiss_decay * 0.32
-        samples.append(math.tanh(sample * 1.5))
+        sample = ((motor_roar * 0.84) + low_body + bark) * motor_attack * motor_body_decay * exhaust_pulse
+        sample += ignition_crack
+        sample += hiss
+        samples.append(math.tanh(sample * 1.62))
 
-    return apply_fade(normalize(samples), 128, 12_000)
+    return apply_fade(normalize(samples, peak=0.96), 96, 9_600)
 
 
 def render_explosion(duration_seconds: float) -> list[float]:
@@ -439,7 +448,7 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     assets = {
-        "fire_launch.wav": render_fire_launch(1.65),
+        "fire_launch.wav": render_fire_launch(1.52),
         "flare_launch.wav": render_flare_launch(0.32),
         "flare_burn_loop.wav": render_flare_burn_loop(1.24),
         "explosion.wav": render_explosion(2.85),
