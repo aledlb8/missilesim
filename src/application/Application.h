@@ -13,6 +13,7 @@
 
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
+#include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
 
@@ -55,6 +56,10 @@ private:
     void createTarget(const glm::vec3& position, float radius = 5.0f);
     void createRandomTarget();
     void resetTargets();
+    void createFlare(const FlareLaunchRequest &request);
+    void collectPendingTargetFlares();
+    void removeInactiveFlares();
+    void clearFlares();
     
     // Missile functions
     void launchMissile();
@@ -89,6 +94,7 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<Missile> m_missile;
     std::vector<std::unique_ptr<Target>> m_targets;
+    std::vector<std::unique_ptr<Flare>> m_flares;
     
     // Visual effects
     std::deque<ExplosionEffect> m_explosions;
@@ -125,6 +131,9 @@ private:
     bool m_guidanceEnabled = true;
     float m_navigationGain = 4.0f;
     float m_maxSteeringForce = 20000.0f;
+    float m_trackingAngle = 85.0f;
+    float m_proximityFuseRadius = 18.0f;
+    float m_countermeasureResistance = 0.35f;
     bool m_terrainAvoidanceEnabled = true;
     float m_terrainClearance = 90.0f;
     float m_terrainLookAheadTime = 6.0f;
@@ -145,6 +154,10 @@ private:
     float m_targetMovementSpeed = 10.0f;                     // Movement speed in m/s
     float m_targetMovementAmplitude = 250.0f;                // Movement amplitude/range in m
     float m_targetMovementPeriod = 10.0f;                    // Time to complete one movement cycle in s
+    float m_targetHeatSignature = 1.0f;
+    MAWSConfig m_targetMAWSConfig;
+    FlareDispenserConfig m_targetFlareConfig;
+    EvasiveManeuverConfig m_targetEvasiveConfig;
     
     // Score tracking
     int m_score = 0;                      // Player's score

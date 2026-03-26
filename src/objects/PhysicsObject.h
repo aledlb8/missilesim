@@ -20,6 +20,8 @@ public:
     // Getters and setters
     const glm::vec3& getPosition() const { return m_position; }
     void setPosition(const glm::vec3& position) { m_position = position; }
+
+    const glm::vec3& getPreviousPosition() const { return m_previousPosition; }
     
     const glm::vec3& getVelocity() const { return m_velocity; }
     void setVelocity(const glm::vec3& velocity) { m_velocity = velocity; }
@@ -38,6 +40,7 @@ public:
     virtual std::string getType() const { return "PhysicsObject"; }
     
 protected:
+    glm::vec3 m_previousPosition; // Position at the start of the last integration step
     glm::vec3 m_position;     // Position in 3D space (meters)
     glm::vec3 m_velocity;     // Velocity (meters/second)
     glm::vec3 m_acceleration; // Acceleration (meters/second²)

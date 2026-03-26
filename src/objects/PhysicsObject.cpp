@@ -4,12 +4,14 @@
 #include <glm/gtx/norm.hpp>
 
 PhysicsObject::PhysicsObject(const glm::vec3 &position, const glm::vec3 &velocity, float mass)
-    : m_position(position), m_velocity(velocity), m_acceleration(0.0f), m_forces(0.0f), m_mass(mass)
+    : m_previousPosition(position), m_position(position), m_velocity(velocity), m_acceleration(0.0f), m_forces(0.0f), m_mass(mass)
 {
 }
 
 void PhysicsObject::update(float deltaTime)
 {
+    m_previousPosition = m_position;
+
     // Calculate acceleration from forces (F = ma -> a = F/m)
     // Protect against division by zero
     if (m_mass > 0.0f)

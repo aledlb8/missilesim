@@ -204,8 +204,11 @@ bool Application::loadSettings()
     m_crossSectionalArea = std::max(readFloat("missile_cross_sectional_area", m_crossSectionalArea), 0.0001f);
     m_liftCoefficient = std::max(readFloat("missile_lift_coefficient", m_liftCoefficient), 0.0f);
     m_guidanceEnabled = readBool("guidance_enabled", m_guidanceEnabled);
-    m_navigationGain = std::max(readFloat("navigation_gain", m_navigationGain), 0.1f);
+    m_navigationGain = std::clamp(readFloat("navigation_gain", m_navigationGain), 1.0f, 4.0f);
     m_maxSteeringForce = std::max(readFloat("max_steering_force", m_maxSteeringForce), 1000.0f);
+    m_trackingAngle = std::clamp(readFloat("tracking_angle", m_trackingAngle), 5.0f, 180.0f);
+    m_proximityFuseRadius = std::max(readFloat("proximity_fuse_radius", m_proximityFuseRadius), 0.0f);
+    m_countermeasureResistance = glm::clamp(readFloat("countermeasure_resistance", m_countermeasureResistance), 0.0f, 1.0f);
     m_terrainAvoidanceEnabled = readBool("terrain_avoidance_enabled", m_terrainAvoidanceEnabled);
     m_terrainClearance = std::max(readFloat("terrain_clearance", m_terrainClearance), 0.0f);
     m_terrainLookAheadTime = std::max(readFloat("terrain_lookahead_time", m_terrainLookAheadTime), 0.5f);
@@ -222,6 +225,30 @@ bool Application::loadSettings()
     m_targetMovementSpeed = std::max(readFloat("target_movement_speed", m_targetMovementSpeed), 0.0f);
     m_targetMovementAmplitude = std::max(readFloat("target_movement_amplitude", m_targetMovementAmplitude), 0.0f);
     m_targetMovementPeriod = std::max(readFloat("target_movement_period", m_targetMovementPeriod), 0.1f);
+    m_targetHeatSignature = std::max(readFloat("target_heat_signature", m_targetHeatSignature), 0.0f);
+    m_targetMAWSConfig.enabled = readBool("target_maws_enabled", m_targetMAWSConfig.enabled);
+    m_targetMAWSConfig.detectionRange = std::max(readFloat("target_maws_range", m_targetMAWSConfig.detectionRange), 0.0f);
+    m_targetMAWSConfig.reactionTimeWindow = std::max(readFloat("target_maws_reaction_time", m_targetMAWSConfig.reactionTimeWindow), 0.1f);
+    m_targetMAWSConfig.closestApproachThreshold = std::max(readFloat("target_maws_closest_approach", m_targetMAWSConfig.closestApproachThreshold), 1.0f);
+    m_targetFlareConfig.enabled = readBool("target_flare_enabled", m_targetFlareConfig.enabled);
+    m_targetFlareConfig.inventory = std::max(readInt("target_flare_inventory", m_targetFlareConfig.inventory), 0);
+    m_targetFlareConfig.burstSize = std::max(readInt("target_flare_burst_size", m_targetFlareConfig.burstSize), 1);
+    m_targetFlareConfig.burstInterval = std::max(readFloat("target_flare_burst_interval", m_targetFlareConfig.burstInterval), 0.01f);
+    m_targetFlareConfig.cooldown = std::max(readFloat("target_flare_cooldown", m_targetFlareConfig.cooldown), 0.0f);
+    m_targetFlareConfig.ejectSpeed = std::max(readFloat("target_flare_eject_speed", m_targetFlareConfig.ejectSpeed), 0.0f);
+    m_targetFlareConfig.lifetime = std::max(readFloat("target_flare_lifetime", m_targetFlareConfig.lifetime), 0.1f);
+    m_targetFlareConfig.heatSignature = std::max(readFloat("target_flare_heat_signature", m_targetFlareConfig.heatSignature), 0.0f);
+    m_targetFlareConfig.heatDecayRate = std::max(readFloat("target_flare_heat_decay", m_targetFlareConfig.heatDecayRate), 0.0f);
+    m_targetFlareConfig.mass = std::max(readFloat("target_flare_mass", m_targetFlareConfig.mass), 0.05f);
+    m_targetFlareConfig.dragCoefficient = std::max(readFloat("target_flare_drag_coefficient", m_targetFlareConfig.dragCoefficient), 0.0f);
+    m_targetFlareConfig.crossSectionalArea = std::max(readFloat("target_flare_area", m_targetFlareConfig.crossSectionalArea), 0.0001f);
+    m_targetEvasiveConfig.enabled = readBool("target_evasive_enabled", m_targetEvasiveConfig.enabled);
+    m_targetEvasiveConfig.lateralAcceleration = std::max(readFloat("target_evasive_lateral_acceleration", m_targetEvasiveConfig.lateralAcceleration), 0.0f);
+    m_targetEvasiveConfig.verticalBias = glm::clamp(readFloat("target_evasive_vertical_bias", m_targetEvasiveConfig.verticalBias), -1.0f, 1.0f);
+    m_targetEvasiveConfig.maxOffset = std::max(readFloat("target_evasive_max_offset", m_targetEvasiveConfig.maxOffset), 0.0f);
+    m_targetEvasiveConfig.weavePeriod = std::max(readFloat("target_evasive_weave_period", m_targetEvasiveConfig.weavePeriod), 0.2f);
+    m_targetEvasiveConfig.recoveryRate = std::max(readFloat("target_evasive_recovery_rate", m_targetEvasiveConfig.recoveryRate), 0.1f);
+    m_targetEvasiveConfig.speedMultiplier = std::max(readFloat("target_evasive_speed_multiplier", m_targetEvasiveConfig.speedMultiplier), 0.5f);
 
     m_savedGravity = std::max(readFloat("gravity", m_savedGravity), 0.0f);
     m_savedAirDensity = std::max(readFloat("air_density", m_savedAirDensity), 0.0f);
@@ -277,6 +304,9 @@ std::string Application::buildSettingsSnapshot() const
     output << "guidance_enabled=" << formatBoolValue(m_guidanceEnabled) << "\n";
     output << "navigation_gain=" << m_navigationGain << "\n";
     output << "max_steering_force=" << m_maxSteeringForce << "\n";
+    output << "tracking_angle=" << m_trackingAngle << "\n";
+    output << "proximity_fuse_radius=" << m_proximityFuseRadius << "\n";
+    output << "countermeasure_resistance=" << m_countermeasureResistance << "\n";
     output << "terrain_avoidance_enabled=" << formatBoolValue(m_terrainAvoidanceEnabled) << "\n";
     output << "terrain_clearance=" << m_terrainClearance << "\n";
     output << "terrain_lookahead_time=" << m_terrainLookAheadTime << "\n";
@@ -291,6 +321,30 @@ std::string Application::buildSettingsSnapshot() const
     output << "target_movement_speed=" << m_targetMovementSpeed << "\n";
     output << "target_movement_amplitude=" << m_targetMovementAmplitude << "\n";
     output << "target_movement_period=" << m_targetMovementPeriod << "\n";
+    output << "target_heat_signature=" << m_targetHeatSignature << "\n";
+    output << "target_maws_enabled=" << formatBoolValue(m_targetMAWSConfig.enabled) << "\n";
+    output << "target_maws_range=" << m_targetMAWSConfig.detectionRange << "\n";
+    output << "target_maws_reaction_time=" << m_targetMAWSConfig.reactionTimeWindow << "\n";
+    output << "target_maws_closest_approach=" << m_targetMAWSConfig.closestApproachThreshold << "\n";
+    output << "target_flare_enabled=" << formatBoolValue(m_targetFlareConfig.enabled) << "\n";
+    output << "target_flare_inventory=" << m_targetFlareConfig.inventory << "\n";
+    output << "target_flare_burst_size=" << m_targetFlareConfig.burstSize << "\n";
+    output << "target_flare_burst_interval=" << m_targetFlareConfig.burstInterval << "\n";
+    output << "target_flare_cooldown=" << m_targetFlareConfig.cooldown << "\n";
+    output << "target_flare_eject_speed=" << m_targetFlareConfig.ejectSpeed << "\n";
+    output << "target_flare_lifetime=" << m_targetFlareConfig.lifetime << "\n";
+    output << "target_flare_heat_signature=" << m_targetFlareConfig.heatSignature << "\n";
+    output << "target_flare_heat_decay=" << m_targetFlareConfig.heatDecayRate << "\n";
+    output << "target_flare_mass=" << m_targetFlareConfig.mass << "\n";
+    output << "target_flare_drag_coefficient=" << m_targetFlareConfig.dragCoefficient << "\n";
+    output << "target_flare_area=" << m_targetFlareConfig.crossSectionalArea << "\n";
+    output << "target_evasive_enabled=" << formatBoolValue(m_targetEvasiveConfig.enabled) << "\n";
+    output << "target_evasive_lateral_acceleration=" << m_targetEvasiveConfig.lateralAcceleration << "\n";
+    output << "target_evasive_vertical_bias=" << m_targetEvasiveConfig.verticalBias << "\n";
+    output << "target_evasive_max_offset=" << m_targetEvasiveConfig.maxOffset << "\n";
+    output << "target_evasive_weave_period=" << m_targetEvasiveConfig.weavePeriod << "\n";
+    output << "target_evasive_recovery_rate=" << m_targetEvasiveConfig.recoveryRate << "\n";
+    output << "target_evasive_speed_multiplier=" << m_targetEvasiveConfig.speedMultiplier << "\n";
     output << "camera_fov=" << cameraFOV << "\n";
     output << "camera_speed=" << cameraSpeed << "\n";
 
@@ -532,6 +586,7 @@ void Application::shutdown()
 
         // First clear objects that might be using the renderer or physics
         m_missile.reset(); // Release missile before targets to avoid invalid target references
+        clearFlares();
 
         // Clean up targets
         for (auto &target : m_targets)
@@ -944,10 +999,10 @@ void Application::update(float deltaTime)
                     const glm::vec3 missileVel = m_missile->getVelocity();
                     const float missileSpeed = glm::length(missileVel);
 
-                    bool terminateFlight = false;
+                    bool terminateFlight = m_missile->consumeSelfDestructRequest();
 
                     // Treat ground contact as impact rather than allowing endless bouncing/guidance loops.
-                    if (m_groundEnabled && prevMissilePos.y > 0.05f && missilePos.y <= 0.01f)
+                    if (!terminateFlight && m_groundEnabled && prevMissilePos.y > 0.05f && missilePos.y <= 0.01f)
                     {
                         terminateFlight = true;
                     }
@@ -1022,6 +1077,9 @@ void Application::update(float deltaTime)
                 break;
             }
         }
+
+        collectPendingTargetFlares();
+        removeInactiveFlares();
 
         // Check if all targets are inactive, and create new ones if needed
         bool allTargetsInactive = true;
@@ -1130,6 +1188,11 @@ void Application::render()
                     {
                         float distance = glm::length(target->getPosition() - m_missile->getPosition());
                         std::string label = "Target: " + std::to_string(static_cast<int>(distance)) + "m";
+                        if (target->isMissileWarningActive())
+                        {
+                            label += " | MAWS";
+                            label += " | Flares " + std::to_string(target->getRemainingFlares());
+                        }
                         targetLabels.push_back(std::make_pair(target->getPosition(), label));
                     }
                 }
@@ -1142,6 +1205,21 @@ void Application::render()
             {
                 std::cerr << "ERROR: Unknown exception rendering target" << std::endl;
             }
+        }
+
+        for (const auto &flare : m_flares)
+        {
+            if (!flare || !flare->isActive())
+            {
+                continue;
+            }
+
+            const float heatFraction = (flare->getInitialHeatSignature() > 0.0f)
+                                           ? glm::clamp(flare->getHeatSignature() / flare->getInitialHeatSignature(), 0.0f, 1.0f)
+                                           : 0.0f;
+            const glm::vec3 flareColor = glm::mix(glm::vec3(0.9f, 0.35f, 0.1f), glm::vec3(1.0f, 0.95f, 0.6f), heatFraction);
+            const float flareSize = glm::mix(3.0f, 8.0f, heatFraction);
+            m_renderer->renderPoint(flare->getPosition(), flareColor, flareSize);
         }
 
         renderExplosions();
@@ -1245,6 +1323,19 @@ void Application::renderMinimalHUD()
 
     const float fuel = m_missile->getFuel();
     const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
+    int activeFlares = 0;
+    for (const auto &flare : m_flares)
+    {
+        if (flare && flare->isActive())
+        {
+            ++activeFlares;
+        }
+    }
+
+    Target *trackedTarget = m_missile->getTargetObject();
+    const bool validTrackedTarget = (trackedTarget != nullptr && trackedTarget->isActive());
+    const bool missileWarning = validTrackedTarget && trackedTarget->isMissileWarningActive();
+    const char *seekerTrack = m_missile->isTrackingDecoy() ? "FLARE" : "AIRFRAME";
 
     ImVec4 fuelColor(0.92f, 0.34f, 0.34f, 1.0f);
     if (fuelPercent > 0.50f)
@@ -1258,7 +1349,7 @@ void Application::renderMinimalHUD()
 
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 18.0f, viewport->WorkPos.y + 18.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(220.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(260.0f, 0.0f), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.62f);
 
     const ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration |
@@ -1282,6 +1373,23 @@ void Application::renderMinimalHUD()
         ImGui::SameLine(58.0f);
         ImGui::TextColored(ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%s", buffer);
         ImGui::ProgressBar(fuelPercent, ImVec2(-1.0f, 8.0f), "");
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Seeker");
+        ImGui::SameLine(58.0f);
+        ImGui::TextColored(m_missile->isTrackingDecoy() ? ImVec4(0.98f, 0.73f, 0.34f, 1.0f) : ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%s", seekerTrack);
+        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Flares");
+        ImGui::SameLine(58.0f);
+        ImGui::TextColored(activeFlares > 0 ? ImVec4(0.98f, 0.73f, 0.34f, 1.0f) : ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%d active", activeFlares);
+        if (validTrackedTarget)
+        {
+            ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Defense");
+            ImGui::SameLine(58.0f);
+            ImGui::TextColored(missileWarning ? ImVec4(0.96f, 0.77f, 0.34f, 1.0f) : ImVec4(0.94f, 0.97f, 0.99f, 1.0f),
+                               "%s", missileWarning ? "MAWS active" : "No cue");
+            ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Inventory");
+            ImGui::SameLine(58.0f);
+            ImGui::TextColored(ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%d", trackedTarget->getRemainingFlares());
+        }
     }
     ImGui::End();
 
@@ -1431,6 +1539,9 @@ void Application::renderPredictedTrajectory()
         simMissile.setGuidanceEnabled(m_missile->isGuidanceEnabled());
         simMissile.setNavigationGain(m_missile->getNavigationGain());
         simMissile.setMaxSteeringForce(m_missile->getMaxSteeringForce());
+        simMissile.setTrackingAngle(m_missile->getTrackingAngle());
+        simMissile.setProximityFuseRadius(m_missile->getProximityFuseRadius());
+        simMissile.setCountermeasureResistance(m_missile->getCountermeasureResistance());
         simMissile.setTerrainAvoidanceEnabled(m_missile->isTerrainAvoidanceEnabled());
         simMissile.setTerrainClearance(m_missile->getTerrainClearance());
         simMissile.setTerrainLookAheadTime(m_missile->getTerrainLookAheadTime());
@@ -1480,6 +1591,11 @@ void Application::renderPredictedTrajectory()
             if (simMissile.isGuidanceEnabled() && simMissile.hasTarget())
             {
                 simMissile.applyGuidance(dt);
+                if (simMissile.consumeSelfDestructRequest())
+                {
+                    trajectoryPoints.push_back(simMissile.getPosition());
+                    break;
+                }
             }
 
             simMissile.update(dt);
@@ -1568,7 +1684,7 @@ glm::vec3 Application::predictInterceptPoint(const glm::vec3 &missilePos, const 
             timeToIntercept = glm::length(relativePosition) / missileSpeed;
         }
 
-        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, 60.0f);
+        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, 20.0f);
         return targetPos + targetVel * timeToIntercept;
     }
     catch (...)
@@ -1825,6 +1941,9 @@ void Application::setupUI()
             m_missile->setGuidanceEnabled(m_guidanceEnabled);
             m_missile->setNavigationGain(m_navigationGain);
             m_missile->setMaxSteeringForce(m_maxSteeringForce);
+            m_missile->setTrackingAngle(m_trackingAngle);
+            m_missile->setProximityFuseRadius(m_proximityFuseRadius);
+            m_missile->setCountermeasureResistance(m_countermeasureResistance);
             m_missile->setTerrainAvoidanceEnabled(m_terrainAvoidanceEnabled);
             m_missile->setTerrainClearance(m_terrainClearance);
             m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);
@@ -1835,6 +1954,22 @@ void Application::setupUI()
             if (!m_missileInFlight)
             {
                 m_missile->setFuel(m_missileFuel);
+            }
+        };
+
+        auto applyLiveTargetDefenseConfig = [&]()
+        {
+            for (const auto &target : m_targets)
+            {
+                if (!target)
+                {
+                    continue;
+                }
+
+                target->setHeatSignature(m_targetHeatSignature);
+                target->setMAWSConfig(m_targetMAWSConfig);
+                target->setFlareDispenserConfig(m_targetFlareConfig);
+                target->setEvasiveManeuverConfig(m_targetEvasiveConfig);
             }
         };
 
@@ -2129,11 +2264,16 @@ void Application::setupUI()
                 ImGui::SliderFloat("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
                 endCard();
 
-                beginCard("MissileGuidanceCard", 232.0f);
-                drawCardHeader("Guidance", "Tune target pursuit and terrain-clearance behavior.");
+                beginCard("MissileGuidanceCard", 336.0f);
+                drawCardHeader("Guidance", "Heat-seeker tuning, intercept steering, and seeker resistance to countermeasures.");
                 ImGui::Checkbox("Guidance enabled", &m_guidanceEnabled);
-                ImGui::SliderFloat("Navigation gain", &m_navigationGain, 0.1f, 10.0f, "%.2f");
+                ImGui::SliderFloat("Lead aggressiveness", &m_navigationGain, 1.0f, 4.0f, "%.2f");
+                ImGui::TextDisabled("1.0 tracks the target directly, 4.0 steers to the full first-order intercept.");
                 ImGui::SliderFloat("Max steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
+                ImGui::SliderFloat("Tracking angle", &m_trackingAngle, 5.0f, 180.0f, "%.0f deg");
+                ImGui::SliderFloat("Proximity fuse", &m_proximityFuseRadius, 0.0f, 75.0f, "%.1f m");
+                ImGui::SliderFloat("IRCCM resistance", &m_countermeasureResistance, 0.0f, 1.0f, "%.2f");
+                ImGui::TextDisabled("0.0 is flare-hungry, 1.0 strongly favors kinematically consistent targets.");
                 ImGui::Checkbox("Terrain avoidance", &m_terrainAvoidanceEnabled);
                 ImGui::SliderFloat("Terrain clearance", &m_terrainClearance, 0.0f, 400.0f, "%.1f m");
                 ImGui::SliderFloat("Terrain look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
@@ -2240,18 +2380,54 @@ void Application::setupUI()
                 }
                 endCard();
 
-                beginCard("TargetRosterCard", 280.0f);
-                drawCardHeader("Live Roster", "Read-only status table for every spawned target.");
+                beginCard("TargetDefenseCard", 362.0f);
+                drawCardHeader("Countermeasures", "MAWS cues flare bursts and evasive weaving so the target tries to drag the missile off onto hot decoys.");
+                ImGui::SliderFloat("Aircraft heat", &m_targetHeatSignature, 0.1f, 5.0f, "%.2f");
+                ImGui::Checkbox("MAWS enabled", &m_targetMAWSConfig.enabled);
+                ImGui::SliderFloat("MAWS range", &m_targetMAWSConfig.detectionRange, 250.0f, 8000.0f, "%.0f m");
+                ImGui::SliderFloat("MAWS reaction window", &m_targetMAWSConfig.reactionTimeWindow, 0.5f, 12.0f, "%.1f s");
+                ImGui::SliderFloat("Threat miss distance", &m_targetMAWSConfig.closestApproachThreshold, 10.0f, 400.0f, "%.1f m");
+                ImGui::Separator();
+                ImGui::Checkbox("Flare dispenser", &m_targetFlareConfig.enabled);
+                ImGui::SliderInt("Flare inventory", &m_targetFlareConfig.inventory, 0, 60);
+                ImGui::SliderInt("Flare burst size", &m_targetFlareConfig.burstSize, 1, 6);
+                ImGui::SliderFloat("Burst interval", &m_targetFlareConfig.burstInterval, 0.02f, 0.5f, "%.2f s");
+                ImGui::SliderFloat("Burst cooldown", &m_targetFlareConfig.cooldown, 0.1f, 4.0f, "%.2f s");
+                ImGui::SliderFloat("Flare eject speed", &m_targetFlareConfig.ejectSpeed, 0.0f, 120.0f, "%.1f m/s");
+                ImGui::SliderFloat("Flare lifetime", &m_targetFlareConfig.lifetime, 0.5f, 10.0f, "%.1f s");
+                ImGui::SliderFloat("Flare heat", &m_targetFlareConfig.heatSignature, 0.1f, 12.0f, "%.2f");
+                ImGui::SliderFloat("Flare heat decay", &m_targetFlareConfig.heatDecayRate, 0.1f, 4.0f, "%.2f");
+                ImGui::Separator();
+                ImGui::Checkbox("Evasive maneuvers", &m_targetEvasiveConfig.enabled);
+                ImGui::SliderFloat("Break-turn accel", &m_targetEvasiveConfig.lateralAcceleration, 0.0f, 80.0f, "%.1f m/s^2");
+                ImGui::SliderFloat("Vertical bias", &m_targetEvasiveConfig.verticalBias, -1.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Max evasive offset", &m_targetEvasiveConfig.maxOffset, 20.0f, 600.0f, "%.0f m");
+                ImGui::SliderFloat("Weave period", &m_targetEvasiveConfig.weavePeriod, 0.3f, 5.0f, "%.2f s");
+                ImGui::SliderFloat("Recovery rate", &m_targetEvasiveConfig.recoveryRate, 0.1f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Speed multiplier", &m_targetEvasiveConfig.speedMultiplier, 0.5f, 1.6f, "%.2f");
+                pushButtonPalette(accentAmber, accentAmberHover, accentAmberActive);
+                if (ImGui::Button("Apply Defense Profile", ImVec2(-1.0f, 34.0f)))
+                {
+                    applyLiveTargetDefenseConfig();
+                }
+                popButtonPalette();
+                endCard();
+
+                beginCard("TargetRosterCard", 460.0f);
+                drawCardHeader("Live Roster", "Read-only status table for every spawned target and its countermeasure state.");
                 if (m_targets.empty())
                 {
                     ImGui::TextDisabled("No targets are currently loaded.");
                 }
-                else if (ImGui::BeginTable("TargetRosterTable", 4, readoutTableFlags))
+                else if (ImGui::BeginTable("TargetRosterTable", 7, readoutTableFlags))
                 {
                     ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 42.0f);
                     ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-                    ImGui::TableSetupColumn("Pattern", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-                    ImGui::TableSetupColumn("Range", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableSetupColumn("Pattern", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableSetupColumn("Defense", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+                    ImGui::TableSetupColumn("Flares", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+                    ImGui::TableSetupColumn("Range", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+                    ImGui::TableSetupColumn("CPA", ImGuiTableColumnFlags_WidthStretch, 0.9f);
                     ImGui::TableHeadersRow();
 
                     for (size_t i = 0; i < m_targets.size(); ++i)
@@ -2276,7 +2452,38 @@ void Application::setupUI()
                         ImGui::TableSetColumnIndex(3);
                         if (isActive)
                         {
+                            ImGui::TextColored(target->isMissileWarningActive() ? accentAmber : textDim,
+                                               "%s", target->isMissileWarningActive() ? "MAWS / Evade" : "Standby");
+                        }
+                        else
+                        {
+                            ImGui::TextDisabled("--");
+                        }
+
+                        ImGui::TableSetColumnIndex(4);
+                        if (isActive)
+                        {
+                            ImGui::Text("%d", target->getRemainingFlares());
+                        }
+                        else
+                        {
+                            ImGui::TextDisabled("--");
+                        }
+
+                        ImGui::TableSetColumnIndex(5);
+                        if (isActive)
+                        {
                             ImGui::Text("%.1f m", glm::distance(missilePosition, target->getPosition()));
+                        }
+                        else
+                        {
+                            ImGui::TextDisabled("--");
+                        }
+
+                        ImGui::TableSetColumnIndex(6);
+                        if (isActive && target->isMissileWarningActive())
+                        {
+                            ImGui::Text("%.0f m", target->getThreatClosestApproachDistance());
                         }
                         else
                         {
@@ -2445,9 +2652,13 @@ void Application::setupUI()
             std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileMass);
             drawReadoutRow("Wet mass", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.2f", m_navigationGain);
-            drawReadoutRow("Navigation gain", buffer, textBright);
+            drawReadoutRow("Lead aggressiveness", buffer, textBright);
             std::snprintf(buffer, sizeof(buffer), "%.0f N", m_maxSteeringForce);
             drawReadoutRow("Max steering", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.0f deg", m_trackingAngle);
+            drawReadoutRow("Tracking cone", buffer, textBright);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", m_proximityFuseRadius);
+            drawReadoutRow("Proximity fuse", buffer, textBright);
             drawReadoutRow("Terrain mode", m_missile->isTerrainAvoidanceEnabled() ? "Clearance hold" : "Direct pursuit", m_missile->isTerrainAvoidanceEnabled() ? accentGreen : textDim);
             std::snprintf(buffer, sizeof(buffer), "%.1f m", m_missile->getTerrainClearance());
             drawReadoutRow("Terrain floor", buffer, textBright);
@@ -2510,6 +2721,10 @@ void Application::createTarget(const glm::vec3 &position, float radius)
 
         // Create target with validated parameters
         auto target = std::make_unique<Target>(validPosition, validRadius);
+        target->setHeatSignature(m_targetHeatSignature);
+        target->setMAWSConfig(m_targetMAWSConfig);
+        target->setFlareDispenserConfig(m_targetFlareConfig);
+        target->setEvasiveManeuverConfig(m_targetEvasiveConfig);
 
         // Set target movement properties if enabled
         if (m_targetsMove)
@@ -2601,6 +2816,10 @@ void Application::createRandomTarget()
 
         // Create target at this position
         auto target = std::make_unique<Target>(glm::vec3(x, height, z), radius);
+        target->setHeatSignature(m_targetHeatSignature);
+        target->setMAWSConfig(m_targetMAWSConfig);
+        target->setFlareDispenserConfig(m_targetFlareConfig);
+        target->setEvasiveManeuverConfig(m_targetEvasiveConfig);
 
         // Set target movement properties if enabled
         if (m_targetsMove)
@@ -2681,6 +2900,7 @@ void Application::resetTargets()
 
         // Clear existing targets
         m_targets.clear();
+        clearFlares();
 
         // Create new random targets
         for (int i = 0; i < m_targetCount; i++)
@@ -2722,6 +2942,87 @@ void Application::resetTargets()
     {
         std::cerr << "ERROR: Unknown exception in resetTargets" << std::endl;
     }
+}
+
+void Application::createFlare(const FlareLaunchRequest &request)
+{
+    try
+    {
+        auto flare = std::make_unique<Flare>(request);
+        if (!flare || !flare->isActive() || !m_physicsEngine)
+        {
+            return;
+        }
+
+        m_physicsEngine->addFlare(flare.get());
+        m_flares.push_back(std::move(flare));
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "ERROR: Exception in createFlare: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "ERROR: Unknown exception in createFlare" << std::endl;
+    }
+}
+
+void Application::collectPendingTargetFlares()
+{
+    for (const auto &target : m_targets)
+    {
+        if (!target)
+        {
+            continue;
+        }
+
+        for (const FlareLaunchRequest &request : target->consumePendingFlareLaunches())
+        {
+            createFlare(request);
+        }
+    }
+}
+
+void Application::removeInactiveFlares()
+{
+    if (!m_physicsEngine)
+    {
+        m_flares.clear();
+        return;
+    }
+
+    auto it = m_flares.begin();
+    while (it != m_flares.end())
+    {
+        if (!(*it) || !(*it)->isActive())
+        {
+            if (*it)
+            {
+                m_physicsEngine->removeFlare(it->get());
+            }
+            it = m_flares.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void Application::clearFlares()
+{
+    if (m_physicsEngine)
+    {
+        for (auto &flare : m_flares)
+        {
+            if (flare)
+            {
+                m_physicsEngine->removeFlare(flare.get());
+            }
+        }
+    }
+
+    m_flares.clear();
 }
 
 void Application::launchMissile()
@@ -2895,15 +3196,33 @@ void Application::resetMissile()
             m_mass, m_dragCoefficient, m_crossSectionalArea, m_liftCoefficient);
 
         // Validate guidance parameters
-        if (m_navigationGain <= 0.0f || std::isnan(m_navigationGain) || std::isinf(m_navigationGain))
+        if (std::isnan(m_navigationGain) || std::isinf(m_navigationGain))
         {
             m_navigationGain = 4.0f;
         }
+        m_navigationGain = std::clamp(m_navigationGain, 1.0f, 4.0f);
 
         if (m_maxSteeringForce <= 0.0f || std::isnan(m_maxSteeringForce) || std::isinf(m_maxSteeringForce))
         {
             m_maxSteeringForce = 20000.0f;
         }
+
+        if (std::isnan(m_trackingAngle) || std::isinf(m_trackingAngle))
+        {
+            m_trackingAngle = 85.0f;
+        }
+        m_trackingAngle = std::clamp(m_trackingAngle, 5.0f, 180.0f);
+
+        if (std::isnan(m_proximityFuseRadius) || std::isinf(m_proximityFuseRadius) || m_proximityFuseRadius < 0.0f)
+        {
+            m_proximityFuseRadius = 18.0f;
+        }
+
+        if (std::isnan(m_countermeasureResistance) || std::isinf(m_countermeasureResistance))
+        {
+            m_countermeasureResistance = 0.35f;
+        }
+        m_countermeasureResistance = glm::clamp(m_countermeasureResistance, 0.0f, 1.0f);
 
         if (std::isnan(m_terrainClearance) || std::isinf(m_terrainClearance) || m_terrainClearance < 0.0f)
         {
@@ -2919,6 +3238,9 @@ void Application::resetMissile()
         m_missile->setGuidanceEnabled(m_guidanceEnabled);
         m_missile->setNavigationGain(m_navigationGain);
         m_missile->setMaxSteeringForce(m_maxSteeringForce);
+        m_missile->setTrackingAngle(m_trackingAngle);
+        m_missile->setProximityFuseRadius(m_proximityFuseRadius);
+        m_missile->setCountermeasureResistance(m_countermeasureResistance);
         m_missile->setTerrainAvoidanceEnabled(m_terrainAvoidanceEnabled);
         m_missile->setTerrainClearance(m_terrainClearance);
         m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);

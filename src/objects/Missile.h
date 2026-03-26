@@ -2,6 +2,9 @@
 
 #include "PhysicsObject.h"
 #include "Target.h"  // Include complete Target definition instead of forward declaration
+#include <vector>
+
+class Flare;
 
 class Missile : public PhysicsObject {
 public:
@@ -50,6 +53,10 @@ public:
     float getNavigationGain() const { return m_navigationGain; }
     void setMaxSteeringForce(float force) { m_maxSteeringForce = force; }
     float getMaxSteeringForce() const { return m_maxSteeringForce; }
+    void setTrackingAngle(float angleDegrees);
+    float getTrackingAngle() const { return m_trackingAngleDegrees; }
+    void setProximityFuseRadius(float radiusMeters);
+    float getProximityFuseRadius() const { return m_proximityFuseRadius; }
     void setTerrainAvoidanceEnabled(bool enabled) { m_terrainAvoidanceEnabled = enabled; }
     bool isTerrainAvoidanceEnabled() const { return m_terrainAvoidanceEnabled; }
     void setTerrainClearance(float clearance) { m_terrainClearance = (clearance >= 0.0f) ? clearance : 0.0f; }
@@ -58,16 +65,24 @@ public:
     float getTerrainLookAheadTime() const { return m_terrainLookAheadTime; }
     void setGroundReferenceAltitude(float altitude) { m_groundReferenceAltitude = altitude; }
     float getGroundReferenceAltitude() const { return m_groundReferenceAltitude; }
+    void setCountermeasureResistance(float resistance);
+    float getCountermeasureResistance() const { return m_countermeasureResistance; }
+    bool isTrackingDecoy() const { return m_trackingDecoy; }
     
     // Apply guidance force
+    void updateHeatSeeker(const std::vector<Flare *> &flares, float deltaTime);
     void applyGuidance(float deltaTime);
+    bool consumeSelfDestructRequest();
     
     // Thrust system
     void setThrust(float newtons) { m_thrust = newtons; }
     float getThrust() const { return m_thrust; }
     
-    void setThrustDirection(const glm::vec3& direction) { 
-        m_thrustDirection = glm::normalize(direction); 
+    void setThrustDirection(const glm::vec3& direction) {
+        if (glm::dot(direction, direction) > 0.0001f)
+        {
+            m_thrustDirection = glm::normalize(direction);
+        }
     }
     const glm::vec3& getThrustDirection() const { return m_thrustDirection; }
     
@@ -87,8 +102,6 @@ public:
     void update(float deltaTime) override;
     
 private:
-    void initializeTargetTrack(const glm::vec3& position, const glm::vec3& velocity);
-    void resetTargetTrack();
     void synchronizeMass();
 
     // Aerodynamic properties
@@ -101,12 +114,17 @@ private:
     bool m_guidanceEnabled = true;
     bool m_hasTarget = false;
     glm::vec3 m_targetPosition = glm::vec3(0.0f);
+    glm::vec3 m_trackedSourceVelocity = glm::vec3(0.0f);
     Target* m_targetObject = nullptr; // Pointer to target object for continuous tracking
-    glm::vec3 m_filteredTargetPosition = glm::vec3(0.0f);
-    glm::vec3 m_filteredTargetVelocity = glm::vec3(0.0f);
-    bool m_targetTrackInitialized = false;
-    float m_navigationGain = 4.0f;    // Typical PN navigation constant range is ~3-5
+    const Flare *m_trackedFlare = nullptr;
+    float m_navigationGain = 4.0f;    // Legacy tuning input, remapped as intercept lead aggressiveness
     float m_maxSteeringForce = 20000.0f; // Lateral control authority in Newtons
+    float m_trackingAngleDegrees = 85.0f;
+    float m_proximityFuseRadius = 18.0f;
+    float m_countermeasureResistance = 0.35f;
+    float m_lockRetentionBias = 0.25f;
+    bool m_trackingDecoy = false;
+    bool m_selfDestructRequested = false;
     bool m_terrainAvoidanceEnabled = true;
     float m_terrainClearance = 90.0f;
     float m_terrainLookAheadTime = 6.0f;

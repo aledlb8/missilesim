@@ -4,6 +4,27 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace
+{
+bool segmentIntersectsSphere(const glm::vec3 &segmentStart,
+                             const glm::vec3 &segmentEnd,
+                             const glm::vec3 &sphereCenter,
+                             float sphereRadius)
+{
+    const glm::vec3 segment = segmentEnd - segmentStart;
+    const float segmentLengthSq = glm::dot(segment, segment);
+    if (segmentLengthSq <= 0.0001f)
+    {
+        return glm::length(segmentStart - sphereCenter) <= sphereRadius;
+    }
+
+    const float projection = glm::dot(sphereCenter - segmentStart, segment) / segmentLengthSq;
+    const float clampedProjection = glm::clamp(projection, 0.0f, 1.0f);
+    const glm::vec3 closestPoint = segmentStart + (segment * clampedProjection);
+    return glm::length(closestPoint - sphereCenter) <= sphereRadius;
+}
+} // namespace
+
 PhysicsEngine::PhysicsEngine()
 {
     // Create force components with default values
@@ -17,6 +38,8 @@ void PhysicsEngine::update(float deltaTime)
 {
     try
     {
+        std::vector<Missile *> activeMissiles;
+
         // Update all physics objects
         for (auto *object : m_objects)
         {
@@ -37,29 +60,30 @@ void PhysicsEngine::update(float deltaTime)
                 m_gravity->applyTo(object);
             }
 
-            // Apply aerodynamic forces
+            // Apply aerodynamic forces to any body with exposed coefficients.
+            if (m_drag)
+            {
+                m_drag->applyTo(object);
+            }
+
+            if (m_lift && object->getLiftCoefficient() > 0.0f)
+            {
+                m_lift->applyTo(object);
+            }
+
             if (object->getType() == "Missile")
             {
                 Missile *missile = static_cast<Missile *>(object);
                 missile->setGroundReferenceAltitude(m_groundLevel);
-
-                // Apply drag
-                if (m_drag)
-                {
-                    m_drag->applyTo(object);
-                }
-
-                // Apply lift
-                if (m_lift)
-                {
-                    m_lift->applyTo(object);
-                }
+                missile->updateHeatSeeker(m_flares, deltaTime);
 
                 // Apply missile guidance
                 if (missile->isGuidanceEnabled() && missile->hasTarget())
                 {
                     missile->applyGuidance(deltaTime);
                 }
+
+                activeMissiles.push_back(missile);
             }
 
             // Update object physics (position, velocity, etc.)
@@ -77,7 +101,7 @@ void PhysicsEngine::update(float deltaTime)
         {
             if (target && target->isActive())
             {
-                // Apply the update to handle movement patterns
+                target->updateThreatAssessment(activeMissiles);
                 target->update(deltaTime);
             }
         }
@@ -153,6 +177,7 @@ bool PhysicsEngine::checkMissileTargetHit(Missile *missile)
         return false;
 
     const glm::vec3 &missilePos = missile->getPosition();
+    const glm::vec3 &missilePrevPos = missile->getPreviousPosition();
 
     // Check against each target
     for (auto *target : m_targets)
@@ -161,8 +186,8 @@ bool PhysicsEngine::checkMissileTargetHit(Missile *missile)
         if (!target->isActive())
             continue;
 
-        // Check if missile position is inside target radius
-        if (target->isPointInside(missilePos))
+        const float detonationRadius = target->getRadius() + missile->getProximityFuseRadius();
+        if (segmentIntersectsSphere(missilePrevPos, missilePos, target->getPosition(), detonationRadius))
         {
             // Hit detected! Deactivate the target
             target->setActive(false);
@@ -380,6 +405,61 @@ void PhysicsEngine::setGravity(float gravity)
 float PhysicsEngine::getAirDensity() const
 {
     return m_atmosphere->getDensity();
+}
+
+void PhysicsEngine::addFlare(Flare *flare)
+{
+    try
+    {
+        if (!flare)
+        {
+            std::cerr << "Warning: Attempted to add null flare" << std::endl;
+            return;
+        }
+
+        if (std::find(m_flares.begin(), m_flares.end(), flare) == m_flares.end())
+        {
+            m_flares.push_back(flare);
+        }
+
+        addObject(flare);
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Error: Exception in addFlare: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "Error: Unknown exception in addFlare" << std::endl;
+    }
+}
+
+void PhysicsEngine::removeFlare(Flare *flare)
+{
+    try
+    {
+        if (!flare)
+        {
+            std::cerr << "Warning: Attempted to remove null flare" << std::endl;
+            return;
+        }
+
+        auto flareIt = std::find(m_flares.begin(), m_flares.end(), flare);
+        if (flareIt != m_flares.end())
+        {
+            m_flares.erase(flareIt);
+        }
+
+        removeObject(flare);
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Error: Exception in removeFlare: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "Error: Unknown exception in removeFlare" << std::endl;
+    }
 }
 
 void PhysicsEngine::setAirDensity(float density)

@@ -9,6 +9,7 @@
 #include "forces/Drag.h"
 #include "forces/Lift.h"
 #include "objects/PhysicsObject.h"
+#include "objects/Flare.h"
 #include "objects/Target.h"
 #include "objects/Missile.h"
 
@@ -42,6 +43,11 @@ public:
     void addTarget(Target* target);
     void removeTarget(Target* target);
     const std::vector<Target*>& getTargets() const { return m_targets; }
+
+    // Flare management
+    void addFlare(Flare *flare);
+    void removeFlare(Flare *flare);
+    const std::vector<Flare *> &getFlares() const { return m_flares; }
     
     // Missile guidance
     void setMissileTarget(Missile* missile, Target* target);
@@ -55,6 +61,7 @@ private:
     
     std::vector<PhysicsObject*> m_objects;
     std::vector<Target*> m_targets;
+    std::vector<Flare *> m_flares;
     
     // Physics forces
     std::unique_ptr<Gravity> m_gravity;
