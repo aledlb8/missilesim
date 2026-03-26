@@ -923,7 +923,10 @@ void Application::update(float deltaTime)
             return;
         }
 
-        updateExplosions(deltaTime);
+        if (m_renderer)
+        {
+            m_renderer->updateEffects(deltaTime);
+        }
 
         // Accumulated time approach for fixed time step
         static float accumulator = 0.0f;
@@ -1117,10 +1120,6 @@ void Application::render()
 {
     try
     {
-        // Clear the screen
-        glClearColor(0.58f, 0.69f, 0.82f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
         // Safety check for renderer
         if (!m_renderer)
         {
@@ -1129,6 +1128,7 @@ void Application::render()
         }
 
         updateActiveCameraMode();
+        m_renderer->beginSceneFrame(glm::vec3(0.58f, 0.69f, 0.82f));
         m_renderer->clearDebugPrimitives();
         updateEnvironmentScale();
         m_renderer->renderEnvironment();
@@ -1225,23 +1225,10 @@ void Application::render()
             }
         }
 
-        for (const auto &flare : m_flares)
-        {
-            if (!flare || !flare->isActive())
-            {
-                continue;
-            }
-
-            const float heatFraction = (flare->getInitialHeatSignature() > 0.0f)
-                                           ? glm::clamp(flare->getHeatSignature() / flare->getInitialHeatSignature(), 0.0f, 1.0f)
-                                           : 0.0f;
-            const glm::vec3 flareColor = glm::mix(glm::vec3(0.9f, 0.35f, 0.1f), glm::vec3(1.0f, 0.95f, 0.6f), heatFraction);
-            const float flareSize = glm::mix(3.0f, 8.0f, heatFraction);
-            m_renderer->renderPoint(flare->getPosition(), flareColor, flareSize);
-        }
-
+        emitFrameVisualEffects(m_lastFrameDeltaTime);
         m_renderer->flushDebugPrimitives();
-        renderExplosions();
+        m_renderer->renderSceneEffects();
+        m_renderer->presentSceneFrame();
 
         // Setup ImGui frame - wrap in try-catch for safety
         try
@@ -4126,6 +4113,11 @@ void Application::resetTargets()
         }
         m_targets.clear();
         clearFlares();
+        m_explosions.clear();
+        if (m_renderer)
+        {
+            m_renderer->clearEffects();
+        }
         invalidateTrajectoryPreviewCache();
 
         // Create new random targets
@@ -4327,6 +4319,11 @@ void Application::resetMissile()
         m_missileInFlight = false;
         m_missileFlightTime = 0.0f;
         m_closestTargetDistance = 1000000.0f;
+        m_explosions.clear();
+        if (m_renderer)
+        {
+            m_renderer->clearEffects();
+        }
         invalidateTrajectoryPreviewCache();
 
         // First, if there's an existing missile, remove it from physics engine
@@ -4692,50 +4689,94 @@ void Application::terminateMissileFlight(const glm::vec3 &position, bool createE
 
 void Application::createExplosion(const glm::vec3 &position)
 {
-    // Create new explosion effect at the given position
-    ExplosionEffect explosion;
-    explosion.position = position;
-    explosion.timeRemaining = m_explosionDuration;
-    explosion.size = 0.0f; // Start with size 0, will grow and then shrink
-
-    // Add to explosion list
-    m_explosions.push_back(explosion);
+    if (m_renderer)
+    {
+        const glm::vec3 velocityHint = m_missile ? m_missile->getVelocity() : glm::vec3(0.0f);
+        m_renderer->spawnExplosionEffect(position, velocityHint, 1.0f);
+    }
 }
 
 void Application::updateExplosions(float deltaTime)
 {
-    // Update all active explosion effects
-    for (auto &explosion : m_explosions)
-    {
-        // Decrease remaining time
-        explosion.timeRemaining -= deltaTime;
-
-        // Update size - grow quickly then shrink
-        float normalizedTime = 1.0f - (explosion.timeRemaining / m_explosionDuration);
-        if (normalizedTime < 0.3f)
-        {
-            // Initial growth phase
-            explosion.size = (normalizedTime / 0.3f) * m_explosionMaxSize;
-        }
-        else
-        {
-            // Shrinking phase
-            explosion.size = ((1.0f - normalizedTime) / 0.7f) * m_explosionMaxSize;
-        }
-    }
-
-    // Remove expired explosions
-    while (!m_explosions.empty() && m_explosions.front().timeRemaining <= 0)
-    {
-        m_explosions.pop_front();
-    }
+    (void)deltaTime;
 }
 
 void Application::renderExplosions()
 {
-    // Call renderer to draw each active explosion
-    for (const auto &explosion : m_explosions)
+}
+
+void Application::emitFrameVisualEffects(float deltaTime)
+{
+    if (!m_renderer || m_isPaused)
     {
-        m_renderer->renderExplosion(explosion.position, explosion.size);
+        return;
+    }
+
+    if (glm::clamp(deltaTime, 0.0f, 0.05f) <= 0.0f)
+    {
+        return;
+    }
+
+    if (m_missile && m_missile->isThrustEnabled() && m_missile->getFuel() > 0.0f)
+    {
+        const glm::vec3 missileForward = safeNormalize(m_missile->getVelocity(), m_missile->getThrustDirection());
+        const glm::vec3 currentEmitter = m_missile->getPosition() - (missileForward * 1.12f);
+        const glm::vec3 previousEmitter = m_missile->getPreviousPosition() - (missileForward * 1.12f);
+        const float fuelFraction = (m_missileFuel > 0.0f)
+                                       ? glm::clamp(m_missile->getFuel() / m_missileFuel, 0.0f, 1.0f)
+                                       : 1.0f;
+        const float plumeIntensity = glm::clamp(glm::mix(0.52f, 0.88f, fuelFraction), 0.5f, 0.95f);
+        m_renderer->emitMissileExhaust(previousEmitter, currentEmitter, missileForward, m_missile->getVelocity(), plumeIntensity);
+    }
+
+    for (const auto &target : m_targets)
+    {
+        if (!target || !target->isActive())
+        {
+            continue;
+        }
+
+        const glm::vec3 forward = safeNormalize(target->getVelocity(), glm::vec3(0.0f, 0.0f, 1.0f));
+        const glm::vec3 right = safeNormalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 up = safeNormalize(glm::cross(right, forward), glm::vec3(0.0f, 1.0f, 0.0f));
+        const float radius = std::max(target->getRadius(), 1.0f);
+        const glm::vec3 engineOffset = (-forward * radius * 1.42f) - (up * radius * 0.05f);
+        const glm::vec3 lateralOffset = right * radius * 0.26f;
+        const glm::vec3 currentBase = target->getPosition() + engineOffset;
+        const glm::vec3 previousBase = target->getPreviousPosition() + engineOffset;
+
+        const TargetAIConfig &config = target->getAIConfig();
+        const float speed = glm::length(target->getVelocity());
+        const float speedBand = std::max(config.maxSpeed - config.minSpeed, 1.0f);
+        const float speedFraction = glm::clamp((speed - config.minSpeed) / speedBand, 0.0f, 1.0f);
+        const float afterburnerIntensity = glm::clamp(0.52f + (speedFraction * 0.32f) + (target->isMissileWarningActive() ? 0.10f : 0.0f),
+                                                      0.42f, 1.0f);
+
+        m_renderer->emitJetAfterburner(previousBase - lateralOffset,
+                                       currentBase - lateralOffset,
+                                       forward,
+                                       target->getVelocity(),
+                                       afterburnerIntensity);
+        m_renderer->emitJetAfterburner(previousBase + lateralOffset,
+                                       currentBase + lateralOffset,
+                                       forward,
+                                       target->getVelocity(),
+                                       afterburnerIntensity);
+    }
+
+    for (const auto &flare : m_flares)
+    {
+        if (!flare || !flare->isActive())
+        {
+            continue;
+        }
+
+        const float heatFraction = (flare->getInitialHeatSignature() > 0.0f)
+                                       ? glm::clamp(flare->getHeatSignature() / flare->getInitialHeatSignature(), 0.0f, 1.0f)
+                                       : 0.0f;
+        m_renderer->emitFlareEffect(flare->getPreviousPosition(),
+                                    flare->getPosition(),
+                                    flare->getVelocity(),
+                                    heatFraction);
     }
 }

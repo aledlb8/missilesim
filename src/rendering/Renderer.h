@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 class PhysicsObject;
+class SceneEffects;
 
 class Renderer
 {
@@ -19,6 +20,11 @@ public:
     ~Renderer();
 
     void initialize();
+    void beginSceneFrame(const glm::vec3 &clearColor);
+    void renderSceneEffects();
+    void presentSceneFrame();
+    void updateEffects(float deltaTime);
+    void clearEffects();
     void renderEnvironment();
     void render(PhysicsObject *object);
     void renderAll(const std::vector<PhysicsObject *> &objects);
@@ -26,6 +32,23 @@ public:
 
     // Visual effects
     void renderExplosion(const glm::vec3 &position, float size);
+    void emitMissileExhaust(const glm::vec3 &start,
+                            const glm::vec3 &end,
+                            const glm::vec3 &forward,
+                            const glm::vec3 &carrierVelocity,
+                            float intensity);
+    void emitJetAfterburner(const glm::vec3 &start,
+                            const glm::vec3 &end,
+                            const glm::vec3 &forward,
+                            const glm::vec3 &carrierVelocity,
+                            float intensity);
+    void emitFlareEffect(const glm::vec3 &start,
+                         const glm::vec3 &end,
+                         const glm::vec3 &carrierVelocity,
+                         float heatFraction);
+    void spawnExplosionEffect(const glm::vec3 &position,
+                              const glm::vec3 &velocityHint = glm::vec3(0.0f),
+                              float intensity = 1.0f);
 
     // Debug visualization
     void renderLine(const glm::vec3 &start, const glm::vec3 &end, const glm::vec3 &color = glm::vec3(1.0f, 1.0f, 1.0f));
@@ -51,11 +74,7 @@ public:
     float getSceneFarPlane() const { return m_sceneFarPlane; }
 
     // Viewport settings
-    void setViewportSize(int width, int height)
-    {
-        m_viewportWidth = width;
-        m_viewportHeight = height;
-    }
+    void setViewportSize(int width, int height);
 
     // Getters for camera properties
     const glm::vec3 &getCameraPosition() const { return m_cameraPosition; }
@@ -163,6 +182,8 @@ private:
     float m_airspaceHalfExtent = 600.0f;
     float m_airspaceHeight = 320.0f;
     float m_sceneFarPlane = 20000.0f;
+
+    std::unique_ptr<SceneEffects> m_sceneEffects;
 
     // Mesh data
     std::vector<Vertex> m_vertices;
