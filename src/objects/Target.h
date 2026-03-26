@@ -8,15 +8,6 @@
 
 class Missile;
 
-enum class TargetMovementPattern
-{
-    STATIONARY,
-    LINEAR,
-    CIRCULAR,
-    SINUSOIDAL,
-    RANDOM
-};
-
 struct MAWSConfig
 {
     bool enabled = true;
@@ -43,13 +34,24 @@ struct FlareDispenserConfig
 
 struct EvasiveManeuverConfig
 {
-    bool enabled = true;
     float lateralAcceleration = 32.0f;
     float verticalBias = 0.25f;
-    float maxOffset = 260.0f;
-    float weavePeriod = 1.4f;
-    float recoveryRate = 0.85f;
     float speedMultiplier = 1.12f;
+};
+
+struct TargetAIConfig
+{
+    float minSpeed = 180.0f;
+    float maxSpeed = 320.0f;
+    float preferredDistance = 1500.0f;
+};
+
+enum class TargetAIState
+{
+    PATROL,
+    REPOSITION,
+    DEFENSIVE,
+    RECOVERING
 };
 
 class Target : public PhysicsObject
@@ -66,41 +68,13 @@ public:
     bool isActive() const { return m_isActive; }
     void setActive(bool active);
 
-    void setHeatSignature(float signature) { m_heatSignature = (signature >= 0.0f) ? signature : 0.0f; }
+    void setAIConfig(const TargetAIConfig &config);
+    const TargetAIConfig &getAIConfig() const { return m_aiConfig; }
+
     float getHeatSignature() const { return m_heatSignature; }
-
-    void setMAWSConfig(const MAWSConfig &config);
-    const MAWSConfig &getMAWSConfig() const { return m_mawsConfig; }
-
-    void setFlareDispenserConfig(const FlareDispenserConfig &config);
-    const FlareDispenserConfig &getFlareDispenserConfig() const { return m_flareConfig; }
-
-    void setEvasiveManeuverConfig(const EvasiveManeuverConfig &config);
-    const EvasiveManeuverConfig &getEvasiveManeuverConfig() const { return m_evasiveConfig; }
-
-    void setMovementPattern(TargetMovementPattern pattern) { m_movementPattern = pattern; }
-    TargetMovementPattern getMovementPattern() const { return m_movementPattern; }
-
-    void setMovementSpeed(float speed) { m_movementSpeed = speed; }
-    float getMovementSpeed() const { return m_movementSpeed; }
-
-    void setMovementAmplitude(float amplitude) { m_movementAmplitude = amplitude; }
-    float getMovementAmplitude() const { return m_movementAmplitude; }
-
-    void setMovementDirection(const glm::vec3 &direction)
-    {
-        if (glm::dot(direction, direction) > 0.0001f)
-        {
-            m_movementDirection = glm::normalize(direction);
-        }
-    }
-    const glm::vec3 &getMovementDirection() const { return m_movementDirection; }
-
-    void setMovementCenter(const glm::vec3 &center) { m_movementCenter = center; }
-    const glm::vec3 &getMovementCenter() const { return m_movementCenter; }
-
-    void setMovementPeriod(float seconds) { m_movementPeriod = seconds; }
-    float getMovementPeriod() const { return m_movementPeriod; }
+    TargetAIState getAIState() const { return m_aiState; }
+    float getCommandedSpeed() const { return m_commandedSpeed; }
+    float getReferenceDistance() const { return m_referenceDistance; }
 
     bool isMissileWarningActive() const { return m_missileWarningActive; }
     int getRemainingFlares() const { return m_remainingFlares; }
@@ -119,17 +93,16 @@ private:
         bool active = false;
         glm::vec3 missilePosition = glm::vec3(0.0f);
         glm::vec3 missileVelocity = glm::vec3(0.0f);
+        float distance = std::numeric_limits<float>::infinity();
         float timeToClosestApproach = std::numeric_limits<float>::infinity();
         float closestApproachDistance = std::numeric_limits<float>::infinity();
         float closingSpeed = 0.0f;
     };
 
-    void applyLinearMovement(float deltaTime);
-    void applyCircularMovement(float deltaTime);
-    void applySinusoidalMovement(float deltaTime);
-    void applyRandomMovement(float deltaTime);
+    void updateAutonomousFlight(float deltaTime);
+    float computeDesiredSpeed(float referenceDistance) const;
+    float computeDesiredAltitude(float referenceDistance, float currentSpeed) const;
     void enforceAirspaceConstraint();
-    void applyEvasiveOffset(float deltaTime, const glm::vec3 &baseVelocity);
     void updateCountermeasures(float deltaTime, const glm::vec3 &currentVelocity);
     void resetCountermeasureState();
 
@@ -137,21 +110,22 @@ private:
     bool m_isActive = true;
     float m_heatSignature = 1.0f;
 
-    TargetMovementPattern m_movementPattern = TargetMovementPattern::STATIONARY;
-    float m_movementSpeed = 10.0f;
-    float m_movementAmplitude = 30.0f;
-    glm::vec3 m_movementDirection = glm::vec3(1.0f, 0.0f, 0.0f);
-    glm::vec3 m_movementCenter;
-    float m_movementPeriod = 10.0f;
-
-    float m_movementTime = 0.0f;
-    glm::vec3 m_initialPosition;
-    glm::vec3 m_patternPosition;
-    float m_wavePathDistance = 0.0f;
-
+    TargetAIConfig m_aiConfig;
     MAWSConfig m_mawsConfig;
     FlareDispenserConfig m_flareConfig;
     EvasiveManeuverConfig m_evasiveConfig;
+
+    glm::vec3 m_homeAnchor;
+    glm::vec3 m_referencePosition = glm::vec3(0.0f);
+    glm::vec3 m_referenceVelocity = glm::vec3(0.0f);
+    float m_referenceDistance = std::numeric_limits<float>::infinity();
+    float m_nominalAltitude = 180.0f;
+    float m_altitudeExcursion = 60.0f;
+    float m_patrolPhase = 0.0f;
+    int m_orbitDirection = 1;
+    float m_commandedSpeed = 0.0f;
+    TargetAIState m_aiState = TargetAIState::PATROL;
+
     int m_remainingFlares = 24;
     std::vector<FlareLaunchRequest> m_pendingFlareLaunches;
 
@@ -163,7 +137,4 @@ private:
     float m_burstShotTimer = 0.0f;
     int m_pendingBurstShots = 0;
     int m_flareSpreadSign = 1;
-    float m_evasionPhase = 0.0f;
-    glm::vec3 m_evasionOffset = glm::vec3(0.0f);
-    glm::vec3 m_evasionVelocity = glm::vec3(0.0f);
 };

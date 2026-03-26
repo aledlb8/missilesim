@@ -363,8 +363,8 @@ void PhysicsEngine::setMissileTarget(Missile *missile, Target *target)
         std::cout << "  Target position: (" << target->getPosition().x << ", "
                   << target->getPosition().y << ", " << target->getPosition().z << ")" << std::endl;
         std::cout << "  Target is active: " << (target->isActive() ? "Yes" : "No") << std::endl;
-        std::cout << "  Target movement pattern: " << static_cast<int>(target->getMovementPattern()) << std::endl;
-        std::cout << "  Target movement speed: " << target->getMovementSpeed() << std::endl;
+        std::cout << "  Target AI state: " << static_cast<int>(target->getAIState()) << std::endl;
+        std::cout << "  Target commanded speed: " << target->getCommandedSpeed() << std::endl;
 
         // Set the target object for guidance (new approach)
         missile->setTargetObject(target);

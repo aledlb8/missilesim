@@ -1,17 +1,16 @@
 #include "Target.h"
 #include "Missile.h"
-#include <glm/gtc/constants.hpp>
-#include <glm/gtx/norm.hpp>
 #include <algorithm>
 #include <cmath>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtx/norm.hpp>
 #include <iostream>
-#include <random>
 
 namespace
 {
-constexpr float kMinimumMovementPeriodSeconds = 0.1f;
-constexpr float kMinimumMovementRadiusMeters = 0.1f;
-constexpr float kMinimumForwardSpeedFraction = 0.35f;
+constexpr float kMinimumAltitudeMeters = 40.0f;
+constexpr float kReferenceDistanceFloorMeters = 250.0f;
+constexpr float kMinimumSpeedMetersPerSecond = 40.0f;
 
 glm::vec3 normalizeOrFallback(const glm::vec3 &vector, const glm::vec3 &fallback)
 {
@@ -36,35 +35,50 @@ glm::vec3 perpendicularTo(const glm::vec3 &direction)
     return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
-glm::vec3 clampMagnitude(const glm::vec3 &vector, float maxMagnitude)
+glm::vec3 rotateTowardsDirection(const glm::vec3 &currentDirection, const glm::vec3 &targetDirection, float maxRadiansDelta)
 {
-    const float magnitudeSq = glm::length2(vector);
-    const float maxMagnitudeSq = maxMagnitude * maxMagnitude;
-    if (magnitudeSq <= maxMagnitudeSq || magnitudeSq <= 0.0001f)
+    const glm::vec3 current = normalizeOrFallback(currentDirection, glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 target = normalizeOrFallback(targetDirection, current);
+
+    if (maxRadiansDelta <= 0.0f)
     {
-        return vector;
+        return current;
     }
 
-    return glm::normalize(vector) * maxMagnitude;
+    const float cosTheta = glm::clamp(glm::dot(current, target), -1.0f, 1.0f);
+    const float angle = std::acos(cosTheta);
+    if (angle <= maxRadiansDelta || angle < 0.0001f)
+    {
+        return target;
+    }
+
+    glm::vec3 relative = target - (current * cosTheta);
+    if (glm::length2(relative) < 0.0001f)
+    {
+        relative = perpendicularTo(current);
+    }
+    else
+    {
+        relative = glm::normalize(relative);
+    }
+
+    return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
 }
 } // namespace
 
 Target::Target(const glm::vec3 &position, float radius)
     : PhysicsObject(position, glm::vec3(0.0f), 0.0f),
       m_radius(radius),
-      m_initialPosition(position),
-      m_patternPosition(position)
+      m_homeAnchor(position),
+      m_referencePosition(position)
 {
-    m_movementCenter = position;
-
     if (std::isnan(position.x) || std::isnan(position.y) || std::isnan(position.z) ||
         std::isinf(position.x) || std::isinf(position.y) || std::isinf(position.z))
     {
         std::cerr << "Error: Invalid target position detected during creation" << std::endl;
-        setPosition(glm::vec3(0.0f, 100.0f, 0.0f));
-        m_initialPosition = m_position;
-        m_patternPosition = m_position;
-        m_movementCenter = m_position;
+        setPosition(glm::vec3(0.0f, 180.0f, 0.0f));
+        m_homeAnchor = m_position;
+        m_referencePosition = m_position;
     }
 
     if (radius <= 0.0f || std::isnan(radius) || std::isinf(radius))
@@ -73,9 +87,14 @@ Target::Target(const glm::vec3 &position, float radius)
         m_radius = 5.0f;
     }
 
-    m_remainingFlares = m_flareConfig.inventory;
+    m_orbitDirection = ((position.x + position.z) >= 0.0f) ? 1 : -1;
+    setAIConfig(m_aiConfig);
+
+    const glm::vec3 radialFromOrigin = normalizeOrFallback(glm::vec3(m_position.x, 0.0f, m_position.z), glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 tangent = normalizeOrFallback(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), radialFromOrigin) * static_cast<float>(m_orbitDirection),
+                                                  glm::vec3(0.0f, 0.0f, 1.0f));
+    m_velocity = tangent * m_commandedSpeed;
     enforceAirspaceConstraint();
-    m_patternPosition = m_position;
 }
 
 void Target::setActive(bool active)
@@ -88,56 +107,51 @@ void Target::setActive(bool active)
         return;
     }
 
+    const float cruiseSpeed = m_aiConfig.minSpeed + ((m_aiConfig.maxSpeed - m_aiConfig.minSpeed) * 0.55f);
+    const glm::vec3 tangent = normalizeOrFallback(perpendicularTo(glm::vec3(m_position.x, 0.0f, m_position.z)), glm::vec3(0.0f, 0.0f, 1.0f));
+    m_commandedSpeed = glm::clamp(cruiseSpeed, m_aiConfig.minSpeed, m_aiConfig.maxSpeed);
+    m_velocity = tangent * m_commandedSpeed;
     m_remainingFlares = m_flareConfig.inventory;
     resetCountermeasureState();
 }
 
-void Target::setMAWSConfig(const MAWSConfig &config)
+void Target::setAIConfig(const TargetAIConfig &config)
 {
-    m_mawsConfig.enabled = config.enabled;
-    m_mawsConfig.detectionRange = std::max(config.detectionRange, 0.0f);
-    m_mawsConfig.reactionTimeWindow = std::max(config.reactionTimeWindow, 0.1f);
-    m_mawsConfig.closestApproachThreshold = std::max(config.closestApproachThreshold, m_radius);
-}
+    m_aiConfig.minSpeed = std::max(config.minSpeed, kMinimumSpeedMetersPerSecond);
+    m_aiConfig.maxSpeed = std::max(config.maxSpeed, m_aiConfig.minSpeed + 10.0f);
+    m_aiConfig.preferredDistance = std::max(config.preferredDistance, kReferenceDistanceFloorMeters);
+    m_altitudeExcursion = glm::clamp(m_aiConfig.preferredDistance * 0.06f, 35.0f, 140.0f);
+    m_nominalAltitude = glm::clamp(std::max(m_homeAnchor.y, 120.0f), std::max(m_radius + 20.0f, kMinimumAltitudeMeters), 600.0f);
 
-void Target::setFlareDispenserConfig(const FlareDispenserConfig &config)
-{
-    m_flareConfig.enabled = config.enabled;
-    m_flareConfig.inventory = std::max(config.inventory, 0);
-    m_flareConfig.burstSize = std::max(config.burstSize, 1);
-    m_flareConfig.burstInterval = std::max(config.burstInterval, 0.01f);
-    m_flareConfig.cooldown = std::max(config.cooldown, 0.0f);
-    m_flareConfig.ejectSpeed = std::max(config.ejectSpeed, 0.0f);
-    m_flareConfig.lifetime = std::max(config.lifetime, 0.1f);
-    m_flareConfig.heatSignature = std::max(config.heatSignature, 0.0f);
-    m_flareConfig.heatDecayRate = std::max(config.heatDecayRate, 0.0f);
-    m_flareConfig.mass = std::max(config.mass, 0.05f);
-    m_flareConfig.dragCoefficient = std::max(config.dragCoefficient, 0.0f);
-    m_flareConfig.crossSectionalArea = std::max(config.crossSectionalArea, 0.0001f);
-    m_remainingFlares = m_flareConfig.inventory;
-}
+    if (glm::length2(m_velocity) > 0.0001f)
+    {
+        m_velocity = glm::normalize(m_velocity) * glm::clamp(glm::length(m_velocity), m_aiConfig.minSpeed, m_aiConfig.maxSpeed);
+    }
 
-void Target::setEvasiveManeuverConfig(const EvasiveManeuverConfig &config)
-{
-    m_evasiveConfig.enabled = config.enabled;
-    m_evasiveConfig.lateralAcceleration = std::max(config.lateralAcceleration, 0.0f);
-    m_evasiveConfig.verticalBias = std::clamp(config.verticalBias, -1.0f, 1.0f);
-    m_evasiveConfig.maxOffset = std::max(config.maxOffset, 0.0f);
-    m_evasiveConfig.weavePeriod = std::max(config.weavePeriod, 0.2f);
-    m_evasiveConfig.recoveryRate = std::max(config.recoveryRate, 0.1f);
-    m_evasiveConfig.speedMultiplier = std::max(config.speedMultiplier, 0.5f);
+    if (m_commandedSpeed <= 0.0f)
+    {
+        m_commandedSpeed = m_aiConfig.minSpeed + ((m_aiConfig.maxSpeed - m_aiConfig.minSpeed) * 0.55f);
+    }
+    else
+    {
+        m_commandedSpeed = glm::clamp(m_commandedSpeed, m_aiConfig.minSpeed, m_aiConfig.maxSpeed);
+    }
 }
 
 void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
 {
     ThreatAssessment bestThreat;
+    ThreatAssessment nearestContact;
 
-    if (!m_isActive || !m_mawsConfig.enabled)
+    if (!m_isActive)
     {
         m_threatAssessment = bestThreat;
         m_missileWarningActive = false;
         m_threatTimeToClosestApproach = std::numeric_limits<float>::infinity();
         m_threatClosestApproachDistance = std::numeric_limits<float>::infinity();
+        m_referencePosition = m_homeAnchor;
+        m_referenceVelocity = glm::vec3(0.0f);
+        m_referenceDistance = glm::length(m_position - m_homeAnchor);
         return;
     }
 
@@ -150,7 +164,15 @@ void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
 
         const glm::vec3 relativePosition = missile->getPosition() - m_position;
         const float distance = glm::length(relativePosition);
-        if (distance > m_mawsConfig.detectionRange || distance < 0.1f)
+        if (distance < nearestContact.distance && distance >= 0.1f)
+        {
+            nearestContact.active = true;
+            nearestContact.distance = distance;
+            nearestContact.missilePosition = missile->getPosition();
+            nearestContact.missileVelocity = missile->getVelocity();
+        }
+
+        if (!m_mawsConfig.enabled || distance > m_mawsConfig.detectionRange || distance < 0.1f)
         {
             continue;
         }
@@ -186,12 +208,26 @@ void Target::updateThreatAssessment(const std::vector<Missile *> &missiles)
              closestApproachDistance < bestThreat.closestApproachDistance))
         {
             bestThreat.active = true;
+            bestThreat.distance = distance;
             bestThreat.missilePosition = missile->getPosition();
             bestThreat.missileVelocity = missile->getVelocity();
             bestThreat.timeToClosestApproach = timeToClosestApproach;
             bestThreat.closestApproachDistance = closestApproachDistance;
             bestThreat.closingSpeed = closingSpeed;
         }
+    }
+
+    if (nearestContact.active)
+    {
+        m_referencePosition = nearestContact.missilePosition;
+        m_referenceVelocity = nearestContact.missileVelocity;
+        m_referenceDistance = nearestContact.distance;
+    }
+    else
+    {
+        m_referencePosition = m_homeAnchor;
+        m_referenceVelocity = glm::vec3(0.0f);
+        m_referenceDistance = glm::length(m_position - m_homeAnchor);
     }
 
     m_threatAssessment = bestThreat;
@@ -234,7 +270,6 @@ void Target::update(float deltaTime)
 
     if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime))
     {
-        m_velocity = glm::vec3(0.0f);
         return;
     }
 
@@ -244,260 +279,193 @@ void Target::update(float deltaTime)
         return;
     }
 
-    const glm::vec3 previousPosition = m_position;
-    const glm::vec3 previousPatternPosition = m_patternPosition;
-
-    m_movementTime += deltaTime;
-
-    switch (m_movementPattern)
-    {
-    case TargetMovementPattern::LINEAR:
-        applyLinearMovement(deltaTime);
-        break;
-    case TargetMovementPattern::CIRCULAR:
-        applyCircularMovement(deltaTime);
-        break;
-    case TargetMovementPattern::SINUSOIDAL:
-        applySinusoidalMovement(deltaTime);
-        break;
-    case TargetMovementPattern::RANDOM:
-        applyRandomMovement(deltaTime);
-        break;
-    case TargetMovementPattern::STATIONARY:
-    default:
-        break;
-    }
-
-    m_position = m_patternPosition;
+    updateAutonomousFlight(deltaTime);
     enforceAirspaceConstraint();
-    m_patternPosition = m_position;
-
-    const glm::vec3 baseVelocity = (m_patternPosition - previousPatternPosition) / deltaTime;
-    applyEvasiveOffset(deltaTime, baseVelocity);
-
-    m_position = m_patternPosition + m_evasionOffset;
-    enforceAirspaceConstraint();
-    m_velocity = (m_position - previousPosition) / deltaTime;
-
     updateCountermeasures(deltaTime, m_velocity);
 }
 
-void Target::applyLinearMovement(float deltaTime)
+void Target::updateAutonomousFlight(float deltaTime)
 {
-    const float minimumAltitude = std::max(m_radius + 2.0f, 5.0f);
-    const glm::vec3 velocity = m_movementDirection * m_movementSpeed;
-    m_patternPosition += velocity * deltaTime;
+    const glm::vec3 previousPosition = m_position;
+    const float minSpeed = std::max(m_aiConfig.minSpeed, kMinimumSpeedMetersPerSecond);
+    const float maxSpeed = std::max(m_aiConfig.maxSpeed, minSpeed + 10.0f);
+    const float cruiseSpeed = minSpeed + ((maxSpeed - minSpeed) * 0.55f);
+    const float distanceBand = std::max(m_aiConfig.preferredDistance * 0.18f, 120.0f);
 
-    for (int i = 0; i < 3; ++i)
+    float currentSpeed = glm::length(m_velocity);
+    if (currentSpeed < 0.1f)
     {
-        if (m_patternPosition[i] > m_movementCenter[i] + m_movementAmplitude)
+        currentSpeed = cruiseSpeed;
+    }
+
+    m_patrolPhase += deltaTime * glm::mix(0.18f, 0.38f, glm::clamp(currentSpeed / maxSpeed, 0.0f, 1.0f));
+    if (m_patrolPhase >= glm::two_pi<float>())
+    {
+        m_patrolPhase = std::fmod(m_patrolPhase, glm::two_pi<float>());
+    }
+
+    const glm::vec3 referenceOffset = m_position - m_referencePosition;
+    const glm::vec3 horizontalOffset(referenceOffset.x, 0.0f, referenceOffset.z);
+    const float referenceDistance = glm::length(horizontalOffset);
+    m_referenceDistance = referenceDistance;
+
+    const glm::vec3 awayDirection = normalizeOrFallback(horizontalOffset, m_velocity);
+    glm::vec3 tangentDirection = normalizeOrFallback(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), awayDirection) * static_cast<float>(m_orbitDirection),
+                                                     perpendicularTo(awayDirection));
+    if (glm::dot(tangentDirection, normalizeOrFallback(m_velocity, tangentDirection)) < 0.0f)
+    {
+        tangentDirection = -tangentDirection;
+    }
+
+    const float distanceCorrection = glm::clamp((m_aiConfig.preferredDistance - referenceDistance) / distanceBand, -1.0f, 1.0f);
+    glm::vec3 desiredDirection = normalizeOrFallback((tangentDirection * 1.15f) + (awayDirection * distanceCorrection * 0.85f),
+                                                     tangentDirection);
+
+    const float energyFraction = glm::clamp((currentSpeed - minSpeed) / std::max(maxSpeed - minSpeed, 1.0f), 0.0f, 1.0f);
+    if (m_threatAssessment.active)
+    {
+        const float threatBlend = 1.0f - glm::clamp(m_threatAssessment.timeToClosestApproach / std::max(m_mawsConfig.reactionTimeWindow, 0.1f), 0.0f, 1.0f);
+        const glm::vec3 incomingDirection = normalizeOrFallback(m_threatAssessment.missilePosition - m_position, -awayDirection);
+        glm::vec3 breakDirection = normalizeOrFallback(glm::cross(incomingDirection, glm::vec3(0.0f, 1.0f, 0.0f)) * static_cast<float>(m_orbitDirection),
+                                                       tangentDirection);
+        if (glm::dot(breakDirection, tangentDirection) < 0.0f)
         {
-            m_patternPosition[i] = m_movementCenter[i] + m_movementAmplitude;
-            m_movementDirection[i] = -m_movementDirection[i];
+            breakDirection = -breakDirection;
+        }
+
+        desiredDirection = normalizeOrFallback((breakDirection * 1.45f) +
+                                                   (awayDirection * (0.85f + threatBlend)) -
+                                                   (incomingDirection * 0.25f),
+                                               breakDirection);
+        m_aiState = TargetAIState::DEFENSIVE;
+    }
+    else if (energyFraction < 0.15f)
+    {
+        m_aiState = TargetAIState::RECOVERING;
+    }
+    else if (std::abs(distanceCorrection) > 0.35f)
+    {
+        m_aiState = TargetAIState::REPOSITION;
+    }
+    else
+    {
+        m_aiState = TargetAIState::PATROL;
+    }
+
+    const float desiredAltitude = computeDesiredAltitude(referenceDistance, currentSpeed);
+    const float altitudeError = desiredAltitude - m_position.y;
+    desiredDirection = normalizeOrFallback(glm::vec3(desiredDirection.x,
+                                                     desiredDirection.y + glm::clamp(altitudeError / 260.0f, -0.42f, 0.42f),
+                                                     desiredDirection.z),
+                                           desiredDirection);
+
+    const glm::vec3 currentDirection = normalizeOrFallback(m_velocity, desiredDirection);
+    const float turnAcceleration = m_threatAssessment.active
+                                       ? (m_evasiveConfig.lateralAcceleration * m_evasiveConfig.speedMultiplier)
+                                       : (m_evasiveConfig.lateralAcceleration * 0.55f);
+    const float maxTurnRate = turnAcceleration / std::max(currentSpeed, minSpeed * 0.5f);
+    const glm::vec3 steeredDirection = rotateTowardsDirection(currentDirection, desiredDirection, maxTurnRate * deltaTime);
+
+    const float desiredSpeed = computeDesiredSpeed(referenceDistance);
+    const float accelRate = m_threatAssessment.active ? 26.0f : 12.0f;
+    const float decelRate = m_threatAssessment.active ? 18.0f : 10.0f;
+    const float speedStep = glm::clamp(desiredSpeed - currentSpeed, -decelRate * deltaTime, accelRate * deltaTime);
+    m_commandedSpeed = glm::clamp(currentSpeed + speedStep, minSpeed, maxSpeed);
+
+    m_velocity = steeredDirection * m_commandedSpeed;
+    m_position += m_velocity * deltaTime;
+    m_acceleration = (m_position - previousPosition - (currentDirection * currentSpeed * deltaTime)) / std::max(deltaTime * deltaTime, 0.0001f);
+}
+
+float Target::computeDesiredSpeed(float referenceDistance) const
+{
+    const float minSpeed = std::max(m_aiConfig.minSpeed, kMinimumSpeedMetersPerSecond);
+    const float maxSpeed = std::max(m_aiConfig.maxSpeed, minSpeed + 10.0f);
+    const float cruiseSpeed = minSpeed + ((maxSpeed - minSpeed) * 0.55f);
+    const float distanceBand = std::max(m_aiConfig.preferredDistance * 0.18f, 120.0f);
+    const float distanceError = glm::clamp((m_aiConfig.preferredDistance - referenceDistance) / distanceBand, -1.0f, 1.0f);
+
+    float desiredSpeed = cruiseSpeed;
+
+    if (m_threatAssessment.active)
+    {
+        const float threatBlend = 1.0f - glm::clamp(m_threatAssessment.timeToClosestApproach / std::max(m_mawsConfig.reactionTimeWindow, 0.1f), 0.0f, 1.0f);
+        desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, 0.72f + (0.28f * threatBlend));
+    }
+    else if (distanceError > 0.15f)
+    {
+        desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, distanceError);
+    }
+    else if (distanceError < -0.25f)
+    {
+        desiredSpeed = glm::mix(cruiseSpeed, minSpeed + ((maxSpeed - minSpeed) * 0.18f), -distanceError);
+    }
+
+    return glm::clamp(desiredSpeed, minSpeed, maxSpeed);
+}
+
+float Target::computeDesiredAltitude(float referenceDistance, float currentSpeed) const
+{
+    const float minAltitude = std::max(m_radius + 12.0f, kMinimumAltitudeMeters);
+    const float maxAltitude = std::max(minAltitude + 120.0f, glm::clamp(m_aiConfig.preferredDistance * 0.35f, 180.0f, 700.0f));
+    const float minSpeed = std::max(m_aiConfig.minSpeed, kMinimumSpeedMetersPerSecond);
+    const float maxSpeed = std::max(m_aiConfig.maxSpeed, minSpeed + 10.0f);
+    const float midSpeed = minSpeed + ((maxSpeed - minSpeed) * 0.5f);
+
+    float desiredAltitude = m_nominalAltitude + (std::sin(m_patrolPhase) * m_altitudeExcursion);
+    if (referenceDistance < m_aiConfig.preferredDistance * 0.75f)
+    {
+        desiredAltitude += 35.0f;
+    }
+    else if (referenceDistance > m_aiConfig.preferredDistance * 1.2f)
+    {
+        desiredAltitude -= 25.0f;
+    }
+
+    if (m_threatAssessment.active)
+    {
+        if (currentSpeed < midSpeed)
+        {
+            desiredAltitude -= 55.0f;
+        }
+        else if (m_threatAssessment.missilePosition.y < m_position.y)
+        {
+            desiredAltitude += 40.0f;
         }
         else
         {
-            float lowerBound = m_movementCenter[i] - m_movementAmplitude;
-            if (i == 1)
-            {
-                lowerBound = std::max(lowerBound, minimumAltitude);
-            }
-
-            if (m_patternPosition[i] < lowerBound)
-            {
-                m_patternPosition[i] = lowerBound;
-                m_movementDirection[i] = -m_movementDirection[i];
-            }
+            desiredAltitude -= 30.0f;
         }
     }
-}
 
-void Target::applyCircularMovement(float deltaTime)
-{
-    (void)deltaTime;
-
-    const float radius = std::max(m_movementAmplitude, kMinimumMovementRadiusMeters);
-    const float requestedAngularRate = (2.0f * glm::pi<float>()) / std::max(m_movementPeriod, kMinimumMovementPeriodSeconds);
-    const float verticalAmplitude = radius * 0.2f;
-    const float maxPathDerivativeMagnitude = std::sqrt((radius * radius) + ((2.0f * verticalAmplitude) * (2.0f * verticalAmplitude)));
-    const float maxAngularRateFromSpeed = (m_movementSpeed > 0.0f)
-                                              ? (m_movementSpeed / std::max(maxPathDerivativeMagnitude, kMinimumMovementRadiusMeters))
-                                              : 0.0f;
-    const float effectiveAngularRate = std::min(requestedAngularRate, maxAngularRateFromSpeed);
-    const float angle = m_movementTime * effectiveAngularRate;
-
-    m_patternPosition.x = m_movementCenter.x + radius * std::cos(angle);
-    m_patternPosition.z = m_movementCenter.z + radius * std::sin(angle);
-    m_patternPosition.y = m_movementCenter.y + verticalAmplitude * std::sin(angle * 2.0f);
-}
-
-void Target::applySinusoidalMovement(float deltaTime)
-{
-    const glm::vec3 forwardDirection = normalizeOrFallback(m_movementDirection, glm::vec3(1.0f, 0.0f, 0.0f));
-    const glm::vec3 lateralDirection = perpendicularTo(forwardDirection);
-    const float amplitude = std::max(m_movementAmplitude, 0.0f);
-    const float requestedAngularRate = (2.0f * glm::pi<float>()) / std::max(m_movementPeriod, kMinimumMovementPeriodSeconds);
-    const float cruiseSpeed = std::max(m_movementSpeed, 0.0f);
-
-    float effectiveAngularRate = requestedAngularRate;
-    if (amplitude > 0.001f && cruiseSpeed > 0.0f)
-    {
-        const float reservedForwardSpeed = cruiseSpeed * kMinimumForwardSpeedFraction;
-        const float maxLateralSpeed = std::sqrt(std::max((cruiseSpeed * cruiseSpeed) - (reservedForwardSpeed * reservedForwardSpeed), 0.0f));
-        const float maxAngularRateFromSpeed = maxLateralSpeed / amplitude;
-        effectiveAngularRate = std::min(requestedAngularRate, maxAngularRateFromSpeed);
-    }
-    else if (cruiseSpeed <= 0.0f)
-    {
-        effectiveAngularRate = 0.0f;
-    }
-
-    const float angle = m_movementTime * effectiveAngularRate;
-    const float lateralVelocityMagnitude = amplitude * effectiveAngularRate * std::cos(angle);
-    const float forwardSpeed = std::sqrt(std::max((cruiseSpeed * cruiseSpeed) - (lateralVelocityMagnitude * lateralVelocityMagnitude), 0.0f));
-
-    m_wavePathDistance += forwardSpeed * deltaTime;
-    m_patternPosition = m_initialPosition +
-                        (forwardDirection * m_wavePathDistance) +
-                        (lateralDirection * (amplitude * std::sin(angle)));
-
-    if (glm::length(m_patternPosition - m_initialPosition) > std::max(amplitude * 10.0f, 250.0f))
-    {
-        m_initialPosition = m_patternPosition;
-        m_wavePathDistance = 0.0f;
-        m_movementTime = 0.0f;
-    }
-}
-
-void Target::applyRandomMovement(float deltaTime)
-{
-    const float minimumAltitude = std::max(m_radius + 2.0f, 5.0f);
-
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
-
-    if (m_movementTime >= m_movementPeriod)
-    {
-        m_movementTime = 0.0f;
-
-        glm::vec3 newDirection(dis(gen), dis(gen) * 0.5f, dis(gen));
-        m_movementDirection = normalizeOrFallback(newDirection, glm::vec3(1.0f, 0.1f, 0.0f));
-    }
-
-    m_patternPosition += m_movementDirection * m_movementSpeed * deltaTime;
-
-    for (int i = 0; i < 3; ++i)
-    {
-        if (m_patternPosition[i] > m_movementCenter[i] + m_movementAmplitude)
-        {
-            m_patternPosition[i] = m_movementCenter[i] + m_movementAmplitude;
-            m_movementDirection[i] = -std::abs(m_movementDirection[i]);
-        }
-        else
-        {
-            float lowerBound = m_movementCenter[i] - m_movementAmplitude;
-            if (i == 1)
-            {
-                lowerBound = std::max(lowerBound, minimumAltitude);
-            }
-
-            if (m_patternPosition[i] < lowerBound)
-            {
-                m_patternPosition[i] = lowerBound;
-                m_movementDirection[i] = std::abs(m_movementDirection[i]);
-            }
-        }
-    }
+    return glm::clamp(desiredAltitude, minAltitude, maxAltitude);
 }
 
 void Target::enforceAirspaceConstraint()
 {
-    const float minimumAltitude = std::max(m_radius + 2.0f, 5.0f);
+    const float minimumAltitude = std::max(m_radius + 2.0f, kMinimumAltitudeMeters);
+    const float maximumAltitude = std::max(minimumAltitude + 120.0f, glm::clamp(m_aiConfig.preferredDistance * 0.4f, 220.0f, 800.0f));
 
     if (m_position.y < minimumAltitude)
     {
         m_position.y = minimumAltitude;
-        if (m_evasionOffset.y < 0.0f)
+        if (m_velocity.y < 0.0f)
         {
-            m_evasionOffset.y = 0.0f;
-        }
-        if (m_evasionVelocity.y < 0.0f)
-        {
-            m_evasionVelocity.y = 0.0f;
+            m_velocity.y = std::abs(m_velocity.y) * 0.35f;
         }
     }
-
-    if (m_initialPosition.y < minimumAltitude)
+    else if (m_position.y > maximumAltitude)
     {
-        m_initialPosition.y = minimumAltitude;
-    }
-
-    if (m_movementCenter.y < minimumAltitude)
-    {
-        m_movementCenter.y = minimumAltitude;
-    }
-
-    if (m_movementDirection.y < 0.0f && m_position.y <= minimumAltitude + 0.01f)
-    {
-        m_movementDirection.y = std::abs(m_movementDirection.y);
-        m_movementDirection = normalizeOrFallback(m_movementDirection, glm::vec3(1.0f, 0.1f, 0.0f));
-    }
-}
-
-void Target::applyEvasiveOffset(float deltaTime, const glm::vec3 &baseVelocity)
-{
-    if (!m_evasiveConfig.enabled || m_evasiveConfig.maxOffset <= 0.0f)
-    {
-        m_evasionVelocity *= std::max(0.0f, 1.0f - (m_evasiveConfig.recoveryRate * deltaTime));
-        m_evasionOffset += m_evasionVelocity * deltaTime;
-        return;
-    }
-
-    if (m_missileWarningActive && m_threatAssessment.active)
-    {
-        m_evasionPhase += deltaTime;
-        if (m_evasionPhase >= m_evasiveConfig.weavePeriod)
+        m_position.y = maximumAltitude;
+        if (m_velocity.y > 0.0f)
         {
-            m_evasionPhase = std::fmod(m_evasionPhase, m_evasiveConfig.weavePeriod);
+            m_velocity.y = -m_velocity.y * 0.25f;
         }
-
-        const float weaveSign = (m_evasionPhase < (m_evasiveConfig.weavePeriod * 0.5f)) ? 1.0f : -1.0f;
-        const glm::vec3 baseDirection = normalizeOrFallback(baseVelocity, m_movementDirection);
-        const glm::vec3 toMissile = normalizeOrFallback(m_threatAssessment.missilePosition - m_position, -baseDirection);
-        glm::vec3 lateralDirection = glm::cross(toMissile, glm::vec3(0.0f, 1.0f, 0.0f));
-        lateralDirection = normalizeOrFallback(lateralDirection, perpendicularTo(toMissile));
-        const float verticalSign = (m_position.y <= m_movementCenter.y) ? 1.0f : (toMissile.y > 0.0f ? -1.0f : 1.0f);
-        const glm::vec3 desiredDirection = normalizeOrFallback(
-            (lateralDirection * weaveSign) +
-                (glm::vec3(0.0f, 1.0f, 0.0f) * m_evasiveConfig.verticalBias * verticalSign) +
-                (baseDirection * 0.35f),
-            lateralDirection);
-
-        m_evasionVelocity += desiredDirection * m_evasiveConfig.lateralAcceleration * deltaTime;
-        const float baseSpeed = std::max(glm::length(baseVelocity), std::max(m_movementSpeed, 10.0f));
-        const float maxOffsetSpeed = std::max(baseSpeed * std::max(m_evasiveConfig.speedMultiplier, 0.5f) * 0.65f, 18.0f);
-        m_evasionVelocity = clampMagnitude(m_evasionVelocity, maxOffsetSpeed);
-    }
-    else
-    {
-        const float recoveryBlend = glm::clamp(deltaTime * m_evasiveConfig.recoveryRate, 0.0f, 1.0f);
-        const glm::vec3 recoveryVelocity = -m_evasionOffset * m_evasiveConfig.recoveryRate;
-        m_evasionVelocity = glm::mix(m_evasionVelocity, recoveryVelocity, recoveryBlend);
     }
 
-    m_evasionOffset += m_evasionVelocity * deltaTime;
-
-    const float offsetMagnitude = glm::length(m_evasionOffset);
-    if (offsetMagnitude > m_evasiveConfig.maxOffset)
+    if (m_homeAnchor.y < minimumAltitude)
     {
-        const glm::vec3 offsetDirection = m_evasionOffset / offsetMagnitude;
-        m_evasionOffset = offsetDirection * m_evasiveConfig.maxOffset;
-        const float outwardVelocity = glm::dot(m_evasionVelocity, offsetDirection);
-        if (outwardVelocity > 0.0f)
-        {
-            m_evasionVelocity -= offsetDirection * outwardVelocity;
-        }
+        m_homeAnchor.y = minimumAltitude;
     }
 }
 
@@ -524,7 +492,7 @@ void Target::updateCountermeasures(float deltaTime, const glm::vec3 &currentVelo
 
     while (m_pendingBurstShots > 0 && m_burstShotTimer <= 0.0f && m_remainingFlares > 0)
     {
-        const glm::vec3 velocityDirection = normalizeOrFallback(currentVelocity, m_movementDirection);
+        const glm::vec3 velocityDirection = normalizeOrFallback(currentVelocity, glm::vec3(1.0f, 0.0f, 0.0f));
         const glm::vec3 aftDirection = -velocityDirection;
         const glm::vec3 lateralDirection = perpendicularTo(velocityDirection) * static_cast<float>(m_flareSpreadSign);
 
@@ -560,7 +528,4 @@ void Target::resetCountermeasureState()
     m_burstShotTimer = 0.0f;
     m_pendingBurstShots = 0;
     m_flareSpreadSign = 1;
-    m_evasionPhase = 0.0f;
-    m_evasionOffset = glm::vec3(0.0f);
-    m_evasionVelocity = glm::vec3(0.0f);
 }

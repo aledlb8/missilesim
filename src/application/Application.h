@@ -144,20 +144,8 @@ private:
     float m_missileFuelConsumptionRate = 0.5f;  // Fuel consumption in kg/second
     
     // Target properties
-    float m_targetSpawnDistance = 1500.0f;  // Distance from origin to spawn targets
     int m_targetCount = 1;                // Number of targets to create
-    
-    // Target movement properties
-    bool m_targetsMove = true;                               // Whether targets should move
-    bool m_randomizeTargetMovement = true;                   // Whether to randomize movement patterns
-    TargetMovementPattern m_targetMovementPattern = TargetMovementPattern::CIRCULAR; // Default movement pattern
-    float m_targetMovementSpeed = 10.0f;                     // Movement speed in m/s
-    float m_targetMovementAmplitude = 250.0f;                // Movement amplitude/range in m
-    float m_targetMovementPeriod = 10.0f;                    // Time to complete one movement cycle in s
-    float m_targetHeatSignature = 1.0f;
-    MAWSConfig m_targetMAWSConfig;
-    FlareDispenserConfig m_targetFlareConfig;
-    EvasiveManeuverConfig m_targetEvasiveConfig;
+    TargetAIConfig m_targetAIConfig;
     
     // Score tracking
     int m_score = 0;                      // Player's score

@@ -217,38 +217,12 @@ bool Application::loadSettings()
     m_missileFuel = std::max(readFloat("missile_fuel", m_missileFuel), 0.0f);
     m_missileFuelConsumptionRate = std::max(readFloat("missile_fuel_consumption_rate", m_missileFuelConsumptionRate), 0.0f);
 
-    m_targetSpawnDistance = std::max(readFloat("target_spawn_distance", m_targetSpawnDistance), 1.0f);
     m_targetCount = std::clamp(readInt("target_count", m_targetCount), 1, 20);
-    m_targetsMove = readBool("targets_move", m_targetsMove);
-    m_randomizeTargetMovement = readBool("randomize_target_movement", m_randomizeTargetMovement);
-    m_targetMovementPattern = static_cast<TargetMovementPattern>(std::clamp(readInt("target_movement_pattern", static_cast<int>(m_targetMovementPattern)), 0, 4));
-    m_targetMovementSpeed = std::max(readFloat("target_movement_speed", m_targetMovementSpeed), 0.0f);
-    m_targetMovementAmplitude = std::max(readFloat("target_movement_amplitude", m_targetMovementAmplitude), 0.0f);
-    m_targetMovementPeriod = std::max(readFloat("target_movement_period", m_targetMovementPeriod), 0.1f);
-    m_targetHeatSignature = std::max(readFloat("target_heat_signature", m_targetHeatSignature), 0.0f);
-    m_targetMAWSConfig.enabled = readBool("target_maws_enabled", m_targetMAWSConfig.enabled);
-    m_targetMAWSConfig.detectionRange = std::max(readFloat("target_maws_range", m_targetMAWSConfig.detectionRange), 0.0f);
-    m_targetMAWSConfig.reactionTimeWindow = std::max(readFloat("target_maws_reaction_time", m_targetMAWSConfig.reactionTimeWindow), 0.1f);
-    m_targetMAWSConfig.closestApproachThreshold = std::max(readFloat("target_maws_closest_approach", m_targetMAWSConfig.closestApproachThreshold), 1.0f);
-    m_targetFlareConfig.enabled = readBool("target_flare_enabled", m_targetFlareConfig.enabled);
-    m_targetFlareConfig.inventory = std::max(readInt("target_flare_inventory", m_targetFlareConfig.inventory), 0);
-    m_targetFlareConfig.burstSize = std::max(readInt("target_flare_burst_size", m_targetFlareConfig.burstSize), 1);
-    m_targetFlareConfig.burstInterval = std::max(readFloat("target_flare_burst_interval", m_targetFlareConfig.burstInterval), 0.01f);
-    m_targetFlareConfig.cooldown = std::max(readFloat("target_flare_cooldown", m_targetFlareConfig.cooldown), 0.0f);
-    m_targetFlareConfig.ejectSpeed = std::max(readFloat("target_flare_eject_speed", m_targetFlareConfig.ejectSpeed), 0.0f);
-    m_targetFlareConfig.lifetime = std::max(readFloat("target_flare_lifetime", m_targetFlareConfig.lifetime), 0.1f);
-    m_targetFlareConfig.heatSignature = std::max(readFloat("target_flare_heat_signature", m_targetFlareConfig.heatSignature), 0.0f);
-    m_targetFlareConfig.heatDecayRate = std::max(readFloat("target_flare_heat_decay", m_targetFlareConfig.heatDecayRate), 0.0f);
-    m_targetFlareConfig.mass = std::max(readFloat("target_flare_mass", m_targetFlareConfig.mass), 0.05f);
-    m_targetFlareConfig.dragCoefficient = std::max(readFloat("target_flare_drag_coefficient", m_targetFlareConfig.dragCoefficient), 0.0f);
-    m_targetFlareConfig.crossSectionalArea = std::max(readFloat("target_flare_area", m_targetFlareConfig.crossSectionalArea), 0.0001f);
-    m_targetEvasiveConfig.enabled = readBool("target_evasive_enabled", m_targetEvasiveConfig.enabled);
-    m_targetEvasiveConfig.lateralAcceleration = std::max(readFloat("target_evasive_lateral_acceleration", m_targetEvasiveConfig.lateralAcceleration), 0.0f);
-    m_targetEvasiveConfig.verticalBias = glm::clamp(readFloat("target_evasive_vertical_bias", m_targetEvasiveConfig.verticalBias), -1.0f, 1.0f);
-    m_targetEvasiveConfig.maxOffset = std::max(readFloat("target_evasive_max_offset", m_targetEvasiveConfig.maxOffset), 0.0f);
-    m_targetEvasiveConfig.weavePeriod = std::max(readFloat("target_evasive_weave_period", m_targetEvasiveConfig.weavePeriod), 0.2f);
-    m_targetEvasiveConfig.recoveryRate = std::max(readFloat("target_evasive_recovery_rate", m_targetEvasiveConfig.recoveryRate), 0.1f);
-    m_targetEvasiveConfig.speedMultiplier = std::max(readFloat("target_evasive_speed_multiplier", m_targetEvasiveConfig.speedMultiplier), 0.5f);
+    m_targetAIConfig.preferredDistance = std::max(readFloat("target_average_distance",
+                                                            readFloat("target_spawn_distance", m_targetAIConfig.preferredDistance)),
+                                                  250.0f);
+    m_targetAIConfig.minSpeed = std::max(readFloat("target_min_speed", m_targetAIConfig.minSpeed), 40.0f);
+    m_targetAIConfig.maxSpeed = std::max(readFloat("target_max_speed", m_targetAIConfig.maxSpeed), m_targetAIConfig.minSpeed + 10.0f);
 
     m_savedGravity = std::max(readFloat("gravity", m_savedGravity), 0.0f);
     m_savedAirDensity = std::max(readFloat("air_density", m_savedAirDensity), 0.0f);
@@ -313,38 +287,10 @@ std::string Application::buildSettingsSnapshot() const
     output << "missile_thrust=" << m_missileThrust << "\n";
     output << "missile_fuel=" << m_missileFuel << "\n";
     output << "missile_fuel_consumption_rate=" << m_missileFuelConsumptionRate << "\n";
-    output << "target_spawn_distance=" << m_targetSpawnDistance << "\n";
     output << "target_count=" << m_targetCount << "\n";
-    output << "targets_move=" << formatBoolValue(m_targetsMove) << "\n";
-    output << "randomize_target_movement=" << formatBoolValue(m_randomizeTargetMovement) << "\n";
-    output << "target_movement_pattern=" << static_cast<int>(m_targetMovementPattern) << "\n";
-    output << "target_movement_speed=" << m_targetMovementSpeed << "\n";
-    output << "target_movement_amplitude=" << m_targetMovementAmplitude << "\n";
-    output << "target_movement_period=" << m_targetMovementPeriod << "\n";
-    output << "target_heat_signature=" << m_targetHeatSignature << "\n";
-    output << "target_maws_enabled=" << formatBoolValue(m_targetMAWSConfig.enabled) << "\n";
-    output << "target_maws_range=" << m_targetMAWSConfig.detectionRange << "\n";
-    output << "target_maws_reaction_time=" << m_targetMAWSConfig.reactionTimeWindow << "\n";
-    output << "target_maws_closest_approach=" << m_targetMAWSConfig.closestApproachThreshold << "\n";
-    output << "target_flare_enabled=" << formatBoolValue(m_targetFlareConfig.enabled) << "\n";
-    output << "target_flare_inventory=" << m_targetFlareConfig.inventory << "\n";
-    output << "target_flare_burst_size=" << m_targetFlareConfig.burstSize << "\n";
-    output << "target_flare_burst_interval=" << m_targetFlareConfig.burstInterval << "\n";
-    output << "target_flare_cooldown=" << m_targetFlareConfig.cooldown << "\n";
-    output << "target_flare_eject_speed=" << m_targetFlareConfig.ejectSpeed << "\n";
-    output << "target_flare_lifetime=" << m_targetFlareConfig.lifetime << "\n";
-    output << "target_flare_heat_signature=" << m_targetFlareConfig.heatSignature << "\n";
-    output << "target_flare_heat_decay=" << m_targetFlareConfig.heatDecayRate << "\n";
-    output << "target_flare_mass=" << m_targetFlareConfig.mass << "\n";
-    output << "target_flare_drag_coefficient=" << m_targetFlareConfig.dragCoefficient << "\n";
-    output << "target_flare_area=" << m_targetFlareConfig.crossSectionalArea << "\n";
-    output << "target_evasive_enabled=" << formatBoolValue(m_targetEvasiveConfig.enabled) << "\n";
-    output << "target_evasive_lateral_acceleration=" << m_targetEvasiveConfig.lateralAcceleration << "\n";
-    output << "target_evasive_vertical_bias=" << m_targetEvasiveConfig.verticalBias << "\n";
-    output << "target_evasive_max_offset=" << m_targetEvasiveConfig.maxOffset << "\n";
-    output << "target_evasive_weave_period=" << m_targetEvasiveConfig.weavePeriod << "\n";
-    output << "target_evasive_recovery_rate=" << m_targetEvasiveConfig.recoveryRate << "\n";
-    output << "target_evasive_speed_multiplier=" << m_targetEvasiveConfig.speedMultiplier << "\n";
+    output << "target_average_distance=" << m_targetAIConfig.preferredDistance << "\n";
+    output << "target_min_speed=" << m_targetAIConfig.minSpeed << "\n";
+    output << "target_max_speed=" << m_targetAIConfig.maxSpeed << "\n";
     output << "camera_fov=" << cameraFOV << "\n";
     output << "camera_speed=" << cameraSpeed << "\n";
 
@@ -536,8 +482,8 @@ void Application::initialize()
         // Create targets first, before setting up missile guidance
         resetTargets();
 
-        // Run a small physics update to make sure targets start moving immediately
-        if (m_physicsEngine && !m_targets.empty() && m_targetsMove)
+        // Run a small update so the autonomous target controller starts from a live state.
+        if (m_physicsEngine && !m_targets.empty())
         {
             // Update targets to initialize movement patterns
             for (auto &target : m_targets)
@@ -1399,7 +1345,7 @@ void Application::renderMinimalHUD()
 
 float Application::computeEngagementRadius() const
 {
-    float engagementRadius = std::max(400.0f, m_targetSpawnDistance + (m_targetsMove ? m_targetMovementAmplitude * 1.5f : 0.0f));
+    float engagementRadius = std::max(400.0f, m_targetAIConfig.preferredDistance * 1.6f);
 
     if (m_missile)
     {
@@ -1427,7 +1373,7 @@ void Application::updateEnvironmentScale()
     }
 
     const float engagementRadius = computeEngagementRadius();
-    float maxAltitude = std::max(320.0f, m_targetMovementAmplitude * 0.35f);
+    float maxAltitude = std::max(320.0f, glm::clamp(m_targetAIConfig.preferredDistance * 0.22f, 180.0f, 900.0f));
 
     if (m_missile)
     {
@@ -1441,7 +1387,7 @@ void Application::updateEnvironmentScale()
             continue;
         }
 
-        maxAltitude = std::max(maxAltitude, target->getPosition().y + std::max(120.0f, m_targetMovementAmplitude * 0.25f));
+        maxAltitude = std::max(maxAltitude, target->getPosition().y + std::max(120.0f, m_targetAIConfig.preferredDistance * 0.18f));
     }
 
     const float airspaceHalfExtent = std::max(600.0f, engagementRadius * 1.35f);
@@ -1559,8 +1505,9 @@ void Application::renderPredictedTrajectory()
         Drag drag(&atmosphere);
         Lift lift(&atmosphere);
 
-        // Simulate a moving target for the prediction
+        // Simulate the autonomous target against the simulated missile.
         Target simTarget = *target;
+        std::vector<Missile *> simulatedMissiles = {&simMissile};
 
         for (int i = 1; i < m_trajectoryPoints; ++i)
         {
@@ -1568,26 +1515,15 @@ void Application::renderPredictedTrajectory()
             simMissile.applyForce(glm::vec3(0.0f, -gravityMagnitude * simMissile.getMass(), 0.0f));
             drag.applyTo(&simMissile);
             lift.applyTo(&simMissile);
+            simTarget.updateThreatAssessment(simulatedMissiles);
+            simTarget.update(dt);
 
-            // Always update simTarget for every step
-            if (target->getMovementPattern() != TargetMovementPattern::STATIONARY)
+            if (m_showPredictedTargetPath && i % 5 == 0)
             {
-                simTarget.update(dt);
-
-                if (m_showPredictedTargetPath && i % 5 == 0)
-                {
-                    m_renderer->renderPoint(simTarget.getPosition(), glm::vec3(0.0f, 1.0f, 0.0f), 3.0f);
-                }
-
-                // Set the simulated missile's target to the simulated target's *current* position
-                simMissile.setTargetObject(&simTarget);
-            }
-            else
-            {
-                simMissile.setTargetObject(target);
+                m_renderer->renderPoint(simTarget.getPosition(), glm::vec3(0.0f, 1.0f, 0.0f), 3.0f);
             }
 
-            // Apply guidance (will use the updated simTarget position)
+            simMissile.setTargetObject(&simTarget);
             if (simMissile.isGuidanceEnabled() && simMissile.hasTarget())
             {
                 simMissile.applyGuidance(dt);
@@ -1908,20 +1844,18 @@ void Application::setupUI()
             ImGui::PopID();
         };
 
-        auto movementPatternName = [](TargetMovementPattern pattern) -> const char *
+        auto aiStateName = [](TargetAIState state) -> const char *
         {
-            switch (pattern)
+            switch (state)
             {
-            case TargetMovementPattern::STATIONARY:
-                return "Stationary";
-            case TargetMovementPattern::LINEAR:
-                return "Linear";
-            case TargetMovementPattern::CIRCULAR:
-                return "Circular";
-            case TargetMovementPattern::SINUSOIDAL:
-                return "Sinusoidal";
-            case TargetMovementPattern::RANDOM:
-                return "Random";
+            case TargetAIState::PATROL:
+                return "Patrol";
+            case TargetAIState::REPOSITION:
+                return "Reposition";
+            case TargetAIState::DEFENSIVE:
+                return "Defensive";
+            case TargetAIState::RECOVERING:
+                return "Recover";
             default:
                 return "Unknown";
             }
@@ -1957,7 +1891,7 @@ void Application::setupUI()
             }
         };
 
-        auto applyLiveTargetDefenseConfig = [&]()
+        auto applyLiveTargetAIConfig = [&]()
         {
             for (const auto &target : m_targets)
             {
@@ -1966,10 +1900,7 @@ void Application::setupUI()
                     continue;
                 }
 
-                target->setHeatSignature(m_targetHeatSignature);
-                target->setMAWSConfig(m_targetMAWSConfig);
-                target->setFlareDispenserConfig(m_targetFlareConfig);
-                target->setEvasiveManeuverConfig(m_targetEvasiveConfig);
+                target->setAIConfig(m_targetAIConfig);
             }
         };
 
@@ -2298,123 +2229,36 @@ void Application::setupUI()
 
             if (ImGui::BeginTabItem("Targets"))
             {
-                beginCard("TargetPopulationCard", 140.0f);
-                drawCardHeader("Target Group", "Population, spawn radius, and active roster status.");
+                beginCard("TargetAICard", 214.0f);
+                drawCardHeader("Target AI", "Autonomous aircraft manage speed, spacing, altitude, and countermeasures internally.");
                 char targetStatus[96];
                 std::snprintf(targetStatus, sizeof(targetStatus), "%d active of %zu total", activeTargets, m_targets.size());
                 ImGui::TextDisabled("%s", targetStatus);
 
-                ImGui::SliderInt("Target count", &m_targetCount, 1, 10);
+                ImGui::SliderInt("Target count", &m_targetCount, 1, 20);
                 if (ImGui::IsItemDeactivatedAfterEdit())
                 {
                     resetTargets();
                 }
 
-                ImGui::SliderFloat("Spawn distance", &m_targetSpawnDistance, 100.0f, 20000.0f, "%.0f m");
+                ImGui::SliderFloat("Average distance", &m_targetAIConfig.preferredDistance, 300.0f, 20000.0f, "%.0f m");
                 if (ImGui::IsItemDeactivatedAfterEdit())
                 {
                     resetTargets();
                 }
-                endCard();
-
-                beginCard("TargetMovementCard", 240.0f);
-                drawCardHeader("Movement Profile", "Choose how targets maneuver. Nonlinear patterns honor the speed limit and lengthen the cycle if needed.");
-                if (ImGui::Checkbox("Moving targets", &m_targetsMove) && !m_targetsMove)
+                ImGui::SliderFloat("Minimum speed", &m_targetAIConfig.minSpeed, 60.0f, 450.0f, "%.0f m/s");
+                m_targetAIConfig.maxSpeed = std::max(m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f);
+                ImGui::SliderFloat("Maximum speed", &m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f, 600.0f, "%.0f m/s");
+                pushButtonPalette(accentBlue, accentBlueHover, accentBlueActive);
+                if (ImGui::Button("Apply AI Profile", ImVec2(-1.0f, 34.0f)))
                 {
-                    for (const auto &target : m_targets)
-                    {
-                        if (target)
-                        {
-                            target->setMovementPattern(TargetMovementPattern::STATIONARY);
-                        }
-                    }
-                }
-
-                if (m_targetsMove)
-                {
-                    ImGui::Checkbox("Randomize patterns", &m_randomizeTargetMovement);
-                    if (!m_randomizeTargetMovement)
-                    {
-                        const char *patternItems[] = {"Stationary", "Linear", "Circular", "Sinusoidal", "Random"};
-                        int currentPattern = static_cast<int>(m_targetMovementPattern);
-                        if (ImGui::Combo("Movement pattern", &currentPattern, patternItems, IM_ARRAYSIZE(patternItems)))
-                        {
-                            m_targetMovementPattern = static_cast<TargetMovementPattern>(currentPattern);
-                        }
-                    }
-                    ImGui::SliderFloat("Movement speed", &m_targetMovementSpeed, 1.0f, 50.0f, "%.1f m/s");
-                    ImGui::SliderFloat("Movement range", &m_targetMovementAmplitude, 25.0f, 10000.0f, "%.1f m");
-                    ImGui::SliderFloat("Preferred cycle period", &m_targetMovementPeriod, 2.0f, 30.0f, "%.1f s");
-
-                    pushButtonPalette(accentBlue, accentBlueHover, accentBlueActive);
-                    if (ImGui::Button("Apply Movement Profile", ImVec2(-1.0f, 34.0f)))
-                    {
-                        for (const auto &target : m_targets)
-                        {
-                            if (!target)
-                            {
-                                continue;
-                            }
-
-                            if (m_targetsMove)
-                            {
-                                if (!m_randomizeTargetMovement)
-                                {
-                                    target->setMovementPattern(m_targetMovementPattern);
-                                }
-                                target->setMovementSpeed(m_targetMovementSpeed);
-                                target->setMovementAmplitude(m_targetMovementAmplitude);
-                                target->setMovementPeriod(m_targetMovementPeriod);
-                            }
-                            else
-                            {
-                                target->setMovementPattern(TargetMovementPattern::STATIONARY);
-                            }
-                        }
-                    }
-                    popButtonPalette();
-                }
-                else
-                {
-                    ImGui::TextDisabled("Movement is disabled. Targets will hold position.");
-                }
-                endCard();
-
-                beginCard("TargetDefenseCard", 362.0f);
-                drawCardHeader("Countermeasures", "MAWS cues flare bursts and evasive weaving so the target tries to drag the missile off onto hot decoys.");
-                ImGui::SliderFloat("Aircraft heat", &m_targetHeatSignature, 0.1f, 5.0f, "%.2f");
-                ImGui::Checkbox("MAWS enabled", &m_targetMAWSConfig.enabled);
-                ImGui::SliderFloat("MAWS range", &m_targetMAWSConfig.detectionRange, 250.0f, 8000.0f, "%.0f m");
-                ImGui::SliderFloat("MAWS reaction window", &m_targetMAWSConfig.reactionTimeWindow, 0.5f, 12.0f, "%.1f s");
-                ImGui::SliderFloat("Threat miss distance", &m_targetMAWSConfig.closestApproachThreshold, 10.0f, 400.0f, "%.1f m");
-                ImGui::Separator();
-                ImGui::Checkbox("Flare dispenser", &m_targetFlareConfig.enabled);
-                ImGui::SliderInt("Flare inventory", &m_targetFlareConfig.inventory, 0, 60);
-                ImGui::SliderInt("Flare burst size", &m_targetFlareConfig.burstSize, 1, 6);
-                ImGui::SliderFloat("Burst interval", &m_targetFlareConfig.burstInterval, 0.02f, 0.5f, "%.2f s");
-                ImGui::SliderFloat("Burst cooldown", &m_targetFlareConfig.cooldown, 0.1f, 4.0f, "%.2f s");
-                ImGui::SliderFloat("Flare eject speed", &m_targetFlareConfig.ejectSpeed, 0.0f, 120.0f, "%.1f m/s");
-                ImGui::SliderFloat("Flare lifetime", &m_targetFlareConfig.lifetime, 0.5f, 10.0f, "%.1f s");
-                ImGui::SliderFloat("Flare heat", &m_targetFlareConfig.heatSignature, 0.1f, 12.0f, "%.2f");
-                ImGui::SliderFloat("Flare heat decay", &m_targetFlareConfig.heatDecayRate, 0.1f, 4.0f, "%.2f");
-                ImGui::Separator();
-                ImGui::Checkbox("Evasive maneuvers", &m_targetEvasiveConfig.enabled);
-                ImGui::SliderFloat("Break-turn accel", &m_targetEvasiveConfig.lateralAcceleration, 0.0f, 80.0f, "%.1f m/s^2");
-                ImGui::SliderFloat("Vertical bias", &m_targetEvasiveConfig.verticalBias, -1.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Max evasive offset", &m_targetEvasiveConfig.maxOffset, 20.0f, 600.0f, "%.0f m");
-                ImGui::SliderFloat("Weave period", &m_targetEvasiveConfig.weavePeriod, 0.3f, 5.0f, "%.2f s");
-                ImGui::SliderFloat("Recovery rate", &m_targetEvasiveConfig.recoveryRate, 0.1f, 4.0f, "%.2f");
-                ImGui::SliderFloat("Speed multiplier", &m_targetEvasiveConfig.speedMultiplier, 0.5f, 1.6f, "%.2f");
-                pushButtonPalette(accentAmber, accentAmberHover, accentAmberActive);
-                if (ImGui::Button("Apply Defense Profile", ImVec2(-1.0f, 34.0f)))
-                {
-                    applyLiveTargetDefenseConfig();
+                    applyLiveTargetAIConfig();
                 }
                 popButtonPalette();
                 endCard();
 
                 beginCard("TargetRosterCard", 460.0f);
-                drawCardHeader("Live Roster", "Read-only status table for every spawned target and its countermeasure state.");
+                drawCardHeader("Live Roster", "Read-only status table for every spawned target and its autonomous behavior.");
                 if (m_targets.empty())
                 {
                     ImGui::TextDisabled("No targets are currently loaded.");
@@ -2423,8 +2267,8 @@ void Application::setupUI()
                 {
                     ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 42.0f);
                     ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-                    ImGui::TableSetupColumn("Pattern", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-                    ImGui::TableSetupColumn("Defense", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+                    ImGui::TableSetupColumn("AI", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableSetupColumn("Speed", ImGuiTableColumnFlags_WidthStretch, 0.9f);
                     ImGui::TableSetupColumn("Flares", ImGuiTableColumnFlags_WidthStretch, 0.8f);
                     ImGui::TableSetupColumn("Range", ImGuiTableColumnFlags_WidthStretch, 0.9f);
                     ImGui::TableSetupColumn("CPA", ImGuiTableColumnFlags_WidthStretch, 0.9f);
@@ -2447,13 +2291,13 @@ void Application::setupUI()
                         ImGui::TextColored(isActive ? accentGreen : textDim, "%s", isActive ? "Active" : "Destroyed");
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextUnformatted(movementPatternName(target->getMovementPattern()));
+                        ImGui::TextColored(target->isMissileWarningActive() ? accentAmber : textBright,
+                                           "%s", aiStateName(target->getAIState()));
 
                         ImGui::TableSetColumnIndex(3);
                         if (isActive)
                         {
-                            ImGui::TextColored(target->isMissileWarningActive() ? accentAmber : textDim,
-                                               "%s", target->isMissileWarningActive() ? "MAWS / Evade" : "Standby");
+                            ImGui::Text("%.0f m/s", target->getCommandedSpeed());
                         }
                         else
                         {
@@ -2721,43 +2565,7 @@ void Application::createTarget(const glm::vec3 &position, float radius)
 
         // Create target with validated parameters
         auto target = std::make_unique<Target>(validPosition, validRadius);
-        target->setHeatSignature(m_targetHeatSignature);
-        target->setMAWSConfig(m_targetMAWSConfig);
-        target->setFlareDispenserConfig(m_targetFlareConfig);
-        target->setEvasiveManeuverConfig(m_targetEvasiveConfig);
-
-        // Set target movement properties if enabled
-        if (m_targetsMove)
-        {
-            // Set movement pattern (either the specified one or random)
-            TargetMovementPattern pattern = m_targetMovementPattern;
-            if (m_randomizeTargetMovement)
-            {
-                std::uniform_int_distribution<int> patternDist(0, 4);
-                pattern = static_cast<TargetMovementPattern>(patternDist(m_rng));
-            }
-            target->setMovementPattern(pattern);
-
-            // Set movement speed
-            target->setMovementSpeed(m_targetMovementSpeed);
-
-            // Set movement amplitude
-            target->setMovementAmplitude(m_targetMovementAmplitude);
-
-            // Set movement center
-            target->setMovementCenter(validPosition);
-
-            // Set random movement direction
-            std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * glm::pi<float>());
-            glm::vec3 direction;
-            direction.x = std::cos(angleDist(m_rng));
-            direction.y = 0.1f; // Small vertical component
-            direction.z = std::sin(angleDist(m_rng));
-            target->setMovementDirection(glm::normalize(direction));
-
-            // Set movement period
-            target->setMovementPeriod(m_targetMovementPeriod);
-        }
+        target->setAIConfig(m_targetAIConfig);
 
         // Safety check before adding to physics engine
         if (target && m_physicsEngine)
@@ -2780,19 +2588,18 @@ void Application::createRandomTarget()
 {
     try
     {
-        // Create a random distribution for angles and height
-        std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * 3.14159f); // 0 to 2π
-        std::uniform_real_distribution<float> radiusDist(3.0f, 7.0f);           // 3 to 7 meters radius
-        std::uniform_int_distribution<int> movementPatternDist(0, 4);           // Random movement pattern
+        std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * glm::pi<float>());
+        std::uniform_real_distribution<float> radiusDist(3.0f, 7.0f);
+        std::uniform_real_distribution<float> distanceScale(0.82f, 1.18f);
 
-        // Validate targetSpawnDistance
-        if (m_targetSpawnDistance <= 0.0f || std::isnan(m_targetSpawnDistance) || std::isinf(m_targetSpawnDistance))
+        if (m_targetAIConfig.preferredDistance <= 0.0f || std::isnan(m_targetAIConfig.preferredDistance) || std::isinf(m_targetAIConfig.preferredDistance))
         {
-            m_targetSpawnDistance = 1500.0f; // Reset to default
+            m_targetAIConfig.preferredDistance = 1500.0f;
         }
 
-        const float minimumSpawnAltitude = std::max(50.0f, std::min(m_targetSpawnDistance * 0.05f, 600.0f));
-        const float maximumSpawnAltitude = std::max(minimumSpawnAltitude + 50.0f, std::min(m_targetSpawnDistance * 0.25f, 4000.0f));
+        const float spawnDistance = m_targetAIConfig.preferredDistance * distanceScale(m_rng);
+        const float minimumSpawnAltitude = std::max(80.0f, std::min(spawnDistance * 0.08f, 500.0f));
+        const float maximumSpawnAltitude = std::max(minimumSpawnAltitude + 60.0f, std::min(spawnDistance * 0.28f, 3200.0f));
         std::uniform_real_distribution<float> heightDist(minimumSpawnAltitude, maximumSpawnAltitude);
 
         // Generate random spherical coordinates
@@ -2801,8 +2608,8 @@ void Application::createRandomTarget()
         float radius = radiusDist(m_rng);
 
         // Convert to Cartesian coordinates
-        float x = m_targetSpawnDistance * cos(angle);
-        float z = m_targetSpawnDistance * sin(angle);
+        float x = spawnDistance * std::cos(angle);
+        float z = spawnDistance * std::sin(angle);
 
         // Validate generated coordinates
         if (std::isnan(x) || std::isinf(x))
@@ -2816,51 +2623,7 @@ void Application::createRandomTarget()
 
         // Create target at this position
         auto target = std::make_unique<Target>(glm::vec3(x, height, z), radius);
-        target->setHeatSignature(m_targetHeatSignature);
-        target->setMAWSConfig(m_targetMAWSConfig);
-        target->setFlareDispenserConfig(m_targetFlareConfig);
-        target->setEvasiveManeuverConfig(m_targetEvasiveConfig);
-
-        // Set target movement properties if enabled
-        if (m_targetsMove)
-        {
-            // Select a random movement pattern or use the specified one
-            TargetMovementPattern pattern;
-            if (m_randomizeTargetMovement)
-            {
-                int patternIndex = movementPatternDist(m_rng);
-                pattern = static_cast<TargetMovementPattern>(patternIndex);
-            }
-            else
-            {
-                pattern = m_targetMovementPattern;
-            }
-
-            // Set movement pattern
-            target->setMovementPattern(pattern);
-
-            // Set movement speed (slightly randomized)
-            std::uniform_real_distribution<float> speedVariation(0.8f, 1.2f);
-            target->setMovementSpeed(m_targetMovementSpeed * speedVariation(m_rng));
-
-            // Set movement amplitude
-            std::uniform_real_distribution<float> ampVariation(0.7f, 1.3f);
-            target->setMovementAmplitude(m_targetMovementAmplitude * ampVariation(m_rng));
-
-            // Set movement center to initial position
-            target->setMovementCenter(target->getPosition());
-
-            // Set random movement direction
-            glm::vec3 direction;
-            direction.x = angleDist(m_rng) - glm::pi<float>();
-            direction.y = (angleDist(m_rng) - glm::pi<float>()) * 0.3f; // Less vertical movement
-            direction.z = angleDist(m_rng) - glm::pi<float>();
-            target->setMovementDirection(glm::normalize(direction));
-
-            // Set movement period
-            std::uniform_real_distribution<float> periodDist(m_targetMovementPeriod * 0.7f, m_targetMovementPeriod * 1.3f);
-            target->setMovementPeriod(periodDist(m_rng));
-        }
+        target->setAIConfig(m_targetAIConfig);
 
         // Safety check before adding to physics engine
         if (target && m_physicsEngine)
@@ -2885,8 +2648,8 @@ void Application::resetTargets()
     {
         // Validate target count
         if (m_targetCount <= 0 || m_targetCount > 20)
-        {                      // Set reasonable limits
-            m_targetCount = 3; // Default to a sensible number
+        {
+            m_targetCount = 1;
         }
 
         // First remove all targets from physics engine
@@ -2920,9 +2683,7 @@ void Application::resetTargets()
             createTarget(glm::vec3(100.0f, 100.0f, 100.0f), 5.0f);
         }
 
-        // Give each target an initial update to make sure they start moving right away
-        // This ensures movement begins immediately without waiting for the next physics tick
-        if (m_physicsEngine && m_targetsMove)
+        if (m_physicsEngine)
         {
             for (auto &target : m_targets)
             {
