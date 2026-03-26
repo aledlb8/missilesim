@@ -3,6 +3,7 @@
 #include "../objects/Missile.h"
 #include "../objects/Target.h"
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/constants.hpp>
@@ -64,6 +65,7 @@ const char *lineVertexShaderSource = R"(
     #version 330 core
     layout (location = 0) in vec3 aPos;
     layout (location = 1) in vec3 aColor;
+    layout (location = 2) in float aSize;
     
     uniform mat4 view;
     uniform mat4 projection;
@@ -72,6 +74,7 @@ const char *lineVertexShaderSource = R"(
     
     void main() {
         gl_Position = projection * view * vec4(aPos, 1.0);
+        gl_PointSize = aSize;
         Color = aColor;
     }
 )";
@@ -88,6 +91,7 @@ const char *lineFragmentShaderSource = R"(
 
 Renderer::Renderer()
     : m_vao(0), m_vbo(0), m_ebo(0), m_shaderProgram(0),
+      m_lineVAO(0), m_lineVBO(0), m_lineShaderProgram(0),
       m_floorVAO(0), m_floorVBO(0), m_floorEBO(0),
       m_targetVAO(0), m_targetVBO(0), m_targetEBO(0),
       m_explosionVAO(0), m_explosionVBO(0), m_explosionEBO(0),
@@ -283,6 +287,7 @@ void Renderer::initialize()
 
     // Enable depth testing
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_PROGRAM_POINT_SIZE);
 }
 
 void Renderer::createShaders()
@@ -782,6 +787,9 @@ void Renderer::createLineRendering()
     glDeleteShader(lineVertexShader);
     glDeleteShader(lineFragmentShader);
 
+    m_lineViewLoc = glGetUniformLocation(m_lineShaderProgram, "view");
+    m_lineProjLoc = glGetUniformLocation(m_lineShaderProgram, "projection");
+
     // Create VAO and VBO for lines
     glGenVertexArrays(1, &m_lineVAO);
     glGenBuffers(1, &m_lineVBO);
@@ -790,65 +798,36 @@ void Renderer::createLineRendering()
     glBindVertexArray(m_lineVAO);
     glBindBuffer(GL_ARRAY_BUFFER, m_lineVBO);
 
-    // Allocate buffer space for lines (we'll update it later)
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 2, nullptr, GL_DYNAMIC_DRAW);
+    m_lineBufferCapacity = 256;
+    glBufferData(GL_ARRAY_BUFFER, m_lineBufferCapacity * sizeof(DebugVertex), nullptr, GL_DYNAMIC_DRAW);
 
     // Position attribute
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(DebugVertex), (void *)offsetof(DebugVertex, position));
     glEnableVertexAttribArray(0);
 
     // Color attribute
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(DebugVertex), (void *)offsetof(DebugVertex, color));
     glEnableVertexAttribArray(1);
 
+    // Point size attribute
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(DebugVertex), (void *)offsetof(DebugVertex, size));
+    glEnableVertexAttribArray(2);
+
     glBindVertexArray(0);
+    m_debugLineVertices.reserve(512);
+    m_debugPointVertices.reserve(128);
 }
 
 void Renderer::renderLine(const glm::vec3 &start, const glm::vec3 &end, const glm::vec3 &color)
 {
-    try
+    if (!std::isfinite(start.x) || !std::isfinite(start.y) || !std::isfinite(start.z) ||
+        !std::isfinite(end.x) || !std::isfinite(end.y) || !std::isfinite(end.z))
     {
-        // Line vertex data: position (xyz) and color (rgb)
-        float lineVertices[12] = {
-            start.x, start.y, start.z, color.r, color.g, color.b,
-            end.x, end.y, end.z, color.r, color.g, color.b};
-
-        // Use line shader program
-        glUseProgram(m_lineShaderProgram);
-
-        glm::mat4 view = buildViewMatrix();
-        glm::mat4 projection = buildProjectionMatrix();
-
-        // Set uniform values
-        GLuint viewLoc = glGetUniformLocation(m_lineShaderProgram, "view");
-        GLuint projLoc = glGetUniformLocation(m_lineShaderProgram, "projection");
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-
-        // Bind VAO and update VBO with line vertices
-        glBindVertexArray(m_lineVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, m_lineVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(lineVertices), lineVertices);
-
-        // Set line width (may be limited by hardware)
-        glLineWidth(2.0f);
-
-        // Draw the line
-        glDrawArrays(GL_LINES, 0, 2);
-
-        // Reset state
-        glLineWidth(1.0f);
-        glBindVertexArray(0);
-        glUseProgram(0);
+        return;
     }
-    catch (const std::exception &e)
-    {
-        std::cerr << "Error rendering line: " << e.what() << std::endl;
-    }
-    catch (...)
-    {
-        std::cerr << "Unknown error rendering line" << std::endl;
-    }
+
+    m_debugLineVertices.push_back({start, color, 1.0f});
+    m_debugLineVertices.push_back({end, color, 1.0f});
 }
 
 void Renderer::renderText(const glm::vec3 &position, const std::string &text, const glm::vec3 &color)
@@ -1442,43 +1421,92 @@ void Renderer::renderExplosion(const glm::vec3 &position, float size)
 
 void Renderer::renderPoint(const glm::vec3 &position, const glm::vec3 &color, float size)
 {
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+        !std::isfinite(size) || size <= 0.0f)
+    {
+        return;
+    }
+
+    m_debugPointVertices.push_back({position, color, size});
+}
+
+void Renderer::ensureDebugBufferCapacity(std::size_t vertexCount)
+{
+    if (vertexCount <= m_lineBufferCapacity)
+    {
+        return;
+    }
+
+    std::size_t newCapacity = std::max<std::size_t>(m_lineBufferCapacity, 256);
+    while (newCapacity < vertexCount)
+    {
+        newCapacity *= 2;
+    }
+
+    m_lineBufferCapacity = newCapacity;
+    glBindBuffer(GL_ARRAY_BUFFER, m_lineVBO);
+    glBufferData(GL_ARRAY_BUFFER, m_lineBufferCapacity * sizeof(DebugVertex), nullptr, GL_DYNAMIC_DRAW);
+}
+
+void Renderer::flushDebugPrimitives()
+{
+    if (m_lineShaderProgram == 0 || (m_debugLineVertices.empty() && m_debugPointVertices.empty()))
+    {
+        clearDebugPrimitives();
+        return;
+    }
+
     try
     {
-        // Point vertex data: position (xyz) and color (rgb)
-        float pointVertex[6] = {
-            position.x, position.y, position.z, color.r, color.g, color.b
-        };
+        const glm::mat4 view = buildViewMatrix();
+        const glm::mat4 projection = buildProjectionMatrix();
 
-        // Use line shader program (works for points too)
         glUseProgram(m_lineShaderProgram);
+        if (m_lineViewLoc != -1)
+        {
+            glUniformMatrix4fv(m_lineViewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        }
+        if (m_lineProjLoc != -1)
+        {
+            glUniformMatrix4fv(m_lineProjLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        }
 
-        glm::mat4 view = buildViewMatrix();
-        glm::mat4 projection = buildProjectionMatrix();
-
-        // Set uniform values
-        GLuint viewLoc = glGetUniformLocation(m_lineShaderProgram, "view");
-        GLuint projLoc = glGetUniformLocation(m_lineShaderProgram, "projection");
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-
-        // Bind VAO and update VBO with point vertex
         glBindVertexArray(m_lineVAO);
         glBindBuffer(GL_ARRAY_BUFFER, m_lineVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(pointVertex), pointVertex);
 
-        // Set point size (may be limited by hardware)
-        glPointSize(size);
+        if (!m_debugLineVertices.empty())
+        {
+            ensureDebugBufferCapacity(m_debugLineVertices.size());
+            glBufferSubData(GL_ARRAY_BUFFER, 0,
+                            m_debugLineVertices.size() * sizeof(DebugVertex),
+                            m_debugLineVertices.data());
+            glLineWidth(2.0f);
+            glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(m_debugLineVertices.size()));
+            glLineWidth(1.0f);
+        }
 
-        // Draw the point
-        glDrawArrays(GL_POINTS, 0, 1);
+        if (!m_debugPointVertices.empty())
+        {
+            ensureDebugBufferCapacity(m_debugPointVertices.size());
+            glBufferSubData(GL_ARRAY_BUFFER, 0,
+                            m_debugPointVertices.size() * sizeof(DebugVertex),
+                            m_debugPointVertices.data());
+            glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(m_debugPointVertices.size()));
+        }
 
-        // Reset state
-        glPointSize(1.0f);
         glBindVertexArray(0);
         glUseProgram(0);
     }
-    catch (const std::exception &e)
+    catch (...)
     {
-        std::cerr << "Error rendering point: " << e.what() << std::endl;
+        std::cerr << "Error flushing debug primitives" << std::endl;
     }
+
+    clearDebugPrimitives();
+}
+
+void Renderer::clearDebugPrimitives()
+{
+    m_debugLineVertices.clear();
+    m_debugPointVertices.clear();
 }

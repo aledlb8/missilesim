@@ -1084,6 +1084,7 @@ void Application::render()
             return;
         }
 
+        m_renderer->clearDebugPrimitives();
         updateEnvironmentScale();
         m_renderer->renderEnvironment();
 
@@ -1131,6 +1132,7 @@ void Application::render()
 
         // Collect target positions for UI display
         std::vector<WorldLabel> targetLabels;
+        targetLabels.reserve(m_targets.size());
 
         // Render targets
         for (const auto &target : m_targets)
@@ -1193,6 +1195,7 @@ void Application::render()
             m_renderer->renderPoint(flare->getPosition(), flareColor, flareSize);
         }
 
+        m_renderer->flushDebugPrimitives();
         renderExplosions();
 
         // Setup ImGui frame - wrap in try-catch for safety
@@ -1432,6 +1435,198 @@ void Application::frameEngagementCamera()
     m_renderer->setCameraTarget(lookTarget);
 }
 
+Application::TrajectoryPreviewConfig Application::captureTrajectoryPreviewConfig() const
+{
+    TrajectoryPreviewConfig config;
+    if (!m_missile)
+    {
+        return config;
+    }
+
+    config.thrustDirection = m_missile->getThrustDirection();
+    config.dryMass = m_missile->getDryMass();
+    config.dragCoefficient = m_missile->getDragCoefficient();
+    config.crossSectionalArea = m_missile->getCrossSectionalArea();
+    config.liftCoefficient = m_missile->getLiftCoefficient();
+    config.guidanceEnabled = m_missile->isGuidanceEnabled();
+    config.navigationGain = m_missile->getNavigationGain();
+    config.maxSteeringForce = m_missile->getMaxSteeringForce();
+    config.trackingAngle = m_missile->getTrackingAngle();
+    config.proximityFuseRadius = m_missile->getProximityFuseRadius();
+    config.countermeasureResistance = m_missile->getCountermeasureResistance();
+    config.terrainAvoidanceEnabled = m_missile->isTerrainAvoidanceEnabled();
+    config.terrainClearance = m_missile->getTerrainClearance();
+    config.terrainLookAheadTime = m_missile->getTerrainLookAheadTime();
+    config.thrust = m_missile->getThrust();
+    config.thrustEnabled = m_missile->isThrustEnabled();
+    config.fuel = m_missile->getFuel();
+    config.fuelConsumptionRate = m_missile->getFuelConsumptionRate();
+    config.trajectoryPoints = m_trajectoryPoints;
+    config.trajectoryTime = m_trajectoryTime;
+    config.gravityMagnitude = m_physicsEngine ? m_physicsEngine->getGravity() : 9.81f;
+    config.airDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity;
+    return config;
+}
+
+bool Application::shouldRefreshTrajectoryPreviewCache(Target *target, const TrajectoryPreviewConfig &config) const
+{
+    if (!m_missile || !target)
+    {
+        return false;
+    }
+
+    if (!m_trajectoryPreviewCache.valid ||
+        m_trajectoryPreviewCache.target != target ||
+        m_trajectoryPreviewCache.missilePoints.empty())
+    {
+        return true;
+    }
+
+    const TrajectoryPreviewConfig &cachedConfig = m_trajectoryPreviewCache.config;
+    const bool configChanged =
+        cachedConfig.thrustDirection.x != config.thrustDirection.x ||
+        cachedConfig.thrustDirection.y != config.thrustDirection.y ||
+        cachedConfig.thrustDirection.z != config.thrustDirection.z ||
+        cachedConfig.dryMass != config.dryMass ||
+        cachedConfig.dragCoefficient != config.dragCoefficient ||
+        cachedConfig.crossSectionalArea != config.crossSectionalArea ||
+        cachedConfig.liftCoefficient != config.liftCoefficient ||
+        cachedConfig.guidanceEnabled != config.guidanceEnabled ||
+        cachedConfig.navigationGain != config.navigationGain ||
+        cachedConfig.maxSteeringForce != config.maxSteeringForce ||
+        cachedConfig.trackingAngle != config.trackingAngle ||
+        cachedConfig.proximityFuseRadius != config.proximityFuseRadius ||
+        cachedConfig.countermeasureResistance != config.countermeasureResistance ||
+        cachedConfig.terrainAvoidanceEnabled != config.terrainAvoidanceEnabled ||
+        cachedConfig.terrainClearance != config.terrainClearance ||
+        cachedConfig.terrainLookAheadTime != config.terrainLookAheadTime ||
+        cachedConfig.thrust != config.thrust ||
+        cachedConfig.thrustEnabled != config.thrustEnabled ||
+        cachedConfig.fuel != config.fuel ||
+        cachedConfig.fuelConsumptionRate != config.fuelConsumptionRate ||
+        cachedConfig.trajectoryPoints != config.trajectoryPoints ||
+        cachedConfig.trajectoryTime != config.trajectoryTime ||
+        cachedConfig.gravityMagnitude != config.gravityMagnitude ||
+        cachedConfig.airDensity != config.airDensity;
+
+    if (configChanged)
+    {
+        return true;
+    }
+
+    const auto cacheAge = std::chrono::steady_clock::now() - m_trajectoryPreviewCache.lastRefresh;
+    if (cacheAge < m_trajectoryPreviewRefreshInterval)
+    {
+        return false;
+    }
+
+    const glm::vec3 missilePos = m_missile->getPosition();
+    const glm::vec3 missileVel = m_missile->getVelocity();
+    const glm::vec3 targetPos = target->getPosition();
+    const glm::vec3 targetVel = target->getVelocity();
+
+    const float positionThresholdSq = 4.0f;
+    const float velocityThresholdSq = 16.0f;
+    const bool missileMoved = glm::distance2(missilePos, m_trajectoryPreviewCache.lastMissilePosition) > positionThresholdSq ||
+                              glm::distance2(missileVel, m_trajectoryPreviewCache.lastMissileVelocity) > velocityThresholdSq;
+    const bool targetMoved = glm::distance2(targetPos, m_trajectoryPreviewCache.lastTargetPosition) > positionThresholdSq ||
+                             glm::distance2(targetVel, m_trajectoryPreviewCache.lastTargetVelocity) > velocityThresholdSq;
+
+    return missileMoved || targetMoved;
+}
+
+void Application::updateTrajectoryPreviewCache(Target *target, const TrajectoryPreviewConfig &config)
+{
+    invalidateTrajectoryPreviewCache();
+    if (!m_missile || !target || config.trajectoryPoints < 2 || config.trajectoryTime <= 0.0f)
+    {
+        return;
+    }
+
+    const glm::vec3 missilePos = m_missile->getPosition();
+    const glm::vec3 missileVel = m_missile->getVelocity();
+    const glm::vec3 targetPos = target->getPosition();
+    const glm::vec3 targetVel = target->getVelocity();
+
+    m_trajectoryPreviewCache.missilePoints.reserve(static_cast<std::size_t>(config.trajectoryPoints));
+    m_trajectoryPreviewCache.targetPoints.reserve(static_cast<std::size_t>(std::max(1, config.trajectoryPoints / 5)));
+    m_trajectoryPreviewCache.missilePoints.push_back(missilePos);
+    m_trajectoryPreviewCache.interceptPoint = predictInterceptPoint(missilePos, missileVel, targetPos, targetVel);
+
+    Missile simMissile(missilePos, missileVel, config.dryMass, config.dragCoefficient,
+                       config.crossSectionalArea, config.liftCoefficient);
+    simMissile.setGuidanceEnabled(config.guidanceEnabled);
+    simMissile.setNavigationGain(config.navigationGain);
+    simMissile.setMaxSteeringForce(config.maxSteeringForce);
+    simMissile.setTrackingAngle(config.trackingAngle);
+    simMissile.setProximityFuseRadius(config.proximityFuseRadius);
+    simMissile.setCountermeasureResistance(config.countermeasureResistance);
+    simMissile.setTerrainAvoidanceEnabled(config.terrainAvoidanceEnabled);
+    simMissile.setTerrainClearance(config.terrainClearance);
+    simMissile.setTerrainLookAheadTime(config.terrainLookAheadTime);
+    simMissile.setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
+    simMissile.setThrust(config.thrust);
+    simMissile.setThrustEnabled(config.thrustEnabled);
+    simMissile.setFuel(config.fuel);
+    simMissile.setFuelConsumptionRate(config.fuelConsumptionRate);
+    simMissile.setThrustDirection(config.thrustDirection);
+
+    const float dt = config.trajectoryTime / static_cast<float>(config.trajectoryPoints);
+    Atmosphere atmosphere(config.airDensity);
+    Drag drag(&atmosphere);
+    Lift lift(&atmosphere);
+
+    Target simTarget = *target;
+    std::vector<Missile *> simulatedMissiles = {&simMissile};
+
+    for (int i = 1; i < config.trajectoryPoints; ++i)
+    {
+        simMissile.resetForces();
+        simMissile.applyForce(glm::vec3(0.0f, -config.gravityMagnitude * simMissile.getMass(), 0.0f));
+        drag.applyTo(&simMissile);
+        lift.applyTo(&simMissile);
+        simTarget.updateThreatAssessment(simulatedMissiles);
+        simTarget.update(dt);
+
+        if (i % 5 == 0)
+        {
+            m_trajectoryPreviewCache.targetPoints.push_back(simTarget.getPosition());
+        }
+
+        simMissile.setTargetObject(&simTarget);
+        if (simMissile.isGuidanceEnabled() && simMissile.hasTarget())
+        {
+            simMissile.applyGuidance(dt);
+            if (simMissile.consumeSelfDestructRequest())
+            {
+                m_trajectoryPreviewCache.missilePoints.push_back(simMissile.getPosition());
+                break;
+            }
+        }
+
+        simMissile.update(dt);
+        m_trajectoryPreviewCache.missilePoints.push_back(simMissile.getPosition());
+    }
+
+    m_trajectoryPreviewCache.lastMissilePosition = missilePos;
+    m_trajectoryPreviewCache.lastMissileVelocity = missileVel;
+    m_trajectoryPreviewCache.lastTargetPosition = targetPos;
+    m_trajectoryPreviewCache.lastTargetVelocity = targetVel;
+    m_trajectoryPreviewCache.config = config;
+    m_trajectoryPreviewCache.target = target;
+    m_trajectoryPreviewCache.lastRefresh = std::chrono::steady_clock::now();
+    m_trajectoryPreviewCache.valid = !m_trajectoryPreviewCache.missilePoints.empty();
+}
+
+void Application::invalidateTrajectoryPreviewCache()
+{
+    m_trajectoryPreviewCache.missilePoints.clear();
+    m_trajectoryPreviewCache.targetPoints.clear();
+    m_trajectoryPreviewCache.valid = false;
+    m_trajectoryPreviewCache.target = nullptr;
+    m_trajectoryPreviewCache.lastRefresh = std::chrono::steady_clock::time_point{};
+}
+
 void Application::renderPredictedTrajectory()
 {
     if (!m_missile || !m_renderer)
@@ -1441,94 +1636,46 @@ void Application::renderPredictedTrajectory()
 
     try
     {
-        glm::vec3 missilePos = m_missile->getPosition();
-        glm::vec3 missileVel = m_missile->getVelocity();
-
         Target *target = findBestTarget();
         if (!target)
+        {
+            invalidateTrajectoryPreviewCache();
+            return;
+        }
+
+        const TrajectoryPreviewConfig config = captureTrajectoryPreviewConfig();
+        if (shouldRefreshTrajectoryPreviewCache(target, config))
+        {
+            updateTrajectoryPreviewCache(target, config);
+        }
+
+        if (!m_trajectoryPreviewCache.valid || m_trajectoryPreviewCache.missilePoints.empty())
         {
             return;
         }
 
-        glm::vec3 targetPos = target->getPosition();
-
-        glm::vec3 interceptPoint = predictInterceptPoint(missilePos, missileVel, targetPos, target->getVelocity());
-
         if (m_showInterceptPoint)
         {
-            m_renderer->renderLine(missilePos, interceptPoint, glm::vec3(1.0f, 0.0f, 0.0f));
-            m_renderer->renderLine(interceptPoint, targetPos, glm::vec3(0.0f, 1.0f, 0.0f));
-            m_renderer->renderPoint(interceptPoint, glm::vec3(1.0f, 1.0f, 0.0f), 7.0f);
+            const glm::vec3 &startPoint = m_trajectoryPreviewCache.missilePoints.front();
+            const glm::vec3 &targetPoint = m_trajectoryPreviewCache.lastTargetPosition;
+            m_renderer->renderLine(startPoint, m_trajectoryPreviewCache.interceptPoint, glm::vec3(1.0f, 0.0f, 0.0f));
+            m_renderer->renderLine(m_trajectoryPreviewCache.interceptPoint, targetPoint, glm::vec3(0.0f, 1.0f, 0.0f));
+            m_renderer->renderPoint(m_trajectoryPreviewCache.interceptPoint, glm::vec3(1.0f, 1.0f, 0.0f), 7.0f);
         }
 
-        std::vector<glm::vec3> trajectoryPoints;
-        trajectoryPoints.push_back(missilePos);
-
-        Missile simMissile(missilePos, missileVel, m_missile->getDryMass(),
-                           m_missile->getDragCoefficient(), m_missile->getCrossSectionalArea(),
-                           m_missile->getLiftCoefficient());
-
-        simMissile.setGuidanceEnabled(m_missile->isGuidanceEnabled());
-        simMissile.setNavigationGain(m_missile->getNavigationGain());
-        simMissile.setMaxSteeringForce(m_missile->getMaxSteeringForce());
-        simMissile.setTrackingAngle(m_missile->getTrackingAngle());
-        simMissile.setProximityFuseRadius(m_missile->getProximityFuseRadius());
-        simMissile.setCountermeasureResistance(m_missile->getCountermeasureResistance());
-        simMissile.setTerrainAvoidanceEnabled(m_missile->isTerrainAvoidanceEnabled());
-        simMissile.setTerrainClearance(m_missile->getTerrainClearance());
-        simMissile.setTerrainLookAheadTime(m_missile->getTerrainLookAheadTime());
-        simMissile.setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
-
-        simMissile.setThrust(m_missile->getThrust());
-        simMissile.setThrustEnabled(m_missile->isThrustEnabled());
-        simMissile.setFuel(m_missile->getFuel());
-        simMissile.setFuelConsumptionRate(m_missile->getFuelConsumptionRate());
-        simMissile.setThrustDirection(m_missile->getThrustDirection());
-
-        float dt = m_trajectoryTime / m_trajectoryPoints;
-        const float gravityMagnitude = m_physicsEngine ? m_physicsEngine->getGravity() : 9.81f;
-        Atmosphere atmosphere(m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity);
-        Drag drag(&atmosphere);
-        Lift lift(&atmosphere);
-
-        // Simulate the autonomous target against the simulated missile.
-        Target simTarget = *target;
-        std::vector<Missile *> simulatedMissiles = {&simMissile};
-
-        for (int i = 1; i < m_trajectoryPoints; ++i)
+        if (m_showPredictedTargetPath)
         {
-            simMissile.resetForces();
-            simMissile.applyForce(glm::vec3(0.0f, -gravityMagnitude * simMissile.getMass(), 0.0f));
-            drag.applyTo(&simMissile);
-            lift.applyTo(&simMissile);
-            simTarget.updateThreatAssessment(simulatedMissiles);
-            simTarget.update(dt);
-
-            if (m_showPredictedTargetPath && i % 5 == 0)
+            for (const glm::vec3 &predictedTargetPoint : m_trajectoryPreviewCache.targetPoints)
             {
-                m_renderer->renderPoint(simTarget.getPosition(), glm::vec3(0.0f, 1.0f, 0.0f), 3.0f);
+                m_renderer->renderPoint(predictedTargetPoint, glm::vec3(0.0f, 1.0f, 0.0f), 3.0f);
             }
-
-            simMissile.setTargetObject(&simTarget);
-            if (simMissile.isGuidanceEnabled() && simMissile.hasTarget())
-            {
-                simMissile.applyGuidance(dt);
-                if (simMissile.consumeSelfDestructRequest())
-                {
-                    trajectoryPoints.push_back(simMissile.getPosition());
-                    break;
-                }
-            }
-
-            simMissile.update(dt);
-            trajectoryPoints.push_back(simMissile.getPosition());
         }
 
-        for (size_t i = 1; i < trajectoryPoints.size(); ++i)
+        for (std::size_t i = 1; i < m_trajectoryPreviewCache.missilePoints.size(); ++i)
         {
-            float t = static_cast<float>(i) / trajectoryPoints.size();
-            glm::vec3 color(1.0f, 1.0f - t, 0.0f);
-            m_renderer->renderLine(trajectoryPoints[i - 1], trajectoryPoints[i], color);
+            const float t = static_cast<float>(i) / static_cast<float>(m_trajectoryPreviewCache.missilePoints.size());
+            const glm::vec3 color(1.0f, 1.0f - t, 0.0f);
+            m_renderer->renderLine(m_trajectoryPreviewCache.missilePoints[i - 1], m_trajectoryPreviewCache.missilePoints[i], color);
         }
     }
     catch (const std::exception &e)
@@ -3328,6 +3475,7 @@ void Application::createTarget(const glm::vec3 &position, float radius)
         {
             m_physicsEngine->addTarget(target.get());
             m_targets.push_back(std::move(target));
+            invalidateTrajectoryPreviewCache();
         }
     }
     catch (const std::exception &e)
@@ -3386,6 +3534,7 @@ void Application::createRandomTarget()
         {
             m_physicsEngine->addTarget(target.get());
             m_targets.push_back(std::move(target));
+            invalidateTrajectoryPreviewCache();
         }
     }
     catch (const std::exception &e)
@@ -3420,6 +3569,7 @@ void Application::resetTargets()
         // Clear existing targets
         m_targets.clear();
         clearFlares();
+        invalidateTrajectoryPreviewCache();
 
         // Create new random targets
         for (int i = 0; i < m_targetCount; i++)
@@ -3643,6 +3793,7 @@ void Application::launchMissile()
         m_missileInFlight = true;
         m_missileFlightTime = 0.0f;
         m_closestTargetDistance = 1000000.0f;
+        invalidateTrajectoryPreviewCache();
     }
     catch (const std::exception &e)
     {
@@ -3661,6 +3812,7 @@ void Application::resetMissile()
         m_missileInFlight = false;
         m_missileFlightTime = 0.0f;
         m_closestTargetDistance = 1000000.0f;
+        invalidateTrajectoryPreviewCache();
 
         // First, if there's an existing missile, remove it from physics engine
         if (m_missile)
@@ -3799,6 +3951,7 @@ Target *Application::findBestTarget()
 
 void Application::terminateMissileFlight(const glm::vec3 &position, bool createEffect)
 {
+    invalidateTrajectoryPreviewCache();
     if (createEffect)
     {
         createExplosion(position);

@@ -10,6 +10,7 @@
 #include <vector>
 #include <random>
 #include <deque>
+#include <chrono>
 
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
@@ -34,6 +35,47 @@ public:
     void shutdown();
     
 private:
+    struct TrajectoryPreviewConfig
+    {
+        glm::vec3 thrustDirection{0.0f};
+        float dryMass = 0.0f;
+        float dragCoefficient = 0.0f;
+        float crossSectionalArea = 0.0f;
+        float liftCoefficient = 0.0f;
+        bool guidanceEnabled = false;
+        float navigationGain = 0.0f;
+        float maxSteeringForce = 0.0f;
+        float trackingAngle = 0.0f;
+        float proximityFuseRadius = 0.0f;
+        float countermeasureResistance = 0.0f;
+        bool terrainAvoidanceEnabled = false;
+        float terrainClearance = 0.0f;
+        float terrainLookAheadTime = 0.0f;
+        float thrust = 0.0f;
+        bool thrustEnabled = false;
+        float fuel = 0.0f;
+        float fuelConsumptionRate = 0.0f;
+        int trajectoryPoints = 0;
+        float trajectoryTime = 0.0f;
+        float gravityMagnitude = 0.0f;
+        float airDensity = 0.0f;
+    };
+
+    struct TrajectoryPreviewCache
+    {
+        std::vector<glm::vec3> missilePoints;
+        std::vector<glm::vec3> targetPoints;
+        glm::vec3 interceptPoint{0.0f};
+        glm::vec3 lastMissilePosition{0.0f};
+        glm::vec3 lastMissileVelocity{0.0f};
+        glm::vec3 lastTargetPosition{0.0f};
+        glm::vec3 lastTargetVelocity{0.0f};
+        TrajectoryPreviewConfig config;
+        const Target* target = nullptr;
+        std::chrono::steady_clock::time_point lastRefresh{};
+        bool valid = false;
+    };
+
     void processInput(float deltaTime);
     void update(float deltaTime);
     void render();
@@ -74,6 +116,10 @@ private:
     
     // visualization
     void renderPredictedTrajectory();
+    TrajectoryPreviewConfig captureTrajectoryPreviewConfig() const;
+    bool shouldRefreshTrajectoryPreviewCache(Target* target, const TrajectoryPreviewConfig &config) const;
+    void updateTrajectoryPreviewCache(Target* target, const TrajectoryPreviewConfig &config);
+    void invalidateTrajectoryPreviewCache();
     glm::vec3 predictInterceptPoint(const glm::vec3& missilePos, const glm::vec3& missileVel,
                                    const glm::vec3& targetPos, const glm::vec3& targetVel);
     
@@ -108,6 +154,8 @@ private:
     bool m_showInterceptPoint = true;       // Whether to show intercept point
     int m_trajectoryPoints = 140;     // Number of points in trajectory visualization
     float m_trajectoryTime = 12.0f;   // Time in seconds to predict trajectory
+    TrajectoryPreviewCache m_trajectoryPreviewCache;
+    std::chrono::milliseconds m_trajectoryPreviewRefreshInterval{100};
     
     // Simulation properties
     float m_timeStep = 0.01f;  // Physics time step in seconds

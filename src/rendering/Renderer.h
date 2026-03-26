@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <cstddef>
 #include <vector>
 #include <memory>
 #include <string>
@@ -29,6 +30,8 @@ public:
     void renderLine(const glm::vec3 &start, const glm::vec3 &end, const glm::vec3 &color = glm::vec3(1.0f, 1.0f, 1.0f));
     void renderPoint(const glm::vec3 &position, const glm::vec3 &color = glm::vec3(1.0f, 1.0f, 1.0f), float size = 5.0f);
     void renderText(const glm::vec3 &position, const std::string &text, const glm::vec3 &color = glm::vec3(1.0f, 1.0f, 1.0f));
+    void flushDebugPrimitives();
+    void clearDebugPrimitives();
 
     // Camera controls
     void setCameraPosition(const glm::vec3 &position);
@@ -68,6 +71,13 @@ private:
         glm::vec3 color;
     };
 
+    struct DebugVertex
+    {
+        glm::vec3 position;
+        glm::vec3 color;
+        float size;
+    };
+
     void createShaders();
     void createSimpleCube();
     void createMissileModel();
@@ -81,6 +91,7 @@ private:
     void renderWorldGuides();
     void renderGroundCircle(float radius, const glm::vec3 &color, int segments = 48);
     void renderAirspaceBeacon(const glm::vec3 &basePosition, float height, const glm::vec3 &color);
+    void ensureDebugBufferCapacity(std::size_t vertexCount);
     void updateCameraVectors();
     glm::mat4 buildViewMatrix() const;
     glm::mat4 buildProjectionMatrix() const;
@@ -95,6 +106,11 @@ private:
     GLuint m_lineVAO;
     GLuint m_lineVBO;
     GLuint m_lineShaderProgram;
+    GLint m_lineViewLoc = -1;
+    GLint m_lineProjLoc = -1;
+    std::size_t m_lineBufferCapacity = 0;
+    std::vector<DebugVertex> m_debugLineVertices;
+    std::vector<DebugVertex> m_debugPointVertices;
 
     // Floor resources
     GLuint m_floorVAO;
