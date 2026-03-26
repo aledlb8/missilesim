@@ -432,7 +432,6 @@ void Application::initialize()
             ImGui::CreateContext();
             ImGuiIO &io = ImGui::GetIO();
             (void)io;
-            ImGui::StyleColorsDark();
 
             // Initialize ImGui GLFW integration
             if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
@@ -1313,64 +1312,21 @@ void Application::renderMinimalHUD()
     const bool missileWarning = validTrackedTarget && trackedTarget->isMissileWarningActive();
     const char *seekerTrack = m_missile->isTrackingDecoy() ? "FLARE" : "AIRFRAME";
 
-    ImVec4 fuelColor(0.92f, 0.34f, 0.34f, 1.0f);
-    if (fuelPercent > 0.50f)
+    ImGui::SetNextWindowSize(ImVec2(280.0f, 180.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Flight HUD"))
     {
-        fuelColor = ImVec4(0.42f, 0.86f, 0.64f, 1.0f);
-    }
-    else if (fuelPercent > 0.25f)
-    {
-        fuelColor = ImVec4(0.96f, 0.77f, 0.34f, 1.0f);
-    }
-
-    const ImGuiViewport *viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 18.0f, viewport->WorkPos.y + 18.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(260.0f, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.62f);
-
-    const ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration |
-                                      ImGuiWindowFlags_NoInputs |
-                                      ImGuiWindowFlags_NoNav |
-                                      ImGuiWindowFlags_NoSavedSettings |
-                                      ImGuiWindowFlags_NoFocusOnAppearing;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.09f, 0.12f, 0.84f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.22f, 0.31f, 0.40f, 0.60f));
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, fuelColor);
-
-    if (ImGui::Begin("MinimalFlightHud", nullptr, hudFlags))
-    {
-        char buffer[96];
-        std::snprintf(buffer, sizeof(buffer), "%.1f kg", fuel);
-        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Fuel");
-        ImGui::SameLine(58.0f);
-        ImGui::TextColored(ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%s", buffer);
+        ImGui::Text("Fuel: %.1f kg", fuel);
         ImGui::ProgressBar(fuelPercent, ImVec2(-1.0f, 8.0f), "");
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Seeker");
-        ImGui::SameLine(58.0f);
-        ImGui::TextColored(m_missile->isTrackingDecoy() ? ImVec4(0.98f, 0.73f, 0.34f, 1.0f) : ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%s", seekerTrack);
-        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Flares");
-        ImGui::SameLine(58.0f);
-        ImGui::TextColored(activeFlares > 0 ? ImVec4(0.98f, 0.73f, 0.34f, 1.0f) : ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%d active", activeFlares);
+        ImGui::Text("Seeker: %s", seekerTrack);
+        ImGui::Text("Flares: %d active", activeFlares);
         if (validTrackedTarget)
         {
-            ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Defense");
-            ImGui::SameLine(58.0f);
-            ImGui::TextColored(missileWarning ? ImVec4(0.96f, 0.77f, 0.34f, 1.0f) : ImVec4(0.94f, 0.97f, 0.99f, 1.0f),
-                               "%s", missileWarning ? "MAWS active" : "No cue");
-            ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.94f, 1.0f), "Inventory");
-            ImGui::SameLine(58.0f);
-            ImGui::TextColored(ImVec4(0.94f, 0.97f, 0.99f, 1.0f), "%d", trackedTarget->getRemainingFlares());
+            ImGui::Text("Defense: %s", missileWarning ? "MAWS active" : "No cue");
+            ImGui::Text("Target flares: %d", trackedTarget->getRemainingFlares());
         }
     }
     ImGui::End();
-
-    ImGui::PopStyleColor(3);
-    ImGui::PopStyleVar(3);
 }
 
 float Application::computeEngagementRadius() const
@@ -1661,6 +1617,775 @@ glm::vec3 Application::predictInterceptPoint(const glm::vec3 &missilePos, const 
 
 void Application::setupUI()
 {
+    if (!m_missile || !m_renderer || !m_physicsEngine)
+    {
+        return;
+    }
+
+    const ImGuiTreeNodeFlags openByDefault = ImGuiTreeNodeFlags_DefaultOpen;
+    const ImGuiTableFlags readoutTableFlags = ImGuiTableFlags_SizingStretchProp |
+                                              ImGuiTableFlags_BordersInnerV |
+                                              ImGuiTableFlags_RowBg;
+
+    auto aiStateName = [](TargetAIState state) -> const char *
+    {
+        switch (state)
+        {
+        case TargetAIState::PATROL:
+            return "Patrol";
+        case TargetAIState::REPOSITION:
+            return "Reposition";
+        case TargetAIState::DEFENSIVE:
+            return "Defensive";
+        case TargetAIState::RECOVERING:
+            return "Recover";
+        default:
+            return "Unknown";
+        }
+    };
+
+    auto applyLiveMissileConfig = [&]()
+    {
+        m_missile->setMass(m_mass);
+        m_missile->setDragCoefficient(m_dragCoefficient);
+        m_missile->setCrossSectionalArea(m_crossSectionalArea);
+        m_missile->setLiftCoefficient(m_liftCoefficient);
+        m_missile->setGuidanceEnabled(m_guidanceEnabled);
+        m_missile->setNavigationGain(m_navigationGain);
+        m_missile->setMaxSteeringForce(m_maxSteeringForce);
+        m_missile->setTrackingAngle(m_trackingAngle);
+        m_missile->setProximityFuseRadius(m_proximityFuseRadius);
+        m_missile->setCountermeasureResistance(m_countermeasureResistance);
+        m_missile->setTerrainAvoidanceEnabled(m_terrainAvoidanceEnabled);
+        m_missile->setTerrainClearance(m_terrainClearance);
+        m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);
+        m_missile->setGroundReferenceAltitude(m_physicsEngine->getGroundLevel());
+        m_missile->setThrust(m_missileThrust);
+        m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
+        if (!m_missileInFlight)
+        {
+            m_missile->setFuel(m_missileFuel);
+        }
+    };
+
+    auto applyLiveTargetAIConfig = [&]()
+    {
+        for (const auto &target : m_targets)
+        {
+            if (target)
+            {
+                target->setAIConfig(m_targetAIConfig);
+            }
+        }
+    };
+
+    auto countActiveTargets = [&]() -> int
+    {
+        int count = 0;
+        for (const auto &target : m_targets)
+        {
+            if (target && target->isActive())
+            {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    const int activeTargets = countActiveTargets();
+    const glm::vec3 missilePosition = m_missile->getPosition();
+    const glm::vec3 missileVelocity = m_missile->getVelocity();
+    const glm::vec3 missileAcceleration = m_missile->getAcceleration();
+    const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
+    const float missileSpeed = glm::length(missileVelocity);
+    const float missileAltitude = std::max(missilePosition.y, 0.0f);
+    const float terrainClearance = missilePosition.y - m_physicsEngine->getGroundLevel();
+    const float missileMass = m_missile->getMass();
+    const float missileDryMass = m_missile->getDryMass();
+    const float fuel = m_missile->getFuel();
+    const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
+    const bool thrustEnabled = m_missile->isThrustEnabled();
+    const bool guidanceEnabled = m_missile->isGuidanceEnabled();
+    const bool boosterBurnedOut = !thrustEnabled && fuel <= 0.0f;
+    const char *seekerState = m_missile->isTrackingDecoy() ? "Tracking flare" : "Tracking airframe";
+    const Atmosphere::State missileAtmosphere = m_physicsEngine->getAtmosphereState(missileAltitude);
+    const float missileMach = (missileAtmosphere.speedOfSoundMetersPerSecond > 0.0f)
+                                  ? (missileSpeed / missileAtmosphere.speedOfSoundMetersPerSecond)
+                                  : 0.0f;
+
+    Target *trackedTarget = m_missile->getTargetObject();
+    if ((trackedTarget == nullptr || !trackedTarget->isActive()) && activeTargets > 0)
+    {
+        trackedTarget = findBestTarget();
+    }
+
+    int trackedTargetIndex = -1;
+    if (trackedTarget != nullptr)
+    {
+        for (size_t i = 0; i < m_targets.size(); ++i)
+        {
+            if (m_targets[i].get() == trackedTarget)
+            {
+                trackedTargetIndex = static_cast<int>(i) + 1;
+                break;
+            }
+        }
+    }
+
+    const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr && trackedTarget->isActive();
+    const bool missileWarning = guidanceLocked && trackedTarget->isMissileWarningActive();
+    const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
+
+    const char *missionState = "Standby";
+    if (m_isPaused) { missionState = "Paused"; }
+    else if (m_missileInFlight && guidanceLocked && thrustEnabled) { missionState = "Intercept"; }
+    else if (m_missileInFlight && guidanceLocked) { missionState = "Glide Track"; }
+    else if (m_missileInFlight && thrustEnabled) { missionState = "Boost"; }
+    else if (m_missileInFlight) { missionState = "Ballistic"; }
+
+    auto drawReadoutRow = [](const char *label, const char *value)
+    {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(value);
+    };
+
+    ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360.0f, 250.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Simulation"))
+    {
+        if (ImGui::Button(m_isPaused ? "Resume" : "Pause"))
+        {
+            m_isPaused = !m_isPaused;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Launch"))
+        {
+            launchMissile();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Missile"))
+        {
+            resetMissile();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Targets"))
+        {
+            resetTargets();
+        }
+        if (ImGui::Button("Frame Camera"))
+        {
+            frameEngagementCamera();
+        }
+
+        ImGui::Separator();
+        ImGui::SliderFloat("Simulation speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
+
+        float gravity = m_physicsEngine->getGravity();
+        if (ImGui::SliderFloat("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s^2"))
+        {
+            m_physicsEngine->setGravity(gravity);
+        }
+
+        float airDensity = m_physicsEngine->getAirDensity();
+        if (ImGui::SliderFloat("Sea-level density", &airDensity, 0.0f, 2.0f, "%.3f kg/m^3"))
+        {
+            m_physicsEngine->setAirDensity(airDensity);
+        }
+
+        if (ImGui::Checkbox("Ground collision enabled", &m_groundEnabled))
+        {
+            m_physicsEngine->setGroundEnabled(m_groundEnabled);
+        }
+
+        if (m_groundEnabled)
+        {
+            if (ImGui::SliderFloat("Ground restitution", &m_groundRestitution, 0.0f, 1.0f, "%.2f"))
+            {
+                m_physicsEngine->setGroundRestitution(m_groundRestitution);
+            }
+        }
+    }
+    ImGui::End();
+
+    ImGui::SetNextWindowPos(ImVec2(20.0f, 290.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 520.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Missile Config"))
+    {
+        ImGui::InputFloat3("Spawn position", m_initialPosition);
+        ImGui::InputFloat3("Launch velocity", m_initialVelocity);
+        ImGui::Separator();
+        ImGui::SliderFloat("Dry mass", &m_mass, 10.0f, 1000.0f, "%.1f kg");
+        ImGui::SliderFloat("Drag coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Cross-sectional area", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m^2");
+        ImGui::SliderFloat("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Thrust output", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N");
+        ImGui::SliderFloat("Fuel load", &m_missileFuel, 10.0f, 1000.0f, "%.1f kg");
+        ImGui::SliderFloat("Fuel burn rate", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.2f kg/s");
+        ImGui::Checkbox("Guidance enabled", &m_guidanceEnabled);
+        ImGui::SliderFloat("Lead aggressiveness", &m_navigationGain, 1.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Max steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
+        ImGui::SliderFloat("Tracking angle", &m_trackingAngle, 5.0f, 180.0f, "%.0f deg");
+        ImGui::SliderFloat("Proximity fuse", &m_proximityFuseRadius, 0.0f, 75.0f, "%.1f m");
+        ImGui::SliderFloat("IRCCM resistance", &m_countermeasureResistance, 0.0f, 1.0f, "%.2f");
+        ImGui::Checkbox("Terrain avoidance", &m_terrainAvoidanceEnabled);
+        ImGui::SliderFloat("Terrain clearance", &m_terrainClearance, 0.0f, 400.0f, "%.1f m");
+        ImGui::SliderFloat("Terrain look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
+
+        if (ImGui::Button("Apply To Live Missile"))
+        {
+            applyLiveMissileConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Rearm Missile"))
+        {
+            resetMissile();
+        }
+    }
+    ImGui::End();
+
+    ImGui::SetNextWindowPos(ImVec2(460.0f, 20.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Targets"))
+    {
+        ImGui::Text("Active targets: %d / %zu", activeTargets, m_targets.size());
+        ImGui::SliderInt("Target count", &m_targetCount, 1, 20);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            resetTargets();
+        }
+
+        ImGui::SliderFloat("Average distance", &m_targetAIConfig.preferredDistance, 300.0f, 20000.0f, "%.0f m");
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            resetTargets();
+        }
+
+        ImGui::SliderFloat("Minimum speed", &m_targetAIConfig.minSpeed, 60.0f, 450.0f, "%.0f m/s");
+        m_targetAIConfig.maxSpeed = std::max(m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f);
+        ImGui::SliderFloat("Maximum speed", &m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f, 600.0f, "%.0f m/s");
+
+        if (ImGui::Button("Apply Target AI"))
+        {
+            applyLiveTargetAIConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Rebuild Targets"))
+        {
+            resetTargets();
+        }
+
+        if (!m_targets.empty() && ImGui::BeginTable("TargetRosterWindowTable", 7, readoutTableFlags))
+        {
+            ImGui::TableSetupColumn("ID");
+            ImGui::TableSetupColumn("State");
+            ImGui::TableSetupColumn("AI");
+            ImGui::TableSetupColumn("Altitude");
+            ImGui::TableSetupColumn("Speed");
+            ImGui::TableSetupColumn("Range");
+            ImGui::TableSetupColumn("Flares");
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < m_targets.size(); ++i)
+            {
+                const auto &target = m_targets[i];
+                if (!target)
+                {
+                    continue;
+                }
+
+                const bool isActive = target->isActive();
+                const float targetAltitude = std::max(target->getPosition().y, 0.0f);
+                const float targetSpeed = glm::length(target->getVelocity());
+                const float targetRange = glm::distance(missilePosition, target->getPosition());
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%zu", i + 1);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(isActive ? "Active" : "Destroyed");
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextUnformatted(aiStateName(target->getAIState()));
+                ImGui::TableSetColumnIndex(3);
+                if (isActive) { ImGui::Text("%.0f m", targetAltitude); } else { ImGui::TextDisabled("--"); }
+                ImGui::TableSetColumnIndex(4);
+                if (isActive) { ImGui::Text("%.0f m/s", targetSpeed); } else { ImGui::TextDisabled("--"); }
+                ImGui::TableSetColumnIndex(5);
+                if (isActive) { ImGui::Text("%.1f m", targetRange); } else { ImGui::TextDisabled("--"); }
+                ImGui::TableSetColumnIndex(6);
+                if (isActive) { ImGui::Text("%d", target->getRemainingFlares()); } else { ImGui::TextDisabled("--"); }
+            }
+
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
+
+    ImGui::SetNextWindowPos(ImVec2(460.0f, 460.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360.0f, 260.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("View"))
+    {
+        float fov = m_renderer->getCameraFOV();
+        if (ImGui::SliderFloat("Field of view", &fov, 10.0f, 120.0f, "%.1f deg"))
+        {
+            m_renderer->setCameraFOV(fov);
+        }
+
+        float cameraSpeed = m_renderer->getCameraSpeed();
+        if (ImGui::SliderFloat("Camera speed", &cameraSpeed, 1.0f, 800.0f, "%.0f"))
+        {
+            m_renderer->setCameraSpeed(cameraSpeed);
+        }
+
+        ImGui::Checkbox("Show predicted trajectory", &m_showTrajectory);
+        ImGui::Checkbox("Show target labels", &m_showTargetInfo);
+        ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
+        ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
+        ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 600);
+        ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
+
+        ImGui::TextDisabled("Camera: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+        ImGui::TextDisabled("Controls: RMB look, WASD move, Space/Ctrl vertical, Enter pause, F launch, C frame camera, Tab toggle UI");
+    }
+    ImGui::End();
+
+    ImGui::SetNextWindowPos(ImVec2(840.0f, 460.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Telemetry"))
+    {
+        char buffer[128];
+
+        if (ImGui::BeginTable("MissionTelemetryWindowTable", 2, readoutTableFlags))
+        {
+            drawReadoutRow("Mission state", missionState);
+            std::snprintf(buffer, sizeof(buffer), "%d / %zu", activeTargets, m_targets.size());
+            drawReadoutRow("Targets active", buffer);
+            if (trackedTargetIndex > 0) { std::snprintf(buffer, sizeof(buffer), "Target %d", trackedTargetIndex); drawReadoutRow("Tracked target", buffer); }
+            else { drawReadoutRow("Tracked target", "None"); }
+            if (guidanceLocked) { std::snprintf(buffer, sizeof(buffer), "%.1f m", trackedTargetRange); drawReadoutRow("Target range", buffer); }
+            else { drawReadoutRow("Target range", "No lock"); }
+            if (m_closestTargetDistance < 999999.0f) { std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance); drawReadoutRow("Closest pass", buffer); }
+            else { drawReadoutRow("Closest pass", "Not available"); }
+            std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
+            drawReadoutRow("Flight time", buffer);
+            ImGui::EndTable();
+        }
+
+        if (ImGui::BeginTable("MissileTelemetryWindowTable", 2, readoutTableFlags))
+        {
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m", missilePosition.x, missilePosition.y, missilePosition.z);
+            drawReadoutRow("Position", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s", missileVelocity.x, missileVelocity.y, missileVelocity.z);
+            drawReadoutRow("Velocity", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s^2", missileAcceleration.x, missileAcceleration.y, missileAcceleration.z);
+            drawReadoutRow("Acceleration", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m/s", missileSpeed);
+            drawReadoutRow("Speed", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.2f", missileMach);
+            drawReadoutRow("Mach", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", missileAltitude);
+            drawReadoutRow("Altitude", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", terrainClearance);
+            drawReadoutRow("Terrain clearance", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileMass);
+            drawReadoutRow("Current mass", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileDryMass);
+            drawReadoutRow("Dry mass", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f kg", fuel);
+            drawReadoutRow("Fuel remaining", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.0f%%", fuelPercent * 100.0f);
+            drawReadoutRow("Fuel percent", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", missileAtmosphere.densityKgPerCubicMeter);
+            drawReadoutRow("Ambient density", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.2f kPa", missileAtmosphere.pressurePascals * 0.001f);
+            drawReadoutRow("Ambient pressure", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.2f K", missileAtmosphere.temperatureKelvin);
+            drawReadoutRow("Air temperature", buffer);
+            ImGui::EndTable();
+        }
+
+        if (ImGui::BeginTable("SystemTelemetryWindowTable", 2, readoutTableFlags))
+        {
+            drawReadoutRow("Booster", thrustEnabled ? "Active" : (boosterBurnedOut ? "Burned out" : "Off"));
+            drawReadoutRow("Guidance", guidanceLocked ? "Locked" : (guidanceEnabled ? "Searching" : "Disabled"));
+            drawReadoutRow("Seeker", seekerState);
+            drawReadoutRow("Target defense", missileWarning ? "MAWS active" : "No cue");
+            std::snprintf(buffer, sizeof(buffer), "%.0f N", m_missile->getThrust());
+            drawReadoutRow("Thrust command", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
+            drawReadoutRow("Burn rate", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+            drawReadoutRow("Camera position", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f deg", m_renderer->getCameraFOV());
+            drawReadoutRow("Camera FOV", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.1f", m_renderer->getCameraSpeed());
+            drawReadoutRow("Camera speed", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.2f m/s^2", m_physicsEngine->getGravity());
+            drawReadoutRow("Gravity", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", m_physicsEngine->getAirDensity());
+            drawReadoutRow("Sea-level density", buffer);
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
+
+    const std::string currentSettingsSnapshot = buildSettingsSnapshot();
+    if (currentSettingsSnapshot != m_lastSettingsSnapshot)
+    {
+        scheduleSettingsSave();
+        m_lastSettingsSnapshot = currentSettingsSnapshot;
+    }
+    return;
+#if 0
+    ImGui::SetNextWindowSize(ImVec2(540.0f, 760.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("MissileSim Debug"))
+    {
+        if (ImGui::Button(m_isPaused ? "Resume" : "Pause"))
+        {
+            m_isPaused = !m_isPaused;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Launch"))
+        {
+            launchMissile();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Missile"))
+        {
+            resetMissile();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Targets"))
+        {
+            resetTargets();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Frame Camera"))
+        {
+            frameEngagementCamera();
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::CollapsingHeader("World", openByDefault))
+        {
+            ImGui::SliderFloat("Simulation speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
+
+            float gravity = m_physicsEngine->getGravity();
+            if (ImGui::SliderFloat("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s^2"))
+            {
+                m_physicsEngine->setGravity(gravity);
+            }
+
+            float airDensity = m_physicsEngine->getAirDensity();
+            if (ImGui::SliderFloat("Sea-level density", &airDensity, 0.0f, 2.0f, "%.3f kg/m^3"))
+            {
+                m_physicsEngine->setAirDensity(airDensity);
+            }
+
+            if (ImGui::Checkbox("Ground collision enabled", &m_groundEnabled))
+            {
+                m_physicsEngine->setGroundEnabled(m_groundEnabled);
+            }
+
+            if (m_groundEnabled)
+            {
+                if (ImGui::SliderFloat("Ground restitution", &m_groundRestitution, 0.0f, 1.0f, "%.2f"))
+                {
+                    m_physicsEngine->setGroundRestitution(m_groundRestitution);
+                }
+            }
+        }
+
+        if (ImGui::CollapsingHeader("Missile Config", openByDefault))
+        {
+            ImGui::InputFloat3("Spawn position", m_initialPosition);
+            ImGui::InputFloat3("Launch velocity", m_initialVelocity);
+            ImGui::Separator();
+            ImGui::SliderFloat("Dry mass", &m_mass, 10.0f, 1000.0f, "%.1f kg");
+            ImGui::SliderFloat("Drag coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
+            ImGui::SliderFloat("Cross-sectional area", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m^2");
+            ImGui::SliderFloat("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
+            ImGui::SliderFloat("Thrust output", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N");
+            ImGui::SliderFloat("Fuel load", &m_missileFuel, 10.0f, 1000.0f, "%.1f kg");
+            ImGui::SliderFloat("Fuel burn rate", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.2f kg/s");
+            ImGui::Checkbox("Guidance enabled", &m_guidanceEnabled);
+            ImGui::SliderFloat("Lead aggressiveness", &m_navigationGain, 1.0f, 4.0f, "%.2f");
+            ImGui::SliderFloat("Max steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
+            ImGui::SliderFloat("Tracking angle", &m_trackingAngle, 5.0f, 180.0f, "%.0f deg");
+            ImGui::SliderFloat("Proximity fuse", &m_proximityFuseRadius, 0.0f, 75.0f, "%.1f m");
+            ImGui::SliderFloat("IRCCM resistance", &m_countermeasureResistance, 0.0f, 1.0f, "%.2f");
+            ImGui::Checkbox("Terrain avoidance", &m_terrainAvoidanceEnabled);
+            ImGui::SliderFloat("Terrain clearance", &m_terrainClearance, 0.0f, 400.0f, "%.1f m");
+            ImGui::SliderFloat("Terrain look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
+
+            if (ImGui::Button("Apply To Live Missile"))
+            {
+                applyLiveMissileConfig();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Rearm Missile"))
+            {
+                resetMissile();
+            }
+        }
+
+        if (ImGui::CollapsingHeader("Targets", openByDefault))
+        {
+            const int activeTargets = countActiveTargets();
+            ImGui::Text("Active targets: %d / %zu", activeTargets, m_targets.size());
+
+            ImGui::SliderInt("Target count", &m_targetCount, 1, 20);
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                resetTargets();
+            }
+
+            ImGui::SliderFloat("Average distance", &m_targetAIConfig.preferredDistance, 300.0f, 20000.0f, "%.0f m");
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                resetTargets();
+            }
+
+            ImGui::SliderFloat("Minimum speed", &m_targetAIConfig.minSpeed, 60.0f, 450.0f, "%.0f m/s");
+            m_targetAIConfig.maxSpeed = std::max(m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f);
+            ImGui::SliderFloat("Maximum speed", &m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f, 600.0f, "%.0f m/s");
+
+            if (ImGui::Button("Apply Target AI"))
+            {
+                applyLiveTargetAIConfig();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Rebuild Targets"))
+            {
+                resetTargets();
+            }
+
+            if (!m_targets.empty())
+            {
+                const glm::vec3 missilePosition = m_missile->getPosition();
+                if (ImGui::BeginTable("TargetRosterTable", 7, readoutTableFlags))
+                {
+                    ImGui::TableSetupColumn("ID");
+                    ImGui::TableSetupColumn("State");
+                    ImGui::TableSetupColumn("AI");
+                    ImGui::TableSetupColumn("Altitude");
+                    ImGui::TableSetupColumn("Speed");
+                    ImGui::TableSetupColumn("Range");
+                    ImGui::TableSetupColumn("Flares");
+                    ImGui::TableHeadersRow();
+
+                    for (size_t i = 0; i < m_targets.size(); ++i)
+                    {
+                        const auto &target = m_targets[i];
+                        if (!target)
+                        {
+                            continue;
+                        }
+
+                        const bool isActive = target->isActive();
+                        const float targetAltitude = std::max(target->getPosition().y, 0.0f);
+                        const float targetSpeed = glm::length(target->getVelocity());
+                        const float targetRange = glm::distance(missilePosition, target->getPosition());
+
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("%zu", i + 1);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(isActive ? "Active" : "Destroyed");
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextUnformatted(aiStateName(target->getAIState()));
+                        ImGui::TableSetColumnIndex(3);
+                        if (isActive) { ImGui::Text("%.0f m", targetAltitude); } else { ImGui::TextDisabled("--"); }
+                        ImGui::TableSetColumnIndex(4);
+                        if (isActive) { ImGui::Text("%.0f m/s", targetSpeed); } else { ImGui::TextDisabled("--"); }
+                        ImGui::TableSetColumnIndex(5);
+                        if (isActive) { ImGui::Text("%.1f m", targetRange); } else { ImGui::TextDisabled("--"); }
+                        ImGui::TableSetColumnIndex(6);
+                        if (isActive) { ImGui::Text("%d", target->getRemainingFlares()); } else { ImGui::TextDisabled("--"); }
+                    }
+
+                    ImGui::EndTable();
+                }
+            }
+        }
+
+        if (ImGui::CollapsingHeader("View", openByDefault))
+        {
+            float fov = m_renderer->getCameraFOV();
+            if (ImGui::SliderFloat("Field of view", &fov, 10.0f, 120.0f, "%.1f deg"))
+            {
+                m_renderer->setCameraFOV(fov);
+            }
+
+            float cameraSpeed = m_renderer->getCameraSpeed();
+            if (ImGui::SliderFloat("Camera speed", &cameraSpeed, 1.0f, 800.0f, "%.0f"))
+            {
+                m_renderer->setCameraSpeed(cameraSpeed);
+            }
+
+            ImGui::Checkbox("Show predicted trajectory", &m_showTrajectory);
+            ImGui::Checkbox("Show target labels", &m_showTargetInfo);
+            ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
+            ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
+            ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 600);
+            ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
+
+            const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
+            ImGui::TextDisabled("Camera: %.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+            ImGui::TextDisabled("Controls: RMB look, WASD move, Space/Ctrl vertical, Enter pause, F launch, C frame camera, Tab toggle UI");
+        }
+
+        const int activeTargets = countActiveTargets();
+        const glm::vec3 missilePosition = m_missile->getPosition();
+        const glm::vec3 missileVelocity = m_missile->getVelocity();
+        const glm::vec3 missileAcceleration = m_missile->getAcceleration();
+        const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
+        const float missileSpeed = glm::length(missileVelocity);
+        const float missileAltitude = std::max(missilePosition.y, 0.0f);
+        const float terrainClearance = missilePosition.y - m_physicsEngine->getGroundLevel();
+        const float missileMass = m_missile->getMass();
+        const float missileDryMass = m_missile->getDryMass();
+        const float fuel = m_missile->getFuel();
+        const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
+        const bool thrustEnabled = m_missile->isThrustEnabled();
+        const bool guidanceEnabled = m_missile->isGuidanceEnabled();
+        const bool boosterBurnedOut = !thrustEnabled && fuel <= 0.0f;
+        const char *seekerState = m_missile->isTrackingDecoy() ? "Tracking flare" : "Tracking airframe";
+        Atmosphere::State missileAtmosphere = m_physicsEngine->getAtmosphereState(missileAltitude);
+        const float missileMach = (missileAtmosphere.speedOfSoundMetersPerSecond > 0.0f)
+                                      ? (missileSpeed / missileAtmosphere.speedOfSoundMetersPerSecond)
+                                      : 0.0f;
+
+        Target *trackedTarget = m_missile->getTargetObject();
+        if ((trackedTarget == nullptr || !trackedTarget->isActive()) && activeTargets > 0)
+        {
+            trackedTarget = findBestTarget();
+        }
+
+        int trackedTargetIndex = -1;
+        if (trackedTarget != nullptr)
+        {
+            for (size_t i = 0; i < m_targets.size(); ++i)
+            {
+                if (m_targets[i].get() == trackedTarget)
+                {
+                    trackedTargetIndex = static_cast<int>(i) + 1;
+                    break;
+                }
+            }
+        }
+
+        const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr && trackedTarget->isActive();
+        const bool missileWarning = guidanceLocked && trackedTarget->isMissileWarningActive();
+        const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
+
+        const char *missionState = "Standby";
+        if (m_isPaused) { missionState = "Paused"; }
+        else if (m_missileInFlight && guidanceLocked && thrustEnabled) { missionState = "Intercept"; }
+        else if (m_missileInFlight && guidanceLocked) { missionState = "Glide Track"; }
+        else if (m_missileInFlight && thrustEnabled) { missionState = "Boost"; }
+        else if (m_missileInFlight) { missionState = "Ballistic"; }
+
+        auto drawReadoutRow = [](const char *label, const char *value)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(value);
+        };
+
+        if (ImGui::CollapsingHeader("Telemetry", openByDefault))
+        {
+            char buffer[128];
+
+            if (ImGui::BeginTable("MissionTelemetryTable", 2, readoutTableFlags))
+            {
+                drawReadoutRow("Mission state", missionState);
+                std::snprintf(buffer, sizeof(buffer), "%d / %zu", activeTargets, m_targets.size());
+                drawReadoutRow("Targets active", buffer);
+                if (trackedTargetIndex > 0) { std::snprintf(buffer, sizeof(buffer), "Target %d", trackedTargetIndex); drawReadoutRow("Tracked target", buffer); }
+                else { drawReadoutRow("Tracked target", "None"); }
+                if (guidanceLocked) { std::snprintf(buffer, sizeof(buffer), "%.1f m", trackedTargetRange); drawReadoutRow("Target range", buffer); }
+                else { drawReadoutRow("Target range", "No lock"); }
+                if (m_closestTargetDistance < 999999.0f) { std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance); drawReadoutRow("Closest pass", buffer); }
+                else { drawReadoutRow("Closest pass", "Not available"); }
+                std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
+                drawReadoutRow("Flight time", buffer);
+                ImGui::EndTable();
+            }
+
+            if (ImGui::BeginTable("MissileTelemetryTable", 2, readoutTableFlags))
+            {
+                std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m", missilePosition.x, missilePosition.y, missilePosition.z);
+                drawReadoutRow("Position", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s", missileVelocity.x, missileVelocity.y, missileVelocity.z);
+                drawReadoutRow("Velocity", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s^2", missileAcceleration.x, missileAcceleration.y, missileAcceleration.z);
+                drawReadoutRow("Acceleration", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f m/s", missileSpeed);
+                drawReadoutRow("Speed", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.2f", missileMach);
+                drawReadoutRow("Mach", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f m", missileAltitude);
+                drawReadoutRow("Altitude", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f m", terrainClearance);
+                drawReadoutRow("Terrain clearance", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileMass);
+                drawReadoutRow("Current mass", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileDryMass);
+                drawReadoutRow("Dry mass", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f kg", fuel);
+                drawReadoutRow("Fuel remaining", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.0f%%", fuelPercent * 100.0f);
+                drawReadoutRow("Fuel percent", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", missileAtmosphere.densityKgPerCubicMeter);
+                drawReadoutRow("Ambient density", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.2f kPa", missileAtmosphere.pressurePascals * 0.001f);
+                drawReadoutRow("Ambient pressure", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.2f K", missileAtmosphere.temperatureKelvin);
+                drawReadoutRow("Air temperature", buffer);
+                ImGui::EndTable();
+            }
+
+            if (ImGui::BeginTable("SystemTelemetryTable", 2, readoutTableFlags))
+            {
+                drawReadoutRow("Booster", thrustEnabled ? "Active" : (boosterBurnedOut ? "Burned out" : "Off"));
+                drawReadoutRow("Guidance", guidanceLocked ? "Locked" : (guidanceEnabled ? "Searching" : "Disabled"));
+                drawReadoutRow("Seeker", seekerState);
+                drawReadoutRow("Target defense", missileWarning ? "MAWS active" : "No cue");
+                std::snprintf(buffer, sizeof(buffer), "%.0f N", m_missile->getThrust());
+                drawReadoutRow("Thrust command", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
+                drawReadoutRow("Burn rate", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+                drawReadoutRow("Camera position", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f deg", m_renderer->getCameraFOV());
+                drawReadoutRow("Camera FOV", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.1f", m_renderer->getCameraSpeed());
+                drawReadoutRow("Camera speed", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.2f m/s^2", m_physicsEngine->getGravity());
+                drawReadoutRow("Gravity", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", m_physicsEngine->getAirDensity());
+                drawReadoutRow("Sea-level density", buffer);
+                ImGui::EndTable();
+            }
+        }
+    }
+    ImGui::End();
+
+    const std::string currentSettingsSnapshot = buildSettingsSnapshot();
+    if (currentSettingsSnapshot != m_lastSettingsSnapshot)
+    {
+        scheduleSettingsSave();
+        m_lastSettingsSnapshot = currentSettingsSnapshot;
+    }
+#endif
+    return;
+#if 0
     {
         static bool themeInitialized = false;
 
@@ -2569,6 +3294,7 @@ void Application::setupUI()
             m_lastSettingsSnapshot = currentSettingsSnapshot;
         }
     }
+#endif
 }
 
 void Application::createTarget(const glm::vec3 &position, float radius)
