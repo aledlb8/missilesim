@@ -1,23 +1,22 @@
 #pragma once
 
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
+#include <glm/glm.hpp>
+#include <chrono>
+#include <deque>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
-#include <random>
-#include <deque>
-#include <chrono>
-
-#include "physics/PhysicsEngine.h"
-#include "rendering/Renderer.h"
-#include "audio/AudioSystem.h"
-#include "objects/Flare.h"
-#include "objects/Missile.h"
 #include "objects/Target.h"
+
+class AudioSystem;
+class Flare;
+struct FlareLaunchRequest;
+struct GLFWwindow;
+struct ImVec2;
+class Missile;
+class PhysicsEngine;
+class Renderer;
 
 // Structure to represent a visual explosion effect
 struct ExplosionEffect
