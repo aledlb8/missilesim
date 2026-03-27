@@ -21,6 +21,32 @@
 #define MISSILESIM_SOURCE_ASSET_DIR ""
 #endif
 
+namespace
+{
+    constexpr float kEnvironmentShrinkHysteresis = 0.72f;
+
+    float quantizeEnvironmentMetric(float value, float minimumStep)
+    {
+        const float step = std::max(minimumStep, value * 0.12f);
+        return std::ceil(value / step) * step;
+    }
+
+    float adoptQuantizedEnvironmentMetric(float currentValue, float requestedValue)
+    {
+        if (requestedValue > currentValue + 0.5f)
+        {
+            return requestedValue;
+        }
+
+        if (requestedValue < currentValue * kEnvironmentShrinkHysteresis)
+        {
+            return requestedValue;
+        }
+
+        return currentValue;
+    }
+}
+
 void Renderer::setCameraPosition(const glm::vec3 &position)
 {
     m_cameraPosition = position;
@@ -95,24 +121,33 @@ void Renderer::moveCameraUp(float distance)
 
 void Renderer::setEnvironmentMetrics(float groundHalfExtent, float airspaceHalfExtent, float airspaceHeight)
 {
-    const float clampedGroundHalfExtent = std::max(groundHalfExtent, 1200.0f);
-    const float clampedAirspaceHalfExtent = std::max(airspaceHalfExtent, 600.0f);
-    const float clampedAirspaceHeight = std::max(airspaceHeight, 320.0f);
+    const float requestedGroundHalfExtent = quantizeEnvironmentMetric(std::max(groundHalfExtent, 1200.0f), 240.0f);
+    const float requestedAirspaceHalfExtent = quantizeEnvironmentMetric(std::max(airspaceHalfExtent, 600.0f), 120.0f);
+    const float requestedAirspaceHeight = quantizeEnvironmentMetric(std::max(airspaceHeight, 320.0f), 80.0f);
 
-    if (std::abs(clampedGroundHalfExtent - m_groundHalfExtent) < 1.0f &&
-        std::abs(clampedAirspaceHalfExtent - m_airspaceHalfExtent) < 1.0f &&
-        std::abs(clampedAirspaceHeight - m_airspaceHeight) < 1.0f)
+    const float updatedGroundHalfExtent = adoptQuantizedEnvironmentMetric(m_groundHalfExtent, requestedGroundHalfExtent);
+    const float updatedAirspaceHalfExtent = adoptQuantizedEnvironmentMetric(m_airspaceHalfExtent, requestedAirspaceHalfExtent);
+    const float updatedAirspaceHeight = adoptQuantizedEnvironmentMetric(m_airspaceHeight, requestedAirspaceHeight);
+
+    const bool groundExtentChanged = std::abs(updatedGroundHalfExtent - m_groundHalfExtent) >= 0.5f;
+    const bool airspaceExtentChanged = std::abs(updatedAirspaceHalfExtent - m_airspaceHalfExtent) >= 0.5f;
+    const bool airspaceHeightChanged = std::abs(updatedAirspaceHeight - m_airspaceHeight) >= 0.5f;
+
+    if (!groundExtentChanged && !airspaceExtentChanged && !airspaceHeightChanged)
     {
         return;
     }
 
-    m_groundHalfExtent = clampedGroundHalfExtent;
-    m_airspaceHalfExtent = clampedAirspaceHalfExtent;
-    m_airspaceHeight = clampedAirspaceHeight;
+    m_groundHalfExtent = updatedGroundHalfExtent;
+    m_airspaceHalfExtent = updatedAirspaceHalfExtent;
+    m_airspaceHeight = updatedAirspaceHeight;
     m_sceneFarPlane = std::max(20000.0f, (m_groundHalfExtent * 3.5f) + (m_airspaceHeight * 2.0f));
 
-    createFloor();
-    uploadFloorMesh();
+    if (groundExtentChanged || airspaceExtentChanged)
+    {
+        createFloor();
+        uploadFloorMesh();
+    }
 }
 
 void Renderer::updateCameraVectors()

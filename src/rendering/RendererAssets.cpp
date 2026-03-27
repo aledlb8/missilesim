@@ -513,7 +513,7 @@ void Renderer::createFloor()
 
     const float size = m_groundHalfExtent * 2.0f;
     const float y = 0.0f;
-    const int gridSize = std::clamp(static_cast<int>(size / 40.0f), 60, 240);
+    const int gridSize = std::clamp(static_cast<int>(size / 80.0f), 64, 128);
     const float cellSize = size / gridSize;
     const float runwayHalfWidth = glm::clamp(m_airspaceHalfExtent * 0.035f, 14.0f, 72.0f);
     const float runwayHalfLength = glm::clamp(m_airspaceHalfExtent * 0.55f, 230.0f, m_groundHalfExtent * 0.45f);
