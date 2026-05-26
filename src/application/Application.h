@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "objects/Target.h"
+#include "sim/SimulationConfig.h"
 
 class AudioSystem;
 class Flare;
@@ -130,6 +131,7 @@ private:
     void saveSettings();
     void scheduleSettingsSave();
     void flushSettingsAutosave(float deltaTime);
+    void applySimulationConfigDefaults();
 
     // Mouse control functions
     void mouseCallback(double xpos, double ypos);
@@ -155,7 +157,14 @@ private:
     const char *getMissileSeekerTrackLabel() const;
     void updatePreLaunchSeekerLock();
     void renderPreLaunchSeekerCue() const;
-    void terminateMissileFlight(const glm::vec3 &position, bool createEffect = true);
+
+    // Interception / detonation handling. Instead of resetting the instant a
+    // missile detonates, we spawn the explosion and hold the scene for a few
+    // seconds so the impact is visible (especially from onboard cameras),
+    // then reset.
+    void beginDetonationHold(const glm::vec3 &position);
+    void finishDetonationHold();
+    void frameDetonationCamera();
 
     // Visual effects
     void createExplosion(const glm::vec3 &position);
@@ -196,11 +205,18 @@ private:
     std::unique_ptr<Missile> m_missile;
     std::vector<std::unique_ptr<Target>> m_targets;
     std::vector<std::unique_ptr<Flare>> m_flares;
+    missilesim::sim::SimulationConfig m_simulationConfig;
 
     // Visual effects
     std::deque<ExplosionEffect> m_explosions;
     float m_explosionDuration = 1.0f; // Duration of explosion effect in seconds
     float m_explosionMaxSize = 10.0f; // Maximum size of explosion
+
+    // Post-interception hold: keep the explosion on screen before resetting.
+    bool m_detonationHoldActive = false;
+    float m_detonationHoldTimer = 0.0f;
+    float m_detonationHoldDuration = 3.0f; // wall-clock seconds to view the blast
+    glm::vec3 m_detonationHoldPosition{0.0f};
 
     // visualization options
     bool m_showTrajectory = true;          // Whether to show predicted trajectory

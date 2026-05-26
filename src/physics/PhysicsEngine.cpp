@@ -6,6 +6,13 @@
 
 namespace
 {
+    // Upper bound on a single integration sub-step. The engine splits the
+    // requested frame step into however many sub-steps are needed to keep each
+    // one at or below this size, which is what keeps the force-based dynamics
+    // stable now that the arbitrary acceleration/velocity clamps are gone.
+    constexpr float kMaxSubStepSeconds = 0.0025f; // 400 Hz integration ceiling
+    constexpr int kMaxSubStepsPerFrame = 32;
+
     bool segmentIntersectsSphere(const glm::vec3 &segmentStart,
                                  const glm::vec3 &segmentEnd,
                                  const glm::vec3 &sphereCenter,
@@ -35,6 +42,26 @@ PhysicsEngine::PhysicsEngine()
 }
 
 void PhysicsEngine::update(float deltaTime)
+{
+    if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime))
+    {
+        return;
+    }
+
+    // Split the frame step into bounded sub-steps so the integrator stays
+    // stable without relying on artificial force/acceleration caps.
+    const int subStepCount = std::min(
+        std::max(static_cast<int>(std::ceil(deltaTime / kMaxSubStepSeconds)), 1),
+        kMaxSubStepsPerFrame);
+    const float subStep = deltaTime / static_cast<float>(subStepCount);
+
+    for (int step = 0; step < subStepCount; ++step)
+    {
+        integrateStep(subStep);
+    }
+}
+
+void PhysicsEngine::integrateStep(float deltaTime)
 {
     try
     {
@@ -75,12 +102,18 @@ void PhysicsEngine::update(float deltaTime)
             {
                 Missile *missile = static_cast<Missile *>(object);
                 missile->setGroundReferenceAltitude(m_groundLevel);
+
+                // Sample the local atmosphere once: ambient pressure drives the
+                // motor's altitude thrust lapse, density sets the dynamic
+                // pressure that bounds the missile's control authority.
+                const Atmosphere::State atmosphereState =
+                    m_atmosphere ? m_atmosphere->sample(missile->getPosition().y) : Atmosphere::State{};
+                missile->setAmbientPressure(atmosphereState.pressurePascals);
                 missile->updateHeatSeeker(m_targets, m_flares, deltaTime);
 
-                // Apply missile guidance
                 if (missile->isGuidanceEnabled() && missile->hasTarget())
                 {
-                    missile->applyGuidance(deltaTime);
+                    missile->applyGuidance(deltaTime, atmosphereState.densityKgPerCubicMeter);
                 }
 
                 activeMissiles.push_back(missile);
@@ -101,6 +134,12 @@ void PhysicsEngine::update(float deltaTime)
         {
             if (target && target->isActive())
             {
+                // Supply the local atmosphere so the target's force-based flight
+                // model sees the correct dynamic pressure and Mach number.
+                const Atmosphere::State atmosphereState =
+                    m_atmosphere ? m_atmosphere->sample(target->getPosition().y) : Atmosphere::State{};
+                target->setAmbientConditions(atmosphereState.densityKgPerCubicMeter,
+                                             atmosphereState.speedOfSoundMetersPerSecond);
                 target->updateThreatAssessment(activeMissiles);
                 target->update(deltaTime);
             }

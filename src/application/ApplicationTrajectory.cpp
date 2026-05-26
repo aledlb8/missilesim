@@ -181,7 +181,6 @@ void Application::updateTrajectoryPreviewCache(Target *target, const TrajectoryP
     const float dt = config.trajectoryTime / static_cast<float>(config.trajectoryPoints);
     Atmosphere atmosphere(config.airDensity);
     Drag drag(&atmosphere);
-    Lift lift(&atmosphere);
 
     Target simTarget = *target;
     std::vector<Missile *> simulatedMissiles = {&simMissile};
@@ -191,7 +190,6 @@ void Application::updateTrajectoryPreviewCache(Target *target, const TrajectoryP
         simMissile.resetForces();
         simMissile.applyForce(glm::vec3(0.0f, -config.gravityMagnitude * simMissile.getMass(), 0.0f));
         drag.applyTo(&simMissile);
-        lift.applyTo(&simMissile);
         simTarget.updateThreatAssessment(simulatedMissiles);
         simTarget.update(dt);
 
@@ -200,10 +198,13 @@ void Application::updateTrajectoryPreviewCache(Target *target, const TrajectoryP
             m_trajectoryPreviewCache.targetPoints.push_back(simTarget.getPosition());
         }
 
+        const Atmosphere::State previewAtmosphere = atmosphere.sample(simMissile.getPosition().y);
+        simMissile.setAmbientPressure(previewAtmosphere.pressurePascals);
+
         simMissile.setTargetObject(&simTarget);
         if (simMissile.isGuidanceEnabled() && simMissile.hasTarget())
         {
-            simMissile.applyGuidance(dt);
+            simMissile.applyGuidance(dt, previewAtmosphere.densityKgPerCubicMeter);
             if (simMissile.consumeSelfDestructRequest())
             {
                 m_trajectoryPreviewCache.missilePoints.push_back(simMissile.getPosition());

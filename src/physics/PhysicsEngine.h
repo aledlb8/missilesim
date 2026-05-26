@@ -57,6 +57,7 @@ public:
     bool checkMissileTargetHit(Missile *missile);
 
 private:
+    void integrateStep(float deltaTime);
     void handleGroundCollision(PhysicsObject *object);
     void handleTargetCollisions();
 

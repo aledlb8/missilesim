@@ -203,6 +203,14 @@ void Application::setCameraMode(CameraMode mode, bool frameFreeCamera)
 
 void Application::updateActiveCameraMode()
 {
+    // While holding on a detonation, keep onboard cameras pointed at the blast
+    // rather than chasing the (now inert) missile or target.
+    if (m_detonationHoldActive && m_cameraMode != CameraMode::FREE)
+    {
+        frameDetonationCamera();
+        return;
+    }
+
     switch (m_cameraMode)
     {
     case CameraMode::FREE:
@@ -214,6 +222,18 @@ void Application::updateActiveCameraMode()
         updateFighterJetCamera();
         return;
     }
+}
+
+void Application::frameDetonationCamera()
+{
+    if (!m_renderer)
+    {
+        return;
+    }
+
+    // Freeze the camera where the chase left it and pan to the impact point so
+    // the explosion stays centred in view for the duration of the hold.
+    m_renderer->setCameraTarget(m_detonationHoldPosition);
 }
 
 void Application::updateMissileCamera()

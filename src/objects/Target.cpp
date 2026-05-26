@@ -11,12 +11,6 @@ namespace
     constexpr float kMinimumAltitudeMeters = 40.0f;
     constexpr float kReferenceDistanceFloorMeters = 250.0f;
     constexpr float kMinimumSpeedMetersPerSecond = 40.0f;
-    constexpr float kCruisePitchRateDegrees = 10.0f;
-    constexpr float kDefensivePitchRateDegrees = 18.0f;
-    constexpr float kCruiseMaxTurnRateDegrees = 14.0f;
-    constexpr float kDefensiveMaxTurnRateDegrees = 22.0f;
-    constexpr float kCruiseParasiticDragFactor = 0.00005f;
-    constexpr float kDefensiveParasiticDragFactor = 0.00008f;
     constexpr float kBoundaryRecoverySoftZoneMeters = 180.0f;
     constexpr float kBoundaryRecoveryBiasMetersPerSecond = 26.0f;
 
@@ -88,21 +82,6 @@ namespace
         return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
     }
 
-    glm::vec3 clampMagnitude(const glm::vec3 &vector, float maxMagnitude)
-    {
-        if (maxMagnitude <= 0.0f)
-        {
-            return glm::vec3(0.0f);
-        }
-
-        const float magnitudeSq = glm::length2(vector);
-        if (magnitudeSq <= maxMagnitude * maxMagnitude)
-        {
-            return vector;
-        }
-
-        return glm::normalize(vector) * maxMagnitude;
-    }
 } // namespace
 
 Target::Target(const glm::vec3 &position, float radius)
@@ -125,6 +104,19 @@ Target::Target(const glm::vec3 &position, float radius)
         std::cerr << "Error: Invalid target radius detected during creation" << std::endl;
         m_radius = 5.0f;
     }
+
+    // Force-based flight model defaults (physical airframe constants; the
+    // energy state now emerges from real lift/drag/thrust rather than scripted
+    // energy-penalty scalars).
+    setMass(8000.0f);        // light combat aircraft / large UCAV class
+    setMaxLoadFactorG(9.0f); // structural load-factor limit
+    m_maxThrust = 75000.0f;  // engine thrust ceiling (N)
+    m_aeroProfile.referenceArea = 12.0f;       // wing reference area (m^2)
+    m_aeroProfile.baseDragCoefficient = 0.022f; // clean zero-lift drag Cd0
+    m_aeroProfile.aspectRatio = 6.0f;
+    m_aeroProfile.oswaldEfficiency = 0.85f;
+    m_aeroProfile.maxLiftCoefficient = 1.4f;
+    m_aeroProfile.machDragMultiplier = missilesim::physics::defaultSupersonicDragRiseCurve();
 
     m_orbitDirection = ((position.x + position.z) >= 0.0f) ? 1 : -1;
     setAIConfig(m_aiConfig);
@@ -306,11 +298,15 @@ void Target::update(float deltaTime)
     updateAutonomousFlight(deltaTime);
     enforceAirspaceConstraint();
     updateCountermeasures(deltaTime, m_velocity);
+
+    // Low-pass the acceleration used for visual banking so the rendered roll
+    // tracks the sustained turn rather than per-step heading corrections.
+    const float bankSmoothing = glm::clamp(deltaTime / 0.25f, 0.0f, 1.0f);
+    m_smoothedAcceleration = glm::mix(m_smoothedAcceleration, m_acceleration, bankSmoothing);
 }
 
 void Target::updateAutonomousFlight(float deltaTime)
 {
-    const glm::vec3 previousPosition = m_position;
     const glm::vec3 previousVelocity = m_velocity;
     const float minSpeed = std::max(m_aiConfig.minSpeed, kMinimumSpeedMetersPerSecond);
     const float maxSpeed = std::max(m_aiConfig.maxSpeed, minSpeed + 10.0f);
@@ -365,17 +361,18 @@ void Target::updateAutonomousFlight(float deltaTime)
             breakDirection = -breakDirection;
         }
 
-        desiredDirection = normalizeOrFallback((breakDirection * 1.45f) +
-                                                   (awayDirection * (0.85f + threatBlend)) -
-                                                   (incomingDirection * 0.25f),
+        desiredDirection = normalizeOrFallback((breakDirection * m_evasiveConfig.defensiveBreakWeight) +
+                                                   (awayDirection * (m_evasiveConfig.defensiveAwayWeight +
+                                                                     (threatBlend * m_evasiveConfig.defensiveThreatAwayWeight))) -
+                                                   (incomingDirection * m_evasiveConfig.defensiveIncomingWeight),
                                                breakDirection);
         m_aiState = TargetAIState::DEFENSIVE;
     }
-    else if (energyFraction < 0.15f)
+    else if (energyFraction < m_evasiveConfig.recoveryEnergyThreshold)
     {
         m_aiState = TargetAIState::RECOVERING;
     }
-    else if (std::abs(distanceCorrection) > 0.35f)
+    else if (std::abs(distanceCorrection) > m_evasiveConfig.repositionDistanceThreshold)
     {
         m_aiState = TargetAIState::REPOSITION;
     }
@@ -386,8 +383,11 @@ void Target::updateAutonomousFlight(float deltaTime)
 
     const float desiredAltitude = computeDesiredAltitude(referenceDistance, currentSpeed);
     const float altitudeError = desiredAltitude - m_position.y;
+    const float maxAltitudePitchBias = std::max(m_evasiveConfig.maxAltitudePitchBias, 0.0f);
     desiredDirection = normalizeOrFallback(glm::vec3(desiredDirection.x,
-                                                     desiredDirection.y + glm::clamp(altitudeError / 260.0f, -0.42f, 0.42f),
+                                                     desiredDirection.y + glm::clamp(altitudeError / m_evasiveConfig.altitudeCorrectionRange,
+                                                                                    -maxAltitudePitchBias,
+                                                                                    maxAltitudePitchBias),
                                                      desiredDirection.z),
                                            desiredDirection);
 
@@ -396,7 +396,10 @@ void Target::updateAutonomousFlight(float deltaTime)
                                                                      glm::vec3(currentDirection.x, 0.0f, currentDirection.z));
     const float currentPitch = std::asin(glm::clamp(currentDirection.y, -1.0f, 1.0f));
     const float desiredPitch = std::asin(glm::clamp(desiredDirection.y, -1.0f, 1.0f));
-    const float maxPitchDelta = glm::radians(m_threatAssessment.active ? kDefensivePitchRateDegrees : kCruisePitchRateDegrees) * deltaTime;
+    const float pitchRateDegrees = m_threatAssessment.active
+                                       ? m_evasiveConfig.defensivePitchRateDegrees
+                                       : m_evasiveConfig.cruisePitchRateDegrees;
+    const float maxPitchDelta = glm::radians(pitchRateDegrees) * deltaTime;
     const float limitedPitch = currentPitch + glm::clamp(desiredPitch - currentPitch, -maxPitchDelta, maxPitchDelta);
     const float horizontalPitchScale = std::max(std::cos(limitedPitch), 0.05f);
     desiredDirection = normalizeOrFallback(glm::vec3(desiredHorizontalDirection.x * horizontalPitchScale,
@@ -405,43 +408,51 @@ void Target::updateAutonomousFlight(float deltaTime)
                                            desiredDirection);
 
     const float desiredSpeed = computeDesiredSpeed(referenceDistance);
-    const float accelRate = m_threatAssessment.active ? 18.0f : 9.0f;
-    const float decelRate = m_threatAssessment.active ? 24.0f : 12.0f;
-    const float lateralAccelerationLimit = m_threatAssessment.active
-                                               ? (m_evasiveConfig.lateralAcceleration * 0.72f * m_evasiveConfig.speedMultiplier)
-                                               : (m_evasiveConfig.lateralAcceleration * 0.38f);
-    const float maxTurnRate = std::min(lateralAccelerationLimit / std::max(currentSpeed, minSpeed * 0.8f),
-                                       glm::radians(m_threatAssessment.active ? kDefensiveMaxTurnRateDegrees : kCruiseMaxTurnRateDegrees));
+
+    // --- Heading control: turn rate limited by available aerodynamic g ------
+    // The lateral acceleration the airframe can pull is bounded by the lift
+    // available at the local dynamic pressure and by its structural g-limit,
+    // exactly like the missile. This replaces the former scripted turn-rate
+    // and lateral-acceleration tuning scalars.
+    const float dynamicPressure = 0.5f * std::max(m_ambientDensity, 0.0f) * currentSpeed * currentSpeed;
+    const float referenceArea = (m_aeroProfile.referenceArea > 0.0f) ? m_aeroProfile.referenceArea : 1.0f;
+    const float vehicleMass = std::max(m_mass, 1.0f);
+    const float structuralLimit = (m_maxLoadFactorG > 0.0f) ? (m_maxLoadFactorG * 9.80665f) : 1.0e9f;
+    const float aerodynamicLimit = (dynamicPressure * m_aeroProfile.maxLiftCoefficient * referenceArea) / vehicleMass;
+    const float maxLateralAcceleration = std::min(aerodynamicLimit, structuralLimit);
+    const float maxTurnRate = maxLateralAcceleration / std::max(currentSpeed, 1.0f);
     const glm::vec3 limitedDirection = rotateTowardsDirection(currentDirection, desiredDirection, maxTurnRate * deltaTime);
-    const glm::vec3 desiredVelocity = limitedDirection * desiredSpeed;
 
-    const float longitudinalVelocity = glm::dot(desiredVelocity - previousVelocity, currentDirection);
-    const glm::vec3 lateralVelocityDelta = (desiredVelocity - previousVelocity) - (currentDirection * longitudinalVelocity);
+    // Operating lift coefficient for this turn (centripetal accel = omega * v),
+    // used to charge real induced drag.
+    const float turnAngle = std::acos(glm::clamp(glm::dot(currentDirection, limitedDirection), -1.0f, 1.0f));
+    const float lateralAcceleration = (deltaTime > 0.0f) ? ((turnAngle / deltaTime) * currentSpeed) : 0.0f;
+    const float liftCoefficient = glm::clamp(
+        (vehicleMass * lateralAcceleration) / std::max(dynamicPressure * referenceArea, 1e-4f),
+        0.0f, m_aeroProfile.maxLiftCoefficient);
+    m_commandedLiftCoefficient = liftCoefficient;
 
-    const float maxLongitudinalDelta = ((longitudinalVelocity >= 0.0f) ? accelRate : decelRate) * deltaTime;
-    const float clampedLongitudinalDelta = glm::clamp(longitudinalVelocity, -maxLongitudinalDelta, maxLongitudinalDelta);
-    const glm::vec3 clampedLateralDelta = clampMagnitude(lateralVelocityDelta, lateralAccelerationLimit * deltaTime);
+    // --- Energy: real thrust vs aerodynamic drag and gravity along the path -
+    const float mach = (m_speedOfSound > 1e-3f) ? (currentSpeed / m_speedOfSound) : 0.0f;
+    const float dragCoefficient = missilesim::physics::zeroLiftDragCoefficient(m_aeroProfile, mach) +
+                                  missilesim::physics::inducedDragCoefficient(m_aeroProfile, liftCoefficient);
+    const float dragForce = dynamicPressure * dragCoefficient * referenceArea;
+    const float gravityAlongPath = 9.80665f * limitedDirection.y; // decelerates in a climb, accelerates in a dive
+    const float engineResponseTime = 1.0f;                        // engine speed-tracking time constant (s)
+    const float desiredAlongAcceleration = (desiredSpeed - currentSpeed) / engineResponseTime;
+    const float requiredThrust =
+        (vehicleMass * desiredAlongAcceleration) + dragForce + (vehicleMass * gravityAlongPath);
+    const float thrustForce = glm::clamp(requiredThrust, 0.0f, m_maxThrust);
+    const float alongAcceleration = ((thrustForce - dragForce) / vehicleMass) - gravityAlongPath;
 
-    const float lateralDeltaMagnitude = glm::length(clampedLateralDelta);
-    const float lateralAccelFraction = glm::clamp(lateralDeltaMagnitude / std::max(lateralAccelerationLimit * deltaTime, 0.0001f), 0.0f, 1.0f);
-    const float climbPenalty = std::max(limitedDirection.y, 0.0f) * glm::mix(1.5f, 4.0f, lateralAccelFraction);
-    const float inducedDrag = lateralAccelFraction * lateralAccelFraction * (m_threatAssessment.active ? 16.0f : 8.5f);
-    const float aoaPenalty = std::abs(desiredPitch - currentPitch) * (m_threatAssessment.active ? 9.0f : 5.0f);
-    const float parasiticDrag = currentSpeed * currentSpeed *
-                                (m_threatAssessment.active ? kDefensiveParasiticDragFactor : kCruiseParasiticDragFactor);
-    const float energyLossDelta = (climbPenalty + inducedDrag + aoaPenalty + parasiticDrag) * deltaTime;
+    float newSpeed = currentSpeed + (alongAcceleration * deltaTime);
+    // Envelope slightly wider than the AI speed band: a numeric glitch can
+    // never freeze or reverse the target, but in normal flight the physical
+    // thrust/drag balance, not this clamp, governs the speed.
+    newSpeed = glm::clamp(newSpeed, minSpeed * 0.5f, maxSpeed * 1.15f);
 
-    glm::vec3 updatedVelocity = previousVelocity +
-                                (currentDirection * clampedLongitudinalDelta) +
-                                clampedLateralDelta;
-
-    const float updatedSpeed = glm::length(updatedVelocity);
-    glm::vec3 updatedDirection = normalizeOrFallback(updatedVelocity, limitedDirection);
-    float clampedSpeed = updatedSpeed - energyLossDelta;
-    clampedSpeed = glm::clamp(clampedSpeed, minSpeed, maxSpeed);
-
-    // Keep the target flying the turn rather than teleporting to a new heading.
-    m_velocity = updatedDirection * clampedSpeed;
+    // Fly the turn rather than teleporting to a new heading.
+    m_velocity = limitedDirection * newSpeed;
     m_commandedSpeed = desiredSpeed;
     m_position += (previousVelocity + m_velocity) * (0.5f * deltaTime);
     m_acceleration = (m_velocity - previousVelocity) / std::max(deltaTime, 0.0001f);
@@ -462,19 +473,25 @@ float Target::computeDesiredSpeed(float referenceDistance) const
     if (m_threatAssessment.active)
     {
         const float threatBlend = 1.0f - glm::clamp(m_threatAssessment.timeToClosestApproach / std::max(m_mawsConfig.reactionTimeWindow, 0.1f), 0.0f, 1.0f);
-        desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, 0.48f + (0.24f * threatBlend));
+        const float defensiveSpeedBlend = glm::clamp(m_evasiveConfig.defensiveSpeedBlend +
+                                                         (m_evasiveConfig.defensiveSpeedUrgencyBlend * threatBlend),
+                                                     0.0f,
+                                                     1.0f);
+        desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, defensiveSpeedBlend);
     }
     else if (outerRecaptureBlend > 0.0f)
     {
         desiredSpeed = glm::mix(cruiseSpeed, minSpeed, outerRecaptureBlend);
     }
-    else if (distanceError > 0.15f)
+    else if (distanceError > m_evasiveConfig.nearDistanceSpeedupThreshold)
     {
         desiredSpeed = glm::mix(cruiseSpeed, maxSpeed, distanceError);
     }
-    else if (distanceError < -0.25f)
+    else if (distanceError < -m_evasiveConfig.farDistanceSlowdownThreshold)
     {
-        desiredSpeed = glm::mix(cruiseSpeed, minSpeed + ((maxSpeed - minSpeed) * 0.18f), -distanceError);
+        desiredSpeed = glm::mix(cruiseSpeed,
+                                minSpeed + ((maxSpeed - minSpeed) * m_evasiveConfig.farDistanceSpeedFloor),
+                                -distanceError);
     }
 
     return glm::clamp(desiredSpeed, minSpeed, maxSpeed);
@@ -491,26 +508,26 @@ float Target::computeDesiredAltitude(float referenceDistance, float currentSpeed
     float desiredAltitude = m_nominalAltitude + (std::sin(m_patrolPhase) * m_altitudeExcursion);
     if (referenceDistance < m_aiConfig.preferredDistance * 0.75f)
     {
-        desiredAltitude += 35.0f;
+        desiredAltitude += m_evasiveConfig.innerDistanceAltitudeOffset;
     }
     else if (referenceDistance > m_aiConfig.preferredDistance * 1.2f)
     {
-        desiredAltitude -= 25.0f;
+        desiredAltitude += m_evasiveConfig.outerDistanceAltitudeOffset;
     }
 
     if (m_threatAssessment.active)
     {
         if (currentSpeed < midSpeed)
         {
-            desiredAltitude -= 55.0f;
+            desiredAltitude += m_evasiveConfig.defensiveLowEnergyAltitudeOffset;
         }
         else if (m_threatAssessment.missilePosition.y < m_position.y)
         {
-            desiredAltitude += 40.0f;
+            desiredAltitude += m_evasiveConfig.defensiveThreatBelowAltitudeOffset;
         }
         else
         {
-            desiredAltitude -= 30.0f;
+            desiredAltitude += m_evasiveConfig.defensiveThreatAboveAltitudeOffset;
         }
     }
 
@@ -621,11 +638,13 @@ void Target::updateCountermeasures(float deltaTime, const glm::vec3 &currentVelo
         const glm::vec3 lateralDirection = perpendicularTo(velocityDirection) * static_cast<float>(m_flareSpreadSign);
 
         FlareLaunchRequest request;
-        request.position = m_position + (aftDirection * (m_radius + 1.2f)) + (lateralDirection * 0.8f);
+        request.position = m_position +
+                           (aftDirection * (m_radius + m_flareConfig.aftLaunchOffset)) +
+                           (lateralDirection * m_flareConfig.lateralLaunchOffset);
         request.velocity = currentVelocity +
                            (aftDirection * m_flareConfig.ejectSpeed) +
-                           (lateralDirection * m_flareConfig.ejectSpeed * 0.18f) +
-                           glm::vec3(0.0f, -m_flareConfig.ejectSpeed * 0.12f, 0.0f);
+                           (lateralDirection * m_flareConfig.ejectSpeed * m_flareConfig.lateralEjectFraction) +
+                           glm::vec3(0.0f, -m_flareConfig.ejectSpeed * m_flareConfig.downwardEjectFraction, 0.0f);
         request.mass = m_flareConfig.mass;
         request.dragCoefficient = m_flareConfig.dragCoefficient;
         request.crossSectionalArea = m_flareConfig.crossSectionalArea;

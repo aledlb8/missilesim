@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "name": "Baseline sandbox",
+  "environment": {
+    "fixed_time_step_s": 0.01,
+    "simulation_speed": 1.0,
+    "gravity_m_s2": 9.81,
+    "sea_level_air_density_kg_m3": 1.225,
+    "ground_collision_enabled": true,
+    "ground_restitution": 0.5
+  },
+  "visualization": {
+    "show_trajectory": true,
+    "show_target_info": true,
+    "show_predicted_target_path": true,
+    "show_intercept_point": true,
+    "trajectory_points": 140,
+    "trajectory_time_s": 12.0
+  },
+  "camera": {
+    "fov_degrees": 50.0,
+    "speed": 35.0
+  },
+  "missile": {
+    "airframe": {
+      "initial_position_m": [0.0, 0.0, 0.0],
+      "initial_velocity_m_s": [0.0, 0.0, 50.0],
+      "dry_mass_kg": 100.0,
+      "drag_coefficient": 0.1,
+      "cross_sectional_area_m2": 0.1,
+      "lift_coefficient": 0.1,
+      "aspect_ratio": 18.0,
+      "oswald_efficiency": 0.8,
+      "max_lift_coefficient": 20.0,
+      "max_load_factor_g": 40.0,
+      "mach_drag_multiplier": [
+        [0.0, 1.0],
+        [0.8, 1.1],
+        [0.95, 1.9],
+        [1.05, 3.8],
+        [1.2, 3.5],
+        [2.0, 2.6],
+        [3.0, 2.0],
+        [5.0, 1.8]
+      ]
+    },
+    "motor": {
+      "thrust_n": 10000.0,
+      "fuel_mass_kg": 100.0,
+      "fuel_consumption_rate_kg_s": 0.5,
+      "nozzle_exit_area_m2": 0.01,
+      "nozzle_exit_pressure_pa": 101325.0
+    },
+    "guidance": {
+      "enabled": true,
+      "navigation_gain": 4.0,
+      "max_steering_force_n": 20000.0,
+      "tracking_angle_degrees": 85.0,
+      "proximity_fuse_radius_m": 18.0,
+      "countermeasure_resistance": 0.65,
+      "terrain_avoidance_enabled": true,
+      "terrain_clearance_m": 90.0,
+      "terrain_lookahead_time_s": 6.0,
+      "seeker_cue_radius_px": 44.0
+    }
+  },
+  "targets": {
+    "count": 1,
+    "max_count": 20,
+    "ai": {
+      "min_speed_m_s": 180.0,
+      "max_speed_m_s": 320.0,
+      "preferred_distance_m": 1500.0
+    },
+    "spawn": {
+      "distance_scale_min": 0.82,
+      "distance_scale_max": 1.18,
+      "radius_min_m": 3.0,
+      "radius_max_m": 7.0,
+      "fallback_radius_m": 5.0,
+      "fallback_spacing_m": 100.0,
+      "fallback_position_m": [100.0, 100.0, 100.0],
+      "minimum_altitude_floor_m": 80.0,
+      "minimum_altitude_distance_fraction": 0.08,
+      "minimum_altitude_ceiling_m": 500.0,
+      "maximum_altitude_distance_fraction": 0.28,
+      "maximum_altitude_ceiling_m": 3200.0,
+      "minimum_altitude_band_m": 60.0,
+      "warmup_time_step_s": 0.016
+    },
+    "maws": {
+      "enabled": true,
+      "detection_range_m": 3200.0,
+      "reaction_time_window_s": 6.0,
+      "closest_approach_threshold_m": 140.0
+    },
+    "flares": {
+      "enabled": true,
+      "inventory": 24,
+      "burst_size": 2,
+      "burst_interval_s": 0.12,
+      "cooldown_s": 0.9,
+      "eject_speed_m_s": 45.0,
+      "aft_launch_offset_m": 1.2,
+      "lateral_launch_offset_m": 0.8,
+      "lateral_eject_fraction": 0.18,
+      "downward_eject_fraction": 0.12,
+      "lifetime_s": 4.0,
+      "heat_signature": 5.5,
+      "heat_decay_rate": 1.3,
+      "mass_kg": 0.9,
+      "drag_coefficient": 1.1,
+      "cross_sectional_area_m2": 0.018
+    }
+  }
+}

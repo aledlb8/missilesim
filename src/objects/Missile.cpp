@@ -27,113 +27,6 @@ namespace
         return glm::vec3(0.0f, 0.0f, 1.0f);
     }
 
-    glm::vec3 perpendicularTo(const glm::vec3 &direction)
-    {
-        const glm::vec3 referenceAxis = (std::abs(direction.y) < 0.9f)
-                                            ? glm::vec3(0.0f, 1.0f, 0.0f)
-                                            : glm::vec3(1.0f, 0.0f, 0.0f);
-        return normalizeOrFallback(glm::cross(direction, referenceAxis), glm::vec3(0.0f, 0.0f, 1.0f));
-    }
-
-    glm::vec3 rotateTowardsDirection(const glm::vec3 &currentDirection, const glm::vec3 &targetDirection, float maxRadiansDelta)
-    {
-        const glm::vec3 current = normalizeOrFallback(currentDirection, glm::vec3(0.0f, 0.0f, 1.0f));
-        const glm::vec3 target = normalizeOrFallback(targetDirection, current);
-
-        if (maxRadiansDelta <= 0.0f)
-        {
-            return current;
-        }
-
-        const float cosTheta = glm::clamp(glm::dot(current, target), -1.0f, 1.0f);
-        const float angle = std::acos(cosTheta);
-        if (angle <= maxRadiansDelta || angle < 0.0001f)
-        {
-            return target;
-        }
-
-        glm::vec3 relative = target - (current * cosTheta);
-        if (glm::length2(relative) < 0.0001f)
-        {
-            relative = perpendicularTo(current);
-        }
-        else
-        {
-            relative = glm::normalize(relative);
-        }
-
-        return glm::normalize((current * std::cos(maxRadiansDelta)) + (relative * std::sin(maxRadiansDelta)));
-    }
-
-    glm::vec3 predictInterceptPoint(const glm::vec3 &missilePosition,
-                                    float missileSpeed,
-                                    const glm::vec3 &targetPosition,
-                                    const glm::vec3 &targetVelocity,
-                                    float maxLookAheadTime)
-    {
-        if (missileSpeed < 0.1f)
-        {
-            return targetPosition;
-        }
-
-        const glm::vec3 relativePosition = targetPosition - missilePosition;
-        const float missileSpeedSq = missileSpeed * missileSpeed;
-        const float a = glm::dot(targetVelocity, targetVelocity) - missileSpeedSq;
-        const float b = 2.0f * glm::dot(relativePosition, targetVelocity);
-        const float c = glm::dot(relativePosition, relativePosition);
-        const float epsilon = 0.0001f;
-
-        float timeToIntercept = glm::length(relativePosition) / missileSpeed;
-        bool hasInterceptSolution = false;
-
-        if (std::abs(a) < epsilon)
-        {
-            if (std::abs(b) > epsilon)
-            {
-                const float candidate = -c / b;
-                if (candidate > 0.0f)
-                {
-                    timeToIntercept = candidate;
-                    hasInterceptSolution = true;
-                }
-            }
-        }
-        else
-        {
-            const float discriminant = (b * b) - (4.0f * a * c);
-            if (discriminant >= 0.0f)
-            {
-                const float sqrtDiscriminant = std::sqrt(discriminant);
-                const float t1 = (-b - sqrtDiscriminant) / (2.0f * a);
-                const float t2 = (-b + sqrtDiscriminant) / (2.0f * a);
-
-                if (t1 > 0.0f && t2 > 0.0f)
-                {
-                    timeToIntercept = std::min(t1, t2);
-                    hasInterceptSolution = true;
-                }
-                else if (t1 > 0.0f)
-                {
-                    timeToIntercept = t1;
-                    hasInterceptSolution = true;
-                }
-                else if (t2 > 0.0f)
-                {
-                    timeToIntercept = t2;
-                    hasInterceptSolution = true;
-                }
-            }
-        }
-
-        if (!hasInterceptSolution)
-        {
-            timeToIntercept = glm::length(relativePosition) / missileSpeed;
-        }
-
-        timeToIntercept = glm::clamp(timeToIntercept, 0.0f, std::max(maxLookAheadTime, 0.0f));
-        return targetPosition + (targetVelocity * timeToIntercept);
-    }
-
     float computeAngleDegreesFromDot(float dotValue)
     {
         return glm::degrees(std::acos(glm::clamp(dotValue, -1.0f, 1.0f)));
@@ -148,6 +41,21 @@ Missile::Missile(const glm::vec3 &position, const glm::vec3 &velocity,
       m_liftCoefficient(liftCoefficient),
       m_dryMass(std::max(mass, 0.01f))
 {
+    // Seed the Mach-dependent aerodynamic profile from the scalar airframe
+    // inputs plus a default transonic drag-rise signature. Config (A3) may
+    // later replace the curve and lifting-surface parameters wholesale.
+    m_aeroProfile.referenceArea = m_crossSectionalArea;
+    m_aeroProfile.baseDragCoefficient = m_dragCoefficient;
+    // Coefficients are referenced to the small body cross-section, so a slender
+    // missile's max normal-force coefficient is large; the induced-drag term
+    // depends on span (S*AR), keeping turn energy bleed realistic.
+    m_aeroProfile.aspectRatio = 18.0f;
+    m_aeroProfile.oswaldEfficiency = 0.8f;   // span efficiency factor
+    m_aeroProfile.maxLiftCoefficient = 20.0f; // normal-force ceiling (control authority)
+    m_aeroProfile.machDragMultiplier = missilesim::physics::defaultSupersonicDragRiseCurve();
+
+    setMaxLoadFactorG(40.0f); // structural limit; config may override
+
     synchronizeMass();
 }
 
@@ -395,11 +303,12 @@ bool Missile::consumeSelfDestructRequest()
     return requested;
 }
 
-void Missile::applyGuidance(float deltaTime)
+void Missile::applyGuidance(float deltaTime, float airDensity)
 {
     // Only apply guidance if enabled and target exists
     if (!m_guidanceEnabled || !m_hasTarget)
     {
+        m_commandedLiftCoefficient = 0.0f;
         return;
     }
 
@@ -466,65 +375,89 @@ void Missile::applyGuidance(float deltaTime)
         }
 
         const glm::vec3 lineOfSight = relativePosition / distanceToTarget;
-        const glm::vec3 interceptPoint = predictInterceptPoint(m_position, speed, m_targetPosition, targetVelocity, 20.0f);
-        const glm::vec3 interceptDirection = normalizeOrFallback(interceptPoint - m_position, lineOfSight);
-        const float leadBlend = glm::clamp((m_navigationGain - 1.0f) / 3.0f, 0.0f, 1.0f);
-        glm::vec3 desiredDirection = normalizeOrFallback(
-            glm::mix(lineOfSight, interceptDirection, leadBlend),
-            interceptDirection);
 
-        const float seekerAlignment = glm::clamp(glm::dot(currentDirection, interceptDirection), -1.0f, 1.0f);
+        // Self-destruct if the target leaves the seeker field of view.
+        const float seekerAlignment = glm::clamp(glm::dot(currentDirection, lineOfSight), -1.0f, 1.0f);
         const float seekerAngleDegrees = glm::degrees(std::acos(seekerAlignment));
         if (seekerAngleDegrees > m_trackingAngleDegrees)
         {
             m_selfDestructRequested = true;
+            m_commandedLiftCoefficient = 0.0f;
             return;
         }
 
+        // --- True proportional navigation --------------------------------
+        //   LOS angular velocity:  omega = (R x Vr) / (R . R)
+        //   Closing velocity:      Vc    = -(Vr . uLOS)
+        //   Command:               a_n   = N * Vc * (omega x uLOS)
+        // The command is normal to the line of sight; on a collision course
+        // (zero LOS rate) it is zero, which is the PN ideal.
+        const glm::vec3 relativeVelocity = targetVelocity - m_velocity;
+        const float rangeSquared = std::max(glm::dot(relativePosition, relativePosition), 1e-4f);
+        const glm::vec3 losRate = glm::cross(relativePosition, relativeVelocity) / rangeSquared;
+        const float closingSpeed = -glm::dot(relativeVelocity, lineOfSight);
+        const float navigationConstant = glm::clamp(m_navigationGain, 1.0f, 6.0f);
+        // A floor on the effective closing speed keeps authority just after
+        // launch when the geometry can momentarily be opening.
+        const float effectiveClosingSpeed = std::max(std::abs(closingSpeed), speed * 0.1f);
+        glm::vec3 commandedAcceleration =
+            navigationConstant * effectiveClosingSpeed * glm::cross(losRate, lineOfSight);
+
+        // Lift does no work along the flight path: keep the command normal to
+        // the current velocity.
+        commandedAcceleration -= currentDirection * glm::dot(commandedAcceleration, currentDirection);
+
+        // --- Terrain avoidance, as an added upward acceleration demand ----
         if (m_terrainAvoidanceEnabled)
         {
             const float currentClearance = m_position.y - m_groundReferenceAltitude;
-            const float predictedClearance = currentClearance + (desiredDirection.y * speed * m_terrainLookAheadTime);
-
+            const float predictedClearance = currentClearance + (m_velocity.y * m_terrainLookAheadTime);
             if (predictedClearance < m_terrainClearance)
             {
                 const float deficit = m_terrainClearance - predictedClearance;
-                const float terrainBlend = glm::clamp(deficit / std::max(m_terrainClearance + 20.0f, 20.0f), 0.0f, 1.0f);
-                const glm::vec3 terrainForward = normalizeOrFallback(
-                    glm::vec3(desiredDirection.x, 0.0f, desiredDirection.z),
-                    glm::vec3(currentDirection.x, 0.0f, currentDirection.z));
-                const glm::vec3 climbDirection = normalizeOrFallback(
-                    glm::vec3(terrainForward.x, glm::mix(0.35f, 1.4f, terrainBlend), terrainForward.z),
-                    glm::vec3(0.0f, 1.0f, 0.0f));
-                desiredDirection = normalizeOrFallback(
-                    glm::mix(desiredDirection, climbDirection, 0.3f + (terrainBlend * 0.6f)),
-                    climbDirection);
+                const float lookAhead = std::max(m_terrainLookAheadTime, 0.5f);
+                // Acceleration needed to erase the clearance deficit within the
+                // look-ahead window (s = 0.5*a*t^2 -> a = 2s/t^2).
+                commandedAcceleration.y += (2.0f * deficit) / (lookAhead * lookAhead);
             }
         }
 
-        const float maxLateralAcceleration = std::max(m_maxSteeringForce / std::max(m_mass, 0.01f), 0.0f);
-        if (maxLateralAcceleration <= 0.0f)
+        // --- Control authority --------------------------------------------
+        // The lateral acceleration the airframe can actually produce is bounded
+        // by the lift available at the local dynamic pressure and by the
+        // structural load-factor limit. At low q (high altitude / low speed)
+        // the missile becomes sluggish - real interceptor behaviour.
+        const float dynamicPressure = 0.5f * std::max(airDensity, 0.0f) * speed * speed;
+        const float referenceArea =
+            (m_aeroProfile.referenceArea > 0.0f) ? m_aeroProfile.referenceArea : m_crossSectionalArea;
+        const float maxLiftCoefficient = std::max(m_aeroProfile.maxLiftCoefficient, 0.0f);
+        const float aerodynamicLimit =
+            (dynamicPressure * maxLiftCoefficient * referenceArea) / std::max(m_mass, 0.01f);
+        const float structuralLimit =
+            (m_maxLoadFactorG > 0.0f) ? (m_maxLoadFactorG * 9.80665f) : aerodynamicLimit;
+        const float availableLateralAcceleration = std::min(aerodynamicLimit, structuralLimit);
+
+        float commandedMagnitude = glm::length(commandedAcceleration);
+        if (commandedMagnitude > availableLateralAcceleration && commandedMagnitude > 1e-4f)
         {
-            return;
-        }
-
-        const float maxTurnRate = maxLateralAcceleration / std::max(speed, 0.1f);
-        const glm::vec3 steeredDirection = rotateTowardsDirection(currentDirection, desiredDirection, maxTurnRate * deltaTime);
-
-        glm::vec3 commandedAcceleration = ((steeredDirection - currentDirection) * speed) / deltaTime;
-        commandedAcceleration -= currentDirection * glm::dot(commandedAcceleration, currentDirection);
-
-        const float commandedAccelerationMagnitude = glm::length(commandedAcceleration);
-        if (commandedAccelerationMagnitude > maxLateralAcceleration)
-        {
-            commandedAcceleration = (commandedAcceleration / commandedAccelerationMagnitude) * maxLateralAcceleration;
+            commandedAcceleration *= (availableLateralAcceleration / commandedMagnitude);
+            commandedMagnitude = availableLateralAcceleration;
         }
 
         applyForce(commandedAcceleration * m_mass);
 
+        // Record the operating lift coefficient (Cl = L / (q*S), L = m*a_n) so
+        // the drag model charges the correct induced drag for this maneuver.
+        const float liftDenominator = std::max(dynamicPressure * referenceArea, 1e-4f);
+        m_commandedLiftCoefficient =
+            glm::clamp((m_mass * commandedMagnitude) / liftDenominator, 0.0f, maxLiftCoefficient);
+
+        // Point the airframe slightly into the maneuver (a small angle of
+        // attack) so thrust acts along the body axis.
         if (m_thrustEnabled)
         {
-            m_thrustDirection = steeredDirection;
+            m_thrustDirection =
+                normalizeOrFallback((currentDirection * speed) + (commandedAcceleration * deltaTime), currentDirection);
         }
     }
     catch (const std::exception &e)
@@ -594,8 +527,14 @@ bool Missile::applyThrust(float deltaTime)
             return false;
         }
 
-        // Calculate thrust force - proportional to fuel consumption
-        const float thrustMagnitude = m_thrust * throttleFraction;
+        // Physical thrust = momentum thrust (mdot * Ve, with Ve = thrust/mdot so
+        // the configured value is the sea-level full-burn thrust) plus a nozzle
+        // back-pressure term. As ambient pressure falls with altitude the
+        // back-pressure term grows, so the motor produces more thrust up high -
+        // approaching its vacuum thrust. Both terms require propellant flow, so
+        // they scale with the throttle (fuel-availability) fraction.
+        const float backPressureThrust = (m_nozzleExitPressure - m_ambientPressure) * m_nozzleExitArea;
+        const float thrustMagnitude = std::max(throttleFraction * (m_thrust + backPressureThrust), 0.0f);
 
         // Apply thrust force in the thrust direction
         glm::vec3 thrustForce = m_thrustDirection * thrustMagnitude;

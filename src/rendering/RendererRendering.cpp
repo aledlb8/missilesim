@@ -187,7 +187,7 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             glm::vec3 velocity = object->getVelocity();
             if (glm::length(velocity) > 0.001f)
             {
-                model *= buildTargetOrientationMatrix(velocity, object->getAcceleration());
+                model *= buildTargetOrientationMatrix(velocity, object->getRenderAcceleration());
             }
         }
 
@@ -264,7 +264,7 @@ void Renderer::render(PhysicsObject *object)
     glm::vec3 velocity = object->getVelocity();
     if (object->getType() == "Target" && glm::length(velocity) > 0.001f)
     {
-        model *= buildTargetOrientationMatrix(velocity, object->getAcceleration());
+        model *= buildTargetOrientationMatrix(velocity, object->getRenderAcceleration());
     }
     else if (glm::length(velocity) > 0.001f)
     {

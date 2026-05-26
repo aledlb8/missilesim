@@ -42,6 +42,62 @@ using missilesim::application::detail::parseVec3Value;
 using missilesim::application::detail::safeNormalize;
 using missilesim::application::detail::trimWhitespace;
 
+void Application::applySimulationConfigDefaults()
+{
+    const missilesim::sim::SimulationConfig &config = m_simulationConfig;
+
+    m_timeStep = config.environment.fixedTimeStep;
+    m_simulationSpeed = config.environment.simulationSpeed;
+    m_groundEnabled = config.environment.groundCollisionEnabled;
+    m_groundRestitution = config.environment.groundRestitution;
+    m_savedGravity = config.environment.gravity;
+    m_savedAirDensity = config.environment.seaLevelAirDensity;
+
+    m_showTrajectory = config.visualization.showTrajectory;
+    m_showTargetInfo = config.visualization.showTargetInfo;
+    m_showPredictedTargetPath = config.visualization.showPredictedTargetPath;
+    m_showInterceptPoint = config.visualization.showInterceptPoint;
+    m_trajectoryPoints = config.visualization.trajectoryPoints;
+    m_trajectoryTime = config.visualization.trajectoryTime;
+
+    m_savedCameraFOV = config.camera.fov;
+    m_savedCameraSpeed = config.camera.speed;
+
+    const missilesim::sim::MissileAirframeConfig &airframe = config.missile.airframe;
+    m_initialPosition[0] = airframe.initialPosition.x;
+    m_initialPosition[1] = airframe.initialPosition.y;
+    m_initialPosition[2] = airframe.initialPosition.z;
+    m_initialVelocity[0] = airframe.initialVelocity.x;
+    m_initialVelocity[1] = airframe.initialVelocity.y;
+    m_initialVelocity[2] = airframe.initialVelocity.z;
+    m_mass = airframe.dryMass;
+    m_dragCoefficient = airframe.dragCoefficient;
+    m_crossSectionalArea = airframe.crossSectionalArea;
+    m_liftCoefficient = airframe.liftCoefficient;
+
+    const missilesim::sim::MissileMotorConfig &motor = config.missile.motor;
+    m_missileThrust = motor.thrust;
+    m_missileFuel = motor.fuelMass;
+    m_missileFuelConsumptionRate = motor.fuelConsumptionRate;
+
+    const missilesim::sim::MissileGuidanceConfig &guidance = config.missile.guidance;
+    m_guidanceEnabled = guidance.enabled;
+    m_navigationGain = guidance.navigationGain;
+    m_maxSteeringForce = guidance.maxSteeringForce;
+    m_trackingAngle = guidance.trackingAngle;
+    m_proximityFuseRadius = guidance.proximityFuseRadius;
+    m_countermeasureResistance = guidance.countermeasureResistance;
+    m_terrainAvoidanceEnabled = guidance.terrainAvoidanceEnabled;
+    m_terrainClearance = guidance.terrainClearance;
+    m_terrainLookAheadTime = guidance.terrainLookAheadTime;
+    m_seekerCueRadiusPixels = guidance.seekerCueRadiusPixels;
+
+    m_targetCount = config.targets.count;
+    m_targetAIConfig.minSpeed = config.targets.minSpeed;
+    m_targetAIConfig.maxSpeed = config.targets.maxSpeed;
+    m_targetAIConfig.preferredDistance = config.targets.preferredDistance;
+}
+
 void Application::initialize()
 {
     try
@@ -156,6 +212,14 @@ void Application::initialize()
         m_renderer = std::make_unique<Renderer>();
         m_audioSystem = std::make_unique<AudioSystem>();
         m_audioSystem->initialize();
+
+        const missilesim::sim::SimulationConfigLoadResult configLoad = missilesim::sim::loadDefaultSimulationConfig();
+        m_simulationConfig = configLoad.config;
+        if (!configLoad.loaded)
+        {
+            std::cerr << "WARNING: Using built-in simulation defaults. " << configLoad.error << std::endl;
+        }
+        applySimulationConfigDefaults();
 
         const bool loadedSettings = loadSettings();
 
@@ -453,25 +517,28 @@ void Application::update(float deltaTime)
                 m_physicsEngine->update(m_timeStep);
 
                 // Check if a new hit occurred this frame
-                bool missileFlightEnded = false;
+                bool interceptionOccurred = false;
                 for (const auto &target : m_targets)
                 {
                     if (target && !target->isActive() && target->getPosition() != glm::vec3(0))
                     {
-                        createExplosion(target->getPosition());
-                        // This target was just hit (it's inactive but not yet reset)
+                        // This target was just hit (inactive but not yet reset).
+                        const glm::vec3 impactPosition = target->getPosition();
                         m_score += 100; // Add points for hitting a target
                         m_targetHits++; // Increment hit counter
 
-                        // Reset target position to prevent multiple explosions
+                        // Clear its position so it isn't re-detected next step.
                         target->setPosition(glm::vec3(0));
-                        missileFlightEnded = true;
+
+                        // Detonate at the impact point and hold the scene so the
+                        // explosion is visible before the simulation resets.
+                        beginDetonationHold(impactPosition);
+                        interceptionOccurred = true;
                     }
                 }
 
-                if (missileFlightEnded && m_missileInFlight)
+                if (interceptionOccurred)
                 {
-                    terminateMissileFlight(prevMissilePos, false);
                     accumulator -= m_timeStep;
                     stepCount++;
                     break;
@@ -540,7 +607,7 @@ void Application::update(float deltaTime)
 
                     if (terminateFlight)
                     {
-                        terminateMissileFlight(missilePos, true);
+                        beginDetonationHold(missilePos);
                         accumulator -= m_timeStep;
                         stepCount++;
                         break;
@@ -567,21 +634,34 @@ void Application::update(float deltaTime)
         collectPendingTargetFlares();
         removeInactiveFlares();
 
-        // Check if all targets are inactive, and create new ones if needed
-        bool allTargetsInactive = true;
-        for (const auto &target : m_targets)
+        // While holding on a detonation, keep the scene alive (effects, audio,
+        // targets) but defer any reset until the player has seen the blast.
+        if (m_detonationHoldActive)
         {
-            if (target && target->isActive())
+            m_detonationHoldTimer += deltaTime; // wall-clock, independent of sim speed
+            if (m_detonationHoldTimer >= m_detonationHoldDuration)
             {
-                allTargetsInactive = false;
-                break;
+                finishDetonationHold();
             }
         }
-
-        if (allTargetsInactive && !m_targets.empty())
+        else
         {
-            resetTargets();
-            resetMissile();
+            // Check if all targets are inactive, and create new ones if needed
+            bool allTargetsInactive = true;
+            for (const auto &target : m_targets)
+            {
+                if (target && target->isActive())
+                {
+                    allTargetsInactive = false;
+                    break;
+                }
+            }
+
+            if (allTargetsInactive && !m_targets.empty())
+            {
+                resetTargets();
+                resetMissile();
+            }
         }
 
         // If no targets exist but we should have some, create them
@@ -634,8 +714,9 @@ void Application::render()
             resetMissile();
         }
 
-        // Render missile
-        if (m_missile)
+        // Render missile (hidden during a detonation hold: it has been consumed
+        // by the explosion, so it should vanish rather than linger as debris).
+        if (m_missile && !m_detonationHoldActive)
         {
             try
             {

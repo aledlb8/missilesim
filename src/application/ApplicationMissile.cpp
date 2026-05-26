@@ -237,11 +237,29 @@ void Application::resetMissile()
         m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);
         m_missile->setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
 
+        // Build the Mach-dependent aerodynamic profile from configuration.
+        {
+            const missilesim::sim::MissileAirframeConfig &airframe = m_simulationConfig.missile.airframe;
+            missilesim::physics::AeroProfile profile;
+            profile.referenceArea = m_crossSectionalArea;
+            profile.baseDragCoefficient = m_dragCoefficient;
+            profile.aspectRatio = airframe.aspectRatio;
+            profile.oswaldEfficiency = airframe.oswaldEfficiency;
+            profile.maxLiftCoefficient = airframe.maxLiftCoefficient;
+            profile.machDragMultiplier = airframe.machDragMultiplier.empty()
+                                             ? missilesim::physics::defaultSupersonicDragRiseCurve()
+                                             : airframe.machDragMultiplier;
+            m_missile->setAeroProfile(profile);
+            m_missile->setMaxLoadFactorG(airframe.maxLoadFactorG);
+        }
+
         // Set thrust parameters but disable thrust until launch
         m_missile->setThrust(m_missileThrust);
         m_missile->setThrustEnabled(false);
         m_missile->setFuel(m_missileFuel);
         m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
+        m_missile->setNozzleExitArea(m_simulationConfig.missile.motor.nozzleExitArea);
+        m_missile->setNozzleExitPressure(m_simulationConfig.missile.motor.nozzleExitPressure);
 
         // Add missile to physics engine
         m_physicsEngine->addObject(m_missile.get());
@@ -478,20 +496,59 @@ void Application::renderPreLaunchSeekerCue() const
     drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - 7.0f), ImVec2(cueCenter.x, cueCenter.y + 7.0f), ringColor, 1.2f);
 }
 
-void Application::terminateMissileFlight(const glm::vec3 &position, bool createEffect)
+void Application::beginDetonationHold(const glm::vec3 &position)
 {
-    invalidateTrajectoryPreviewCache();
-    if (createEffect)
+    // Ignore if a hold is already running so the timer/explosion isn't restarted.
+    if (m_detonationHoldActive)
     {
-        createExplosion(position);
+        return;
     }
 
+    invalidateTrajectoryPreviewCache();
+
+    // Spawn the explosion VFX/SFX before zeroing the missile velocity so the
+    // blast inherits a sensible debris direction.
+    createExplosion(position);
+
+    m_detonationHoldActive = true;
+    m_detonationHoldTimer = 0.0f;
+    m_detonationHoldPosition = position;
+
+    // The missile is destroyed in the blast: stop flight management and pull it
+    // out of the physics engine so it neither falls nor renders during the
+    // hold (resetMissile re-adds a fresh missile afterwards).
+    m_missileInFlight = false;
     if (m_missile)
     {
         m_missile->setThrustEnabled(false);
         m_missile->setGuidanceEnabled(false);
         m_missile->clearTarget();
         m_missile->setVelocity(glm::vec3(0.0f));
+        if (m_physicsEngine)
+        {
+            m_physicsEngine->removeObject(m_missile.get());
+        }
+    }
+}
+
+void Application::finishDetonationHold()
+{
+    m_detonationHoldActive = false;
+    m_detonationHoldTimer = 0.0f;
+
+    // Respawn the target field if the engagement cleared it, then rearm.
+    bool allTargetsInactive = true;
+    for (const auto &target : m_targets)
+    {
+        if (target && target->isActive())
+        {
+            allTargetsInactive = false;
+            break;
+        }
+    }
+    if (allTargetsInactive && !m_targets.empty())
+    {
+        resetTargets();
     }
 
     resetMissile();

@@ -42,6 +42,37 @@ using missilesim::application::detail::parseVec3Value;
 using missilesim::application::detail::safeNormalize;
 using missilesim::application::detail::trimWhitespace;
 
+namespace
+{
+    float urgencyBlend(float value, float limit)
+    {
+        if (!std::isfinite(value) || !std::isfinite(limit) || limit <= 0.0f)
+        {
+            return 0.0f;
+        }
+        return 1.0f - glm::clamp(value / limit, 0.0f, 1.0f);
+    }
+
+    float computeMawsUrgency(const Target &target)
+    {
+        const MAWSConfig &config = target.getMAWSConfig();
+        if (!config.enabled)
+        {
+            return 0.0f;
+        }
+
+        const float threatWindow = std::max(config.reactionTimeWindow, 0.1f);
+        const float closestApproachThreshold = std::max(config.closestApproachThreshold, 1.0f);
+        const float detectionRange = std::max(config.detectionRange, 1.0f);
+
+        const float tcaBlend = urgencyBlend(target.getThreatTimeToClosestApproach(), threatWindow);
+        const float cpaBlend = urgencyBlend(target.getThreatClosestApproachDistance(), closestApproachThreshold);
+        const float rangeBlend = urgencyBlend(target.getThreatDistance(), detectionRange);
+
+        return glm::clamp((tcaBlend * 0.55f) + (cpaBlend * 0.25f) + (rangeBlend * 0.20f), 0.0f, 1.0f);
+    }
+}
+
 void Application::createExplosion(const glm::vec3 &position)
 {
     const glm::vec3 velocityHint = m_missile ? m_missile->getVelocity() : glm::vec3(0.0f);
@@ -162,16 +193,8 @@ void Application::updateAudioFrame(float deltaTime)
     float mawsUrgency = 0.0f;
     if (cockpitTarget != nullptr && cockpitTarget->isMissileWarningActive())
     {
-        const MAWSConfig mawsDefaults{};
-        const float threatWindow = std::max(mawsDefaults.reactionTimeWindow, 0.1f);
-        const float cpaThreshold = std::max(mawsDefaults.closestApproachThreshold, 1.0f);
-        const float detectionRange = std::max(mawsDefaults.detectionRange, 1.0f);
-        const float tcaBlend = 1.0f - glm::clamp(cockpitTarget->getThreatTimeToClosestApproach() / threatWindow, 0.0f, 1.0f);
-        const float cpaBlend = 1.0f - glm::clamp(cockpitTarget->getThreatClosestApproachDistance() / cpaThreshold, 0.0f, 1.0f);
-        const float rangeBlend = 1.0f - glm::clamp(cockpitTarget->getThreatDistance() / detectionRange, 0.0f, 1.0f);
-
         mawsThreatActive = true;
-        mawsUrgency = glm::clamp((tcaBlend * 0.55f) + (cpaBlend * 0.25f) + (rangeBlend * 0.20f), 0.0f, 1.0f);
+        mawsUrgency = computeMawsUrgency(*cockpitTarget);
     }
 
     m_audioSystem->setListener(m_renderer->getCameraPosition(),

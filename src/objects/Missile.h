@@ -2,6 +2,7 @@
 
 #include "PhysicsObject.h"
 #include "Target.h" // Include complete Target definition instead of forward declaration
+#include "physics/Aerodynamics.h"
 #include <vector>
 
 class Flare;
@@ -20,13 +21,32 @@ public:
 
     // Override aerodynamic properties
     float getDragCoefficient() const override { return m_dragCoefficient; }
-    void setDragCoefficient(float coefficient) { m_dragCoefficient = coefficient; }
+    void setDragCoefficient(float coefficient)
+    {
+        m_dragCoefficient = coefficient;
+        m_aeroProfile.baseDragCoefficient = coefficient;
+    }
 
     float getCrossSectionalArea() const override { return m_crossSectionalArea; }
-    void setCrossSectionalArea(float area) { m_crossSectionalArea = area; }
+    void setCrossSectionalArea(float area)
+    {
+        m_crossSectionalArea = area;
+        m_aeroProfile.referenceArea = area;
+    }
 
     float getLiftCoefficient() const override { return m_liftCoefficient; }
     void setLiftCoefficient(float coefficient) { m_liftCoefficient = coefficient; }
+
+    // Mach-dependent aerodynamic profile. The reference area and base drag
+    // coefficient are kept in sync with the scalar setters above so the legacy
+    // UI/config paths continue to drive the airframe until A3 wires the full
+    // profile through configuration.
+    const missilesim::physics::AeroProfile *getAeroProfile() const override { return &m_aeroProfile; }
+    void setAeroProfile(const missilesim::physics::AeroProfile &profile) { m_aeroProfile = profile; }
+
+    // Lift coefficient produced by the current guidance maneuver (set each
+    // step by applyGuidance), used by the drag model for induced drag.
+    float getCommandedLiftCoefficient() const override { return m_commandedLiftCoefficient; }
 
     // Override object type
     std::string getType() const override { return "Missile"; }
@@ -72,12 +92,30 @@ public:
 
     // Apply guidance force
     void updateHeatSeeker(const std::vector<Target *> &targets, const std::vector<Flare *> &flares, float deltaTime);
-    void applyGuidance(float deltaTime);
+    // Proportional-navigation guidance. airDensity is the local atmospheric
+    // density (kg/m^3), used to compute the airframe's available control g.
+    void applyGuidance(float deltaTime, float airDensity);
     bool consumeSelfDestructRequest();
 
-    // Thrust system
+    // Thrust system. The configured thrust is the sea-level, full-burn thrust;
+    // the effective exhaust velocity is derived from it and the burn rate
+    // (Ve = thrust / mdot), and a nozzle back-pressure term scales thrust with
+    // altitude as ambient pressure falls.
     void setThrust(float newtons) { m_thrust = newtons; }
     float getThrust() const { return m_thrust; }
+
+    void setNozzleExitArea(float squareMeters) { m_nozzleExitArea = (squareMeters >= 0.0f) ? squareMeters : 0.0f; }
+    float getNozzleExitArea() const { return m_nozzleExitArea; }
+
+    void setNozzleExitPressure(float pascals) { m_nozzleExitPressure = (pascals >= 0.0f) ? pascals : 0.0f; }
+    float getNozzleExitPressure() const { return m_nozzleExitPressure; }
+
+    // Local ambient pressure (Pa), supplied by the physics engine each step.
+    void setAmbientPressure(float pascals) { m_ambientPressure = (pascals >= 0.0f) ? pascals : 0.0f; }
+
+    // Derived performance figures (for display / sanity-checking inputs).
+    float getExhaustVelocity() const { return (m_fuelConsumptionRate > 1e-5f) ? (m_thrust / m_fuelConsumptionRate) : 0.0f; }
+    float getSpecificImpulse() const { return getExhaustVelocity() / 9.80665f; }
 
     void setThrustDirection(const glm::vec3 &direction)
     {
@@ -111,6 +149,8 @@ private:
     float m_crossSectionalArea;
     float m_liftCoefficient;
     float m_dryMass = 0.0f;
+    missilesim::physics::AeroProfile m_aeroProfile;
+    float m_commandedLiftCoefficient = 0.0f;
 
     // Guidance properties
     bool m_guidanceEnabled = true;
@@ -137,5 +177,8 @@ private:
     glm::vec3 m_thrustDirection = glm::vec3(0.0f, 0.0f, 1.0f); // Direction of thrust
     bool m_thrustEnabled = false;                              // Whether thrust is active
     float m_fuel = 0.0f;                                       // Fuel amount in kg
-    float m_fuelConsumptionRate = 0.5f;                        // Fuel consumption in kg/second
+    float m_fuelConsumptionRate = 0.5f;                        // Mass flow rate in kg/second
+    float m_nozzleExitArea = 0.01f;                            // Nozzle exit area in m^2
+    float m_nozzleExitPressure = 101325.0f;                    // Design exit pressure in Pa
+    float m_ambientPressure = 101325.0f;                       // Local ambient pressure in Pa
 };
