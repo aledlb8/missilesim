@@ -54,8 +54,8 @@ void Application::initialize()
         }
 
         // Configure GLFW
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
         // Create window
@@ -105,6 +105,16 @@ void Application::initialize()
             return;
         }
 
+        // Check OpenGL version
+        if (!GLAD_GL_VERSION_4_5)
+        {
+            std::cerr << "WARNING: OpenGL 4.5 not available. PBR rendering will be disabled." << std::endl;
+            std::cerr << "         Detected: " << glGetString(GL_VERSION) << std::endl;
+        }
+
+        // Enable core OpenGL features for PBR pipeline
+        glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+
         // Setup ImGui with error handling
         try
         {
@@ -122,7 +132,7 @@ void Application::initialize()
             }
 
             // Initialize ImGui OpenGL3 renderer
-            if (!ImGui_ImplOpenGL3_Init("#version 330"))
+            if (!ImGui_ImplOpenGL3_Init("#version 450"))
             {
                 std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
                 ImGui_ImplGlfw_Shutdown();

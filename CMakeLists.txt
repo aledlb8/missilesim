@@ -27,6 +27,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # The vcpkg glfw3 package provides a target named 'glfw', not 'glfw3'
 # Let's create an alias for clarity
@@ -83,14 +85,16 @@ set(INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/physics/forces
     ${CMAKE_CURRENT_SOURCE_DIR}/src/objects
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rendering
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rendering/pbr
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
 # Add executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Link libraries
-target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui miniaudio)
+target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui miniaudio assimp::assimp nlohmann_json::nlohmann_json)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     MISSILESIM_SOURCE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -131,4 +135,10 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/assets.md
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/assets.md
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/pbr
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/shaders/pbr
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/skyboxes
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/skyboxes
 )

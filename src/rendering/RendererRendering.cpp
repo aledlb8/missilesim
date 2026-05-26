@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "SceneEffects.h"
+#include "pbr/PBRPipeline.h"
 
 #include "../objects/Missile.h"
 #include "../objects/PhysicsObject.h"
@@ -150,10 +151,7 @@ namespace
 void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
 {
     renderEnvironment();
-    glm::mat4 view = buildViewMatrix();
-    glm::mat4 projection = buildProjectionMatrix();
 
-    // Render all objects
     for (auto *object : objects)
     {
         if (!object)
@@ -163,36 +161,23 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, object->getPosition());
 
-        // If the object is a missile, orient it along its velocity vector
+        // Orient based on object type
         if (object->getType() == "Missile")
         {
-            // If the object is moving, orient it along the velocity vector
             glm::vec3 velocity = object->getVelocity();
             if (glm::length(velocity) > 0.001f)
             {
-                // Rotate code remains the same
-                // Use velocity direction for facing the object
                 glm::vec3 direction = glm::normalize(velocity);
-
-                // Calculate the rotation axis and angle from default orientation (along y-axis) to velocity direction
                 glm::vec3 defaultDir = glm::vec3(0.0f, 1.0f, 0.0f);
-
-                // Calculate the angle between default direction and velocity
                 float angle = acos(glm::dot(defaultDir, direction));
 
-                // If angle is not 0 or 180 degrees, we need to rotate
                 if (abs(angle) > 0.001f && abs(angle - glm::pi<float>()) > 0.001f)
                 {
-                    // Calculate rotation axis (perpendicular to both vectors)
                     glm::vec3 rotationAxis = glm::normalize(glm::cross(defaultDir, direction));
-
-                    // Apply rotation
                     model = glm::rotate(model, angle, rotationAxis);
                 }
-                // Handle special case: if velocity is in opposite direction of default
                 else if (abs(angle - glm::pi<float>()) <= 0.001f)
                 {
-                    // Just rotate 180 degrees around X axis
                     model = glm::rotate(model, glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
                 }
             }
@@ -206,53 +191,62 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             }
         }
 
-        // Scale based on the type of object
+        // Scale and submit
         if (object->getType() == "Missile")
         {
-            // Scale to make the missile shape visible
             model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
-            glBindVertexArray(m_vao);
 
-            glUseProgram(m_shaderProgram);
-            glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-            glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-            if (m_cameraPosLoc != -1)
+            if (isPBRActive())
             {
-                glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+                m_pbrPipeline->submitLegacyMesh(
+                    m_vao, static_cast<GLsizei>(m_indices.size()), model,
+                    glm::vec3(0.2f, 0.2f, 0.22f), 0.9f, 0.3f);
             }
-            if (m_fogDensityLoc != -1)
+            else
             {
-                glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+                glm::mat4 view = buildViewMatrix();
+                glm::mat4 projection = buildProjectionMatrix();
+                glBindVertexArray(m_vao);
+                glUseProgram(m_shaderProgram);
+                glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+                glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+                glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+                if (m_cameraPosLoc != -1)
+                    glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+                if (m_fogDensityLoc != -1)
+                    glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+                glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
+                glBindVertexArray(0);
             }
-
-            // Draw object
-            glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
         }
         else if (object->getType() == "Target")
         {
             const Target *targetObject = static_cast<Target *>(object);
             const float targetScale = std::max(targetObject->getRadius(), 1.0f);
             model = glm::scale(model, glm::vec3(targetScale));
-            glBindVertexArray(m_targetVAO);
 
-            glUseProgram(m_shaderProgram);
-            glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-            glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-            if (m_cameraPosLoc != -1)
+            if (isPBRActive())
             {
-                glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+                m_pbrPipeline->submitLegacyMesh(
+                    m_targetVAO, static_cast<GLsizei>(m_targetIndices.size()), model,
+                    glm::vec3(0.7f, 0.72f, 0.74f), 0.8f, 0.4f);
             }
-            if (m_fogDensityLoc != -1)
+            else
             {
-                glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+                glm::mat4 view = buildViewMatrix();
+                glm::mat4 projection = buildProjectionMatrix();
+                glBindVertexArray(m_targetVAO);
+                glUseProgram(m_shaderProgram);
+                glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+                glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+                glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+                if (m_cameraPosLoc != -1)
+                    glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+                if (m_fogDensityLoc != -1)
+                    glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+                glDrawElements(GL_TRIANGLES, m_targetIndices.size(), GL_UNSIGNED_INT, 0);
+                glBindVertexArray(0);
             }
-
-            // Draw object
-            glDrawElements(GL_TRIANGLES, m_targetIndices.size(), GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
         }
     }
 }
@@ -266,7 +260,7 @@ void Renderer::render(PhysicsObject *object)
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, object->getPosition());
 
-    // If the object is moving, orient it along the velocity vector
+    // Orient based on type
     glm::vec3 velocity = object->getVelocity();
     if (object->getType() == "Target" && glm::length(velocity) > 0.001f)
     {
@@ -274,61 +268,45 @@ void Renderer::render(PhysicsObject *object)
     }
     else if (glm::length(velocity) > 0.001f)
     {
-        // Use velocity direction for facing the object
         glm::vec3 direction = glm::normalize(velocity);
-
-        // Calculate the rotation axis and angle from default orientation (along y-axis) to velocity direction
         glm::vec3 defaultDir = glm::vec3(0.0f, 1.0f, 0.0f);
-
-        // Calculate the angle between default direction and velocity
         float angle = acos(glm::dot(defaultDir, direction));
 
-        // If angle is not 0 or 180 degrees, we need to rotate
         if (abs(angle) > 0.001f && abs(angle - glm::pi<float>()) > 0.001f)
         {
-            // Calculate rotation axis (perpendicular to both vectors)
             glm::vec3 rotationAxis = glm::normalize(glm::cross(defaultDir, direction));
-
-            // Apply rotation
             model = glm::rotate(model, angle, rotationAxis);
         }
-        // Handle special case: if velocity is in opposite direction of default
         else if (abs(angle - glm::pi<float>()) <= 0.001f)
         {
-            // Just rotate 180 degrees around X axis
             model = glm::rotate(model, glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
         }
     }
 
-    glm::mat4 view = buildViewMatrix();
-    glm::mat4 projection = buildProjectionMatrix();
-
-    // Use shader program
-    glUseProgram(m_shaderProgram);
-
-    // Pass transformation matrices to the shader
-    glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-    glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-    if (m_cameraPosLoc != -1)
-    {
-        glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
-    }
-    if (m_fogDensityLoc != -1)
-    {
-        glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
-    }
-
-    // Draw object based on its type
+    // Scale and draw/submit
     if (object->getType() == "Missile")
     {
-        // Scale to make the missile shape visible
         model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
 
-        // Pass updated model matrix with scale
-        glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        if (isPBRActive())
+        {
+            m_pbrPipeline->submitLegacyMesh(
+                m_vao, static_cast<GLsizei>(m_indices.size()), model,
+                glm::vec3(0.2f, 0.2f, 0.22f), 0.9f, 0.3f);
+            return;
+        }
 
-        // Draw missile
+        glm::mat4 view = buildViewMatrix();
+        glm::mat4 projection = buildProjectionMatrix();
+        glUseProgram(m_shaderProgram);
+        glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        if (m_cameraPosLoc != -1)
+            glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+        if (m_fogDensityLoc != -1)
+            glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+
         glBindVertexArray(m_vao);
         glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
@@ -339,17 +317,50 @@ void Renderer::render(PhysicsObject *object)
         const float targetScale = std::max(targetObject->getRadius(), 1.0f);
         model = glm::scale(model, glm::vec3(targetScale));
 
-        // Pass updated model matrix with scale
-        glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        if (isPBRActive())
+        {
+            m_pbrPipeline->submitLegacyMesh(
+                m_targetVAO, static_cast<GLsizei>(m_targetIndices.size()), model,
+                glm::vec3(0.7f, 0.72f, 0.74f), 0.8f, 0.4f);
+            return;
+        }
 
-        // Draw target
+        glm::mat4 view = buildViewMatrix();
+        glm::mat4 projection = buildProjectionMatrix();
+        glUseProgram(m_shaderProgram);
+        glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        if (m_cameraPosLoc != -1)
+            glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+        if (m_fogDensityLoc != -1)
+            glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+
         glBindVertexArray(m_targetVAO);
         glDrawElements(GL_TRIANGLES, m_targetIndices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
     else
     {
-        // Default rendering for other objects
+        if (isPBRActive())
+        {
+            m_pbrPipeline->submitLegacyMesh(
+                m_vao, static_cast<GLsizei>(m_indices.size()), model,
+                glm::vec3(0.5f, 0.5f, 0.5f), 0.0f, 0.5f);
+            return;
+        }
+
+        glm::mat4 view = buildViewMatrix();
+        glm::mat4 projection = buildProjectionMatrix();
+        glUseProgram(m_shaderProgram);
+        glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        if (m_cameraPosLoc != -1)
+            glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+        if (m_fogDensityLoc != -1)
+            glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+
         glBindVertexArray(m_vao);
         glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
@@ -358,9 +369,18 @@ void Renderer::render(PhysicsObject *object)
 
 void Renderer::renderFloor()
 {
+    glm::mat4 model = glm::mat4(1.0f);
+
+    if (isPBRActive())
+    {
+        m_pbrPipeline->submitLegacyMesh(
+            m_floorVAO, static_cast<GLsizei>(m_floorIndices.size()), model,
+            glm::vec3(0.35f, 0.38f, 0.35f), 0.0f, 0.9f);
+        return;
+    }
+
     glm::mat4 view = buildViewMatrix();
     glm::mat4 projection = buildProjectionMatrix();
-    glm::mat4 model = glm::mat4(1.0f);
 
     glUseProgram(m_shaderProgram);
 
@@ -494,111 +514,62 @@ void Renderer::renderAirspaceBeacon(const glm::vec3 &basePosition, float height,
 
 void Renderer::renderExplosion(const glm::vec3 &position, float size)
 {
-    // Safety check - make sure explosion VAO is valid and parameters are valid
     if (m_explosionVAO == 0 || size <= 0.0f)
-    {
         return;
-    }
 
-    // Safety check for invalid position
     if (std::isnan(position.x) || std::isnan(position.y) || std::isnan(position.z) ||
         std::isinf(position.x) || std::isinf(position.y) || std::isinf(position.z))
-    {
-        std::cerr << "Invalid explosion position detected" << std::endl;
         return;
-    }
 
-    // Safety check for invalid size
     if (std::isnan(size) || std::isinf(size))
-    {
-        std::cerr << "Invalid explosion size detected" << std::endl;
         return;
-    }
 
-    // Save current OpenGL state
-    GLint lastBlendSrc = 0, lastBlendDst = 0;
-    GLboolean lastBlendEnabled = GL_FALSE;
-
-    try
-    {
-        glGetIntegerv(GL_BLEND_SRC, &lastBlendSrc);
-        glGetIntegerv(GL_BLEND_DST, &lastBlendDst);
-        lastBlendEnabled = glIsEnabled(GL_BLEND);
-    }
-    catch (...)
-    {
-        std::cerr << "Error saving OpenGL state" << std::endl;
-        // Continue anyway, we'll try to restore default state if this fails
-    }
-
-    // Enable additive blending for a glowing effect
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-
-    // Create model matrix for the explosion
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, position);
     model = glm::scale(model, glm::vec3(size));
 
+    if (isPBRActive())
+    {
+        m_pbrPipeline->submitLegacyMesh(
+            m_explosionVAO, static_cast<GLsizei>(m_explosionIndices.size()), model,
+            glm::vec3(1.0f, 0.6f, 0.1f), 0.0f, 0.5f);
+        return;
+    }
+
+    GLint lastBlendSrc = 0, lastBlendDst = 0;
+    GLboolean lastBlendEnabled = glIsEnabled(GL_BLEND);
+    glGetIntegerv(GL_BLEND_SRC, &lastBlendSrc);
+    glGetIntegerv(GL_BLEND_DST, &lastBlendDst);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
     glm::mat4 view = buildViewMatrix();
     glm::mat4 projection = buildProjectionMatrix();
 
-    bool success = true;
-    try
-    {
-        // Use shader program
-        glUseProgram(m_shaderProgram);
+    glUseProgram(m_shaderProgram);
+    if (m_modelLoc != -1)
+        glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+    if (m_viewLoc != -1)
+        glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+    if (m_projLoc != -1)
+        glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+    if (m_cameraPosLoc != -1)
+        glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
+    if (m_fogDensityLoc != -1)
+        glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
 
-        // Check if shader program is valid
-        if (m_shaderProgram == 0)
-        {
-            std::cerr << "Invalid shader program" << std::endl;
-            success = false;
-        }
-        else
-        {
-            // Pass transformation matrices to the shader
-            if (m_modelLoc != -1)
-                glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-            if (m_viewLoc != -1)
-                glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-            if (m_projLoc != -1)
-                glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-            if (m_cameraPosLoc != -1)
-                glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
-            if (m_fogDensityLoc != -1)
-                glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
+    glBindVertexArray(m_explosionVAO);
+    glDrawElements(GL_TRIANGLES, m_explosionIndices.size(), GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
 
-            // Draw explosion
-            glBindVertexArray(m_explosionVAO);
-            glDrawElements(GL_TRIANGLES, m_explosionIndices.size(), GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
-        }
-    }
-    catch (...)
+    if (lastBlendEnabled)
     {
-        // In case of an OpenGL error, restore state and continue
-        std::cerr << "Error rendering explosion" << std::endl;
-        success = false;
+        glEnable(GL_BLEND);
+        glBlendFunc(lastBlendSrc, lastBlendDst);
     }
-
-    // Restore previous OpenGL state
-    try
+    else
     {
-        if (lastBlendEnabled)
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(lastBlendSrc, lastBlendDst);
-        }
-        else
-        {
-            glDisable(GL_BLEND);
-        }
-    }
-    catch (...)
-    {
-        std::cerr << "Error restoring OpenGL state" << std::endl;
-        // If we can't restore the state, set to default safe values
         glDisable(GL_BLEND);
     }
 }

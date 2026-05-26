@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "SceneEffects.h"
+#include "pbr/PBRPipeline.h"
 
 #include "../objects/Missile.h"
 #include "../objects/PhysicsObject.h"
@@ -222,4 +223,78 @@ void Renderer::initialize()
     // Enable depth testing
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_PROGRAM_POINT_SIZE);
+
+    // Initialize PBR pipeline
+    if (m_usePBR)
+    {
+        std::filesystem::path assetDir = resolveAssetPath("shaders/pbr/PBRSimpleShader.vert");
+        if (!assetDir.empty())
+        {
+            // Walk up to the assets root: .../assets/shaders/pbr/file → .../assets
+            assetDir = assetDir.parent_path().parent_path().parent_path();
+        }
+        else
+        {
+            assetDir = std::filesystem::path(MISSILESIM_SOURCE_ASSET_DIR);
+        }
+
+        m_pbrPipeline = std::make_unique<pbr::PBRPipeline>();
+        if (m_pbrPipeline->initialize(m_viewportWidth, m_viewportHeight,
+                                       0.1f, m_sceneFarPlane, assetDir))
+        {
+            // Configure default directional light (sun)
+            pbr::DirectionalLight sun{};
+            sun.direction = glm::vec3(-0.35f, -0.9f, 0.2f);
+            sun.color = glm::vec3(1.0f, 0.95f, 0.85f);
+            sun.strength = 2.5f;
+            sun.orthoBoxSize = 500.0f;
+            sun.distance = 800.0f;
+            sun.zNear = 1.0f;
+            sun.zFar = 2000.0f;
+            sun.shadowRes = 2048;
+            m_pbrPipeline->setDirectionalLight(sun);
+
+            // Load skybox
+            m_pbrPipeline->setSkybox("barcelona", 512);
+
+            std::cout << "PBR pipeline active." << std::endl;
+        }
+        else
+        {
+            std::cerr << "PBR pipeline initialization failed, falling back to legacy rendering." << std::endl;
+            m_pbrPipeline.reset();
+        }
+    }
+}
+
+bool Renderer::isPBRActive() const
+{
+    return m_pbrPipeline && m_pbrPipeline->isValid();
+}
+
+bool Renderer::hasPBR() const
+{
+    return isPBRActive();
+}
+
+void Renderer::setPBRExposure(float exposure)
+{
+    if (isPBRActive())
+        m_pbrPipeline->setExposure(exposure);
+}
+
+float Renderer::getPBRExposure() const
+{
+    return isPBRActive() ? m_pbrPipeline->getExposure() : 1.0f;
+}
+
+void Renderer::setPBRBloomPasses(int passes)
+{
+    if (isPBRActive())
+        m_pbrPipeline->setBloomPasses(passes);
+}
+
+int Renderer::getPBRBloomPasses() const
+{
+    return isPBRActive() ? m_pbrPipeline->getBloomPasses() : 0;
 }

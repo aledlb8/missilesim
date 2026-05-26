@@ -13,6 +13,8 @@
 class PhysicsObject;
 class SceneEffects;
 
+namespace pbr { class PBRPipeline; }
+
 class Renderer
 {
 public:
@@ -76,6 +78,13 @@ public:
     // Viewport settings
     void setViewportSize(int width, int height);
 
+    // PBR rendering controls
+    bool hasPBR() const;
+    void setPBRExposure(float exposure);
+    float getPBRExposure() const;
+    void setPBRBloomPasses(int passes);
+    int getPBRBloomPasses() const;
+
     // Getters for camera properties
     const glm::vec3 &getCameraPosition() const { return m_cameraPosition; }
     const glm::vec3 &getCameraTarget() const { return m_cameraTarget; }
@@ -120,9 +129,11 @@ private:
     std::filesystem::path resolveAssetPath(const std::string &relativePath) const;
     void normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const;
     void ensureDebugBufferCapacity(std::size_t vertexCount);
+    void flushDebugPrimitivesInternal();
     void updateCameraVectors();
     glm::mat4 buildViewMatrix() const;
     glm::mat4 buildProjectionMatrix() const;
+    bool isPBRActive() const;
 
     // OpenGL resources
     GLuint m_vao;           // Vertex Array Object
@@ -184,6 +195,8 @@ private:
     float m_sceneFarPlane = 20000.0f;
 
     std::unique_ptr<SceneEffects> m_sceneEffects;
+    std::unique_ptr<pbr::PBRPipeline> m_pbrPipeline;
+    bool m_usePBR = true;
 
     // Mesh data
     std::vector<Vertex> m_vertices;

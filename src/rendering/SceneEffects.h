@@ -21,6 +21,10 @@ public:
     void renderParticlesToScene();
     void presentScene();
 
+    /// When PBR pipeline is active, use its resolved depth for soft particles.
+    void setExternalDepthTexture(GLuint depthTex) { m_externalDepthTexture = depthTex; }
+    void clearExternalDepthTexture() { m_externalDepthTexture = 0; }
+
     void update(float deltaTime);
     void clear();
 
@@ -156,6 +160,7 @@ private:
     GLuint m_sceneFramebuffer = 0;
     GLuint m_sceneColorTexture = 0;
     GLuint m_sceneDepthTexture = 0;
+    GLuint m_externalDepthTexture = 0;
     bool m_sceneFramebufferValid = false;
     std::size_t m_particleInstanceCapacity = 0;
     std::size_t m_hazeInstanceCapacity = 0;

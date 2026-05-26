@@ -70,6 +70,18 @@ void Renderer::ensureDebugBufferCapacity(std::size_t vertexCount)
 
 void Renderer::flushDebugPrimitives()
 {
+    // When PBR is active, defer debug rendering to presentSceneFrame
+    // so lines are drawn on top of the tonemapped result.
+    if (isPBRActive())
+    {
+        return;
+    }
+
+    flushDebugPrimitivesInternal();
+}
+
+void Renderer::flushDebugPrimitivesInternal()
+{
     if (m_lineShaderProgram == 0 || (m_debugLineVertices.empty() && m_debugPointVertices.empty()))
     {
         clearDebugPrimitives();

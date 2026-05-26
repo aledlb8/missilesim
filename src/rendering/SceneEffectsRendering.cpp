@@ -228,7 +228,7 @@ void SceneEffects::renderHeatHazePass()
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_sceneColorTexture);
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_sceneDepthTexture);
+    glBindTexture(GL_TEXTURE_2D, m_externalDepthTexture != 0 ? m_externalDepthTexture : m_sceneDepthTexture);
 
     glBindVertexArray(m_hazeVAO);
     glBindBuffer(GL_ARRAY_BUFFER, m_hazeInstanceVBO);

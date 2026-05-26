@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "SceneEffects.h"
+#include "pbr/PBRPipeline.h"
 
 #include "../objects/Missile.h"
 #include "../objects/PhysicsObject.h"
@@ -23,6 +24,20 @@
 
 void Renderer::beginSceneFrame(const glm::vec3 &clearColor)
 {
+    if (isPBRActive())
+    {
+        // PBR mode: store camera state; actual rendering is deferred to executeRenderPass
+        m_pbrPipeline->beginFrame(buildViewMatrix(), buildProjectionMatrix(), m_cameraPosition);
+
+        // SceneEffects still needs camera for particle rendering
+        if (m_sceneEffects)
+        {
+            m_sceneEffects->setViewportSize(m_viewportWidth, m_viewportHeight);
+            m_sceneEffects->setCamera(m_cameraPosition, buildViewMatrix(), buildProjectionMatrix());
+        }
+        return;
+    }
+
     if (m_sceneEffects)
     {
         m_sceneEffects->setViewportSize(m_viewportWidth, m_viewportHeight);
@@ -39,6 +54,22 @@ void Renderer::beginSceneFrame(const glm::vec3 &clearColor)
 
 void Renderer::renderSceneEffects()
 {
+    if (isPBRActive())
+    {
+        // Execute the full PBR render pipeline (shadows → depth → cull → shade → skybox → resolve)
+        m_pbrPipeline->executeRenderPass();
+
+        // Render particles into the PBR resolved FBO
+        if (m_sceneEffects)
+        {
+            m_sceneEffects->setExternalDepthTexture(m_pbrPipeline->getResolvedDepthTexture());
+            m_pbrPipeline->bindResolvedFBO();
+            m_sceneEffects->setCamera(m_cameraPosition, buildViewMatrix(), buildProjectionMatrix());
+            m_sceneEffects->renderParticlesToScene();
+        }
+        return;
+    }
+
     if (!m_sceneEffects)
     {
         return;
@@ -50,6 +81,21 @@ void Renderer::renderSceneEffects()
 
 void Renderer::presentSceneFrame()
 {
+    if (isPBRActive())
+    {
+        // Bloom + tone mapping → default framebuffer
+        m_pbrPipeline->postProcess();
+
+        // Draw debug primitives on top of tonemapped result
+        flushDebugPrimitivesInternal();
+
+        if (m_sceneEffects)
+        {
+            m_sceneEffects->clearExternalDepthTexture();
+        }
+        return;
+    }
+
     if (m_sceneEffects)
     {
         m_sceneEffects->setCamera(m_cameraPosition, buildViewMatrix(), buildProjectionMatrix());
@@ -81,6 +127,11 @@ void Renderer::setViewportSize(int width, int height)
     if (m_sceneEffects)
     {
         m_sceneEffects->setViewportSize(width, height);
+    }
+
+    if (isPBRActive())
+    {
+        m_pbrPipeline->resize(width, height);
     }
 }
 
