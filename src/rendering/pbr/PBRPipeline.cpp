@@ -1,6 +1,7 @@
 #include "PBRPipeline.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <iostream>
 
 namespace pbr {
@@ -64,6 +65,7 @@ bool PBRPipeline::initialize(int width, int height,
         static_cast<unsigned int>(height),
         nearPlane, farPlane,
         defaultProj);
+    m_clusterGrid.uploadLights(m_pointLights);
 
     // Build cluster AABB grid via compute shader
     m_buildGridShader.use();
@@ -202,6 +204,7 @@ void PBRPipeline::resize(int width, int height)
         static_cast<unsigned int>(height),
         m_nearPlane, m_farPlane,
         proj);
+    m_clusterGrid.uploadLights(m_pointLights);
 
     m_buildGridShader.use();
     m_buildGridShader.setFloat("zNear", m_nearPlane);
@@ -320,9 +323,10 @@ void PBRPipeline::submitModel(Model &model, const glm::mat4 &modelMatrix)
 void PBRPipeline::submitLegacyMesh(GLuint vao, GLsizei indexCount,
                                     const glm::mat4 &modelMatrix,
                                     const glm::vec3 &albedo,
-                                    float metallic, float roughness)
+                                    float metallic, float roughness,
+                                    bool useVertexColor)
 {
-    m_legacyDrawCalls.push_back({vao, indexCount, modelMatrix, albedo, metallic, roughness});
+    m_legacyDrawCalls.push_back({vao, indexCount, modelMatrix, albedo, metallic, roughness, useVertexColor});
 }
 
 // ===========================================================================
@@ -456,6 +460,7 @@ void PBRPipeline::depthPrePass()
     {
         glm::mat4 MVP = VP * dc.modelMatrix;
         m_depthPassShader.setMat4("MVP", MVP);
+        m_depthPassShader.setBool("alphaTest", false);
         dc.model->draw(m_depthPassShader, false);
     }
 
@@ -463,6 +468,7 @@ void PBRPipeline::depthPrePass()
     {
         glm::mat4 MVP = VP * dc.modelMatrix;
         m_depthPassShader.setMat4("MVP", MVP);
+        m_depthPassShader.setBool("alphaTest", false);
         glBindVertexArray(dc.vao);
         glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
     }
@@ -474,6 +480,11 @@ void PBRPipeline::depthPrePass()
 
 void PBRPipeline::lightCulling()
 {
+    const unsigned int zero = 0;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_clusterGrid.getLightIndexGlobalCountSSBO());
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(zero), &zero);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
     m_cullLightsShader.use();
     m_cullLightsShader.setMat4("viewMatrix", m_viewMatrix);
     m_cullLightsShader.dispatch(1, 1, 6);
@@ -493,6 +504,8 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     shader.setVec3("cameraPos_wS", m_cameraPos);
     shader.setFloat("zFar", m_farPlane);
     shader.setFloat("zNear", m_nearPlane);
+    shader.setVec3("fogColor", glm::vec3(0.52f, 0.63f, 0.74f));
+    shader.setFloat("fogDensity", 1.0f / std::max(m_farPlane * 0.32f, 4500.0f));
 
     // Bind point light shadow cubemaps (texture units 5..8)
     constexpr unsigned int numMaterialTexUnits = 5;
@@ -570,6 +583,7 @@ void PBRPipeline::mainShadingPass()
             m_pbrSimpleShader.setVec3("u_albedo", dc.albedo);
             m_pbrSimpleShader.setFloat("u_metallic", dc.metallic);
             m_pbrSimpleShader.setFloat("u_roughness", dc.roughness);
+            m_pbrSimpleShader.setBool("u_useVertexColor", dc.useVertexColor);
 
             glBindVertexArray(dc.vao);
             glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);

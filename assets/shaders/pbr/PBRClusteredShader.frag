@@ -39,6 +39,8 @@ uniform samplerCube prefilterMap;
 uniform sampler2D brdfLUT;
 
 uniform vec3 cameraPos_wS;
+uniform vec3 fogColor;
+uniform float fogDensity;
 
 //To be changed in the future..
 //This is at the core as to why I want to change the current shadow mapping system to something
@@ -157,8 +159,10 @@ void main(){
     F0 = mix(F0, albedo, metallic);
 
     //Locating which cluster you are a part of
-    uint zTile     = uint(max(log2(linearDepth(gl_FragCoord.z)) * scale + bias, 0.0));
-    uvec3 tiles    = uvec3( uvec2( gl_FragCoord.xy / tileSizes[3] ), zTile);
+    float tileDepth = max(linearDepth(gl_FragCoord.z), zNear);
+    uint zTile      = uint(clamp(log2(tileDepth) * scale + bias, 0.0, float(tileSizes.z - 1u)));
+    uvec2 xyTile    = min(uvec2(gl_FragCoord.xy / float(tileSizes.w)), tileSizes.xy - uvec2(1u));
+    uvec3 tiles     = uvec3(xyTile, zTile);
     uint tileIndex = tiles.x +
                      tileSizes.x * tiles.y +
                      (tileSizes.x * tileSizes.y) * tiles.z;  
@@ -209,8 +213,11 @@ void main(){
     //Adding any emissive if there is an assigned map
     radianceOut += emissive;
 
+    float fogFactor = clamp(exp(-viewDistance * fogDensity), 0.0, 1.0);
+    radianceOut = mix(fogColor, radianceOut, fogFactor);
+
     if(slices){
-        FragColor = vec4(colors[uint(mod(zTile, 8.0))], 1.0);
+        FragColor = vec4(colors[int(zTile % 8u)], 1.0);
     }
     else{
         FragColor = vec4(radianceOut, 1.0);
@@ -249,7 +256,13 @@ vec3 calcDirLight(DirLight light, vec3 normal, vec3 viewDir, vec3 albedo, float 
 float calcDirShadow(vec4 fragPosLightSpace){
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
-    float bias = 0.0;
+    if (projCoords.z > 1.0 ||
+        any(lessThan(projCoords.xy, vec2(0.0))) ||
+        any(greaterThan(projCoords.xy, vec2(1.0)))) {
+        return 0.0;
+    }
+
+    float bias = 0.0015;
     int   samples = 9;
     float shadow = 0.0;
 

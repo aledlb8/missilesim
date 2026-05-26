@@ -12,6 +12,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <vector>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -512,39 +513,51 @@ void Renderer::createFloor()
     m_floorIndices.clear();
 
     const float size = m_groundHalfExtent * 2.0f;
-    const float y = 0.0f;
     const int gridSize = std::clamp(static_cast<int>(size / 80.0f), 64, 128);
     const float cellSize = size / gridSize;
     const float runwayHalfWidth = glm::clamp(m_airspaceHalfExtent * 0.035f, 14.0f, 72.0f);
     const float runwayHalfLength = glm::clamp(m_airspaceHalfExtent * 0.55f, 230.0f, m_groundHalfExtent * 0.45f);
     const float serviceLaneHalfWidth = runwayHalfWidth * 1.7f;
     const float serviceLaneHalfLength = runwayHalfLength * 0.70f;
-    const glm::vec3 tarmacColor(0.16f, 0.18f, 0.22f);
-    const glm::vec3 terrainColor(0.29f, 0.32f, 0.27f);
-    const glm::vec3 accentColor(0.22f, 0.25f, 0.29f);
+    const glm::vec3 runwayColor(0.23f, 0.25f, 0.27f);
+    const glm::vec3 apronColor(0.19f, 0.22f, 0.25f);
+    const glm::vec3 scrubColor(0.30f, 0.34f, 0.26f);
+    const glm::vec3 dryGrassColor(0.42f, 0.39f, 0.26f);
+    const glm::vec3 distantEarthColor(0.26f, 0.28f, 0.23f);
 
     for (int z = 0; z <= gridSize; z++)
     {
         for (int x = 0; x <= gridSize; x++)
         {
-            float xPos = -size / 2.0f + x * cellSize;
-            float zPos = -size / 2.0f + z * cellSize;
-            float radialT = glm::clamp(glm::length(glm::vec2(xPos, zPos)) / (size * 0.5f), 0.0f, 1.0f);
-            float macroNoise = 0.5f + 0.5f * sin(xPos * 0.008f) * cos(zPos * 0.010f);
-            glm::vec3 color = glm::mix(tarmacColor, terrainColor, radialT);
-            color = glm::mix(color, accentColor, 0.18f + macroNoise * 0.12f);
+            const float xPos = -size / 2.0f + x * cellSize;
+            const float zPos = -size / 2.0f + z * cellSize;
+            const float radialT = glm::clamp(glm::length(glm::vec2(xPos, zPos)) / (size * 0.5f), 0.0f, 1.0f);
+            const bool onRunway = glm::abs(xPos) < runwayHalfWidth && glm::abs(zPos) < runwayHalfLength;
+            const bool onServiceLane = glm::abs(zPos) < serviceLaneHalfWidth && glm::abs(xPos) < serviceLaneHalfLength;
+            const bool onApron = glm::abs(xPos) < runwayHalfWidth * 2.2f && glm::abs(zPos) < runwayHalfWidth * 2.2f;
 
-            if (glm::abs(xPos) < runwayHalfWidth && glm::abs(zPos) < runwayHalfLength)
+            const float broadNoise = 0.5f + 0.5f * std::sin(xPos * 0.0034f + std::cos(zPos * 0.0017f) * 1.4f);
+            const float grassNoise = 0.5f + 0.5f * std::sin(xPos * 0.019f) * std::cos(zPos * 0.014f);
+            glm::vec3 color = glm::mix(scrubColor, dryGrassColor, broadNoise * 0.65f + grassNoise * 0.25f);
+            color = glm::mix(color, distantEarthColor, radialT * 0.55f);
+
+            if (onRunway)
             {
-                color = glm::mix(color, glm::vec3(0.30f, 0.32f, 0.36f), 0.7f);
+                color = glm::mix(runwayColor, glm::vec3(0.31f, 0.32f, 0.33f), grassNoise * 0.12f);
+            }
+            else if (onServiceLane || onApron)
+            {
+                color = glm::mix(apronColor, color, onApron ? 0.22f : 0.38f);
+            }
+            else
+            {
+                const float mottling = 0.5f + 0.5f * std::sin((xPos - zPos) * 0.006f);
+                color = glm::mix(color, glm::vec3(0.22f, 0.27f, 0.21f), mottling * 0.16f);
             }
 
-            if (glm::abs(zPos) < serviceLaneHalfWidth && glm::abs(xPos) < serviceLaneHalfLength)
-            {
-                color = glm::mix(color, glm::vec3(0.24f, 0.27f, 0.32f), 0.35f);
-            }
-
-            m_floorVertices.push_back({{xPos, y, zPos}, {0.0f, 1.0f, 0.0f}, color});
+            m_floorVertices.push_back({{xPos, 0.0f, zPos},
+                                       {0.0f, 1.0f, 0.0f},
+                                       color});
         }
     }
 

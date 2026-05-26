@@ -254,8 +254,8 @@ void Renderer::initialize()
             sun.shadowRes = 2048;
             m_pbrPipeline->setDirectionalLight(sun);
 
-            // Load skybox
-            m_pbrPipeline->setSkybox("barcelona", 512);
+            // Load a natural open-air HDRI; urban rooftops read poorly at missile-sim scale.
+            m_pbrPipeline->setSkybox("monoLake", 512);
 
             std::cout << "PBR pipeline active." << std::endl;
         }

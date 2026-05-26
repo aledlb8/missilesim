@@ -6,6 +6,7 @@ in VS_OUT {
     vec3 fragPos_wS;
     vec4 fragPos_lS;
     vec3 N;
+    vec3 vertexColor;
 } fs_in;
 
 // Directional light
@@ -19,6 +20,7 @@ uniform DirLight dirLight;
 uniform vec3  u_albedo;
 uniform float u_metallic;
 uniform float u_roughness;
+uniform bool  u_useVertexColor;
 
 // Shadow map
 uniform sampler2D shadowMap;
@@ -30,6 +32,8 @@ uniform sampler2D brdfLUT;
 uniform bool IBL;
 
 uniform vec3 cameraPos_wS;
+uniform vec3 fogColor;
+uniform float fogDensity;
 
 #define SHADOW_CASTING_POINT_LIGHTS 4
 #define M_PI 3.1415926535897932384626433832795
@@ -114,12 +118,19 @@ float linearDepth(float depthSample) {
 float calcDirShadow(vec4 fragPosLightSpace) {
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
+    if (projCoords.z > 1.0 ||
+        any(lessThan(projCoords.xy, vec2(0.0))) ||
+        any(greaterThan(projCoords.xy, vec2(1.0)))) {
+        return 0.0;
+    }
+
     float shadow = 0.0;
+    float bias = 0.0015;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
 
     for (int i = 0; i < 9; ++i) {
         float pcfDepth = texture(shadowMap, projCoords.xy + sampleOffsetDirections[i].xy * texelSize).r;
-        shadow += projCoords.z > pcfDepth ? 0.111111 : 0.0;
+        shadow += projCoords.z - bias > pcfDepth ? 0.111111 : 0.0;
     }
     return shadow;
 }
@@ -141,7 +152,7 @@ float calcPointLightShadows(samplerCube depthMap, vec3 fragToLight, float viewDi
 }
 
 void main() {
-    vec3 albedo    = u_albedo;
+    vec3 albedo    = u_useVertexColor ? fs_in.vertexColor : u_albedo;
     float metallic = u_metallic;
     float roughness = u_roughness;
 
@@ -153,8 +164,10 @@ void main() {
     F0 = mix(F0, albedo, metallic);
 
     // Cluster tile lookup
-    uint zTile     = uint(max(log2(linearDepth(gl_FragCoord.z)) * scale + bias, 0.0));
-    uvec3 tiles    = uvec3(uvec2(gl_FragCoord.xy / tileSizes[3]), zTile);
+    float tileDepth = max(linearDepth(gl_FragCoord.z), zNear);
+    uint zTile      = uint(clamp(log2(tileDepth) * scale + bias, 0.0, float(tileSizes.z - 1u)));
+    uvec2 xyTile    = min(uvec2(gl_FragCoord.xy / float(tileSizes.w)), tileSizes.xy - uvec2(1u));
+    uvec3 tiles     = uvec3(xyTile, zTile);
     uint tileIndex = tiles.x +
                      tileSizes.x * tiles.y +
                      (tileSizes.x * tileSizes.y) * tiles.z;
@@ -229,6 +242,9 @@ void main() {
         ambient = kD * diffuse + specular;
     }
     radianceOut += ambient;
+
+    float fogFactor = clamp(exp(-viewDistance * fogDensity), 0.0, 1.0);
+    radianceOut = mix(fogColor, radianceOut, fogFactor);
 
     FragColor = vec4(radianceOut, 1.0);
 }

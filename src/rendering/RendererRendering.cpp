@@ -159,10 +159,11 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
 
         // Create model matrix for the object
         glm::mat4 model = glm::mat4(1.0f);
+        const bool isMissile = object->getType() == "Missile";
         model = glm::translate(model, object->getPosition());
 
         // Orient based on object type
-        if (object->getType() == "Missile")
+        if (isMissile)
         {
             glm::vec3 velocity = object->getVelocity();
             if (glm::length(velocity) > 0.001f)
@@ -192,7 +193,7 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
         }
 
         // Scale and submit
-        if (object->getType() == "Missile")
+        if (isMissile)
         {
             model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
 
@@ -258,6 +259,7 @@ void Renderer::render(PhysicsObject *object)
 
     // Create model matrix for the object
     glm::mat4 model = glm::mat4(1.0f);
+    const bool isMissile = object->getType() == "Missile";
     model = glm::translate(model, object->getPosition());
 
     // Orient based on type
@@ -284,7 +286,7 @@ void Renderer::render(PhysicsObject *object)
     }
 
     // Scale and draw/submit
-    if (object->getType() == "Missile")
+    if (isMissile)
     {
         model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
 
@@ -375,7 +377,7 @@ void Renderer::renderFloor()
     {
         m_pbrPipeline->submitLegacyMesh(
             m_floorVAO, static_cast<GLsizei>(m_floorIndices.size()), model,
-            glm::vec3(0.35f, 0.38f, 0.35f), 0.0f, 0.9f);
+            glm::vec3(1.0f), 0.0f, 0.86f, true);
         return;
     }
 

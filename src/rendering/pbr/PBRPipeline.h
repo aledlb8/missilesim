@@ -60,7 +60,8 @@ public:
     void submitLegacyMesh(GLuint vao, GLsizei indexCount,
                           const glm::mat4 &modelMatrix,
                           const glm::vec3 &albedo,
-                          float metallic, float roughness);
+                          float metallic, float roughness,
+                          bool useVertexColor = false);
 
     /// Execute shadows, depth prepass, light culling, shading, skybox, MSAA resolve.
     void executeRenderPass();
@@ -91,6 +92,7 @@ private:
         glm::vec3 albedo;
         float metallic;
         float roughness;
+        bool useVertexColor;
     };
 
     // Initialization stages

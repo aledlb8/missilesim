@@ -54,7 +54,6 @@ bool testSphereAABB(uint light, uint tile);
 float sqDistPointAABB(vec3 point, uint tile);
 
 void main(){
-    globalIndexCount = 0;
     uint threadCount = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
     uint lightCount  = pointLight.length();
     uint numBatches = (lightCount + threadCount -1) / threadCount;
@@ -67,19 +66,27 @@ void main(){
     for( uint batch = 0; batch < numBatches; ++batch){
         uint lightIndex = batch * threadCount + gl_LocalInvocationIndex;
 
-        //Prevent overflow by clamping to last light which is always null
-        lightIndex = min(lightIndex, lightCount);
-
         //Populating shared light array
-        sharedLights[gl_LocalInvocationIndex] = pointLight[lightIndex];
+        if(lightIndex < lightCount){
+            sharedLights[gl_LocalInvocationIndex] = pointLight[lightIndex];
+        }
+        else{
+            sharedLights[gl_LocalInvocationIndex].position = vec4(0.0);
+            sharedLights[gl_LocalInvocationIndex].color = vec4(0.0);
+            sharedLights[gl_LocalInvocationIndex].enabled = 0u;
+            sharedLights[gl_LocalInvocationIndex].intensity = 0.0;
+            sharedLights[gl_LocalInvocationIndex].range = 0.0;
+        }
         barrier();
 
         //Iterating within the current batch of lights
         for( uint light = 0; light < threadCount; ++light){
             if( sharedLights[light].enabled  == 1){
                 if( testSphereAABB(light, tileIndex) ){
-                    visibleLightIndices[visibleLightCount] = batch * threadCount + light;
-                    visibleLightCount += 1;
+                    if(visibleLightCount < 100u){
+                        visibleLightIndices[visibleLightCount] = batch * threadCount + light;
+                        visibleLightCount += 1;
+                    }
                 }
             }
         }
