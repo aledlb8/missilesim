@@ -341,6 +341,14 @@ void Application::setupUI()
     {
         missionState = "Paused";
     }
+    else if (m_launchSequence.active && !m_launchSequence.motorIgnited)
+    {
+        missionState = "Rail clear";
+    }
+    else if (m_launchSequence.active)
+    {
+        missionState = "Ignition";
+    }
     else if (m_missileInFlight && guidanceLocked && thrustEnabled)
     {
         missionState = "Intercept";
@@ -690,6 +698,8 @@ void Application::setupUI()
             drawReadoutRow("Target defense", missileWarning ? "MAWS active" : "No cue");
             std::snprintf(buffer, sizeof(buffer), "%.0f N", m_missile->getThrust());
             drawReadoutRow("Thrust command", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%.0f%%", m_missile->getThrottle() * 100.0f);
+            drawReadoutRow("Motor throttle", buffer);
             std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
             drawReadoutRow("Burn rate", buffer);
             std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);

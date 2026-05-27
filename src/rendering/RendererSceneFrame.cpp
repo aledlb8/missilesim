@@ -170,6 +170,27 @@ void Renderer::emitFlareEffect(const glm::vec3 &start,
     }
 }
 
+void Renderer::spawnMissileLaunchEffect(const glm::vec3 &position,
+                                        const glm::vec3 &forward,
+                                        const glm::vec3 &carrierVelocity,
+                                        float intensity)
+{
+    if (m_sceneEffects)
+    {
+        m_sceneEffects->spawnMissileLaunch(position, forward, carrierVelocity, intensity);
+    }
+}
+
+void Renderer::spawnLaunchGroundCloudEffect(const glm::vec3 &position,
+                                            const glm::vec3 &up,
+                                            float intensity)
+{
+    if (m_sceneEffects)
+    {
+        m_sceneEffects->spawnLaunchGroundCloud(position, up, intensity);
+    }
+}
+
 void Renderer::spawnExplosionEffect(const glm::vec3 &position,
                                     const glm::vec3 &velocityHint,
                                     float intensity)

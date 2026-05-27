@@ -95,6 +95,16 @@ void Missile::setCountermeasureResistance(float resistance)
     m_countermeasureResistance = glm::clamp(resistance, 0.0f, 1.0f);
 }
 
+void Missile::setThrottle(float throttle)
+{
+    if (std::isnan(throttle) || std::isinf(throttle))
+    {
+        return;
+    }
+
+    m_throttle = glm::clamp(throttle, 0.0f, 1.0f);
+}
+
 void Missile::setFuel(float kg)
 {
     m_fuel = std::max(kg, 0.0f);
@@ -475,7 +485,8 @@ void Missile::applyGuidance(float deltaTime, float airDensity)
 bool Missile::applyThrust(float deltaTime)
 {
     // Check if thrust is enabled and we have fuel
-    if (!m_thrustEnabled || m_fuel <= 0.0f || m_thrust <= 0.0f)
+    const float throttleCommand = glm::clamp(m_throttle, 0.0f, 1.0f);
+    if (!m_thrustEnabled || m_fuel <= 0.0f || m_thrust <= 0.0f || throttleCommand <= 0.001f)
     {
         if (m_fuel <= 0.0f)
         {
@@ -510,7 +521,7 @@ bool Missile::applyThrust(float deltaTime)
         }
 
         // Calculate fuel consumption for this step
-        const float requestedFuel = m_fuelConsumptionRate * deltaTime;
+        const float requestedFuel = m_fuelConsumptionRate * throttleCommand * deltaTime;
         if (requestedFuel <= 0.0f)
         {
             return false;
@@ -518,8 +529,9 @@ bool Missile::applyThrust(float deltaTime)
 
         // Limit consumption to available fuel
         const float fuelConsumed = std::min(requestedFuel, m_fuel);
-        const float throttleFraction = glm::clamp(fuelConsumed / requestedFuel, 0.0f, 1.0f);
-        if (throttleFraction <= 0.0f)
+        const float fuelAvailabilityFraction = glm::clamp(fuelConsumed / requestedFuel, 0.0f, 1.0f);
+        const float effectiveThrottle = throttleCommand * fuelAvailabilityFraction;
+        if (effectiveThrottle <= 0.0f)
         {
             m_fuel = 0.0f;
             m_thrustEnabled = false;
@@ -534,7 +546,7 @@ bool Missile::applyThrust(float deltaTime)
         // approaching its vacuum thrust. Both terms require propellant flow, so
         // they scale with the throttle (fuel-availability) fraction.
         const float backPressureThrust = (m_nozzleExitPressure - m_ambientPressure) * m_nozzleExitArea;
-        const float thrustMagnitude = std::max(throttleFraction * (m_thrust + backPressureThrust), 0.0f);
+        const float thrustMagnitude = std::max(effectiveThrottle * (m_thrust + backPressureThrust), 0.0f);
 
         // Apply thrust force in the thrust direction
         glm::vec3 thrustForce = m_thrustDirection * thrustMagnitude;

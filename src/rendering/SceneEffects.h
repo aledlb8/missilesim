@@ -42,6 +42,13 @@ public:
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,
                          float heatFraction);
+    void spawnMissileLaunch(const glm::vec3 &position,
+                            const glm::vec3 &forward,
+                            const glm::vec3 &carrierVelocity,
+                            float intensity = 1.0f);
+    void spawnLaunchGroundCloud(const glm::vec3 &position,
+                                const glm::vec3 &up,
+                                float intensity = 1.0f);
     void spawnExplosion(const glm::vec3 &position,
                         const glm::vec3 &velocityHint = glm::vec3(0.0f),
                         float intensity = 1.0f);

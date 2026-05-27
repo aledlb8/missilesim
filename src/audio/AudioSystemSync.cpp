@@ -124,6 +124,7 @@ void AudioSystem::Impl::syncMissile(const Missile *missile, bool missileInFlight
     m_missileAirframe.targetPitch = 0.92f + (speedFraction * 0.24f);
 
     const bool boosterActive = missile->isThrustEnabled() && missile->getFuel() > 0.0f;
+    const float throttle = saturate(missile->getThrottle());
     const float fuelFraction = (referenceFuel > 0.0f)
                                    ? saturate(missile->getFuel() / referenceFuel)
                                    : 1.0f;
@@ -131,10 +132,12 @@ void AudioSystem::Impl::syncMissile(const Missile *missile, bool missileInFlight
     m_missileAfterburner.position = missile->getPosition() - (forward * 1.0f);
     m_missileAfterburner.velocity = velocity;
     m_missileAfterburner.direction = -forward;
-    m_missileAfterburner.targetVolume = boosterActive
-                                            ? std::clamp(0.34f + (speedFraction * 0.24f) + (fuelFraction * 0.08f), 0.0f, 0.82f)
+    m_missileAfterburner.targetVolume = (boosterActive && throttle > 0.01f)
+                                            ? std::clamp((0.34f + (speedFraction * 0.24f) + (fuelFraction * 0.08f)) * throttle,
+                                                         0.0f,
+                                                         0.82f)
                                             : 0.0f;
-    m_missileAfterburner.targetPitch = 0.98f + (speedFraction * 0.18f);
+    m_missileAfterburner.targetPitch = 0.98f + (speedFraction * 0.18f) + ((1.0f - throttle) * 0.04f);
 }
 
 void AudioSystem::Impl::syncTargets(const std::vector<Target *> &activeTargets)

@@ -104,6 +104,9 @@ public:
     void setThrust(float newtons) { m_thrust = newtons; }
     float getThrust() const { return m_thrust; }
 
+    void setThrottle(float throttle);
+    float getThrottle() const { return m_throttle; }
+
     void setNozzleExitArea(float squareMeters) { m_nozzleExitArea = (squareMeters >= 0.0f) ? squareMeters : 0.0f; }
     float getNozzleExitArea() const { return m_nozzleExitArea; }
 
@@ -174,6 +177,7 @@ private:
 
     // Thrust properties
     float m_thrust = 10000.0f;                                 // Thrust force in Newtons
+    float m_throttle = 1.0f;                                   // Motor throttle command, 0..1
     glm::vec3 m_thrustDirection = glm::vec3(0.0f, 0.0f, 1.0f); // Direction of thrust
     bool m_thrustEnabled = false;                              // Whether thrust is active
     float m_fuel = 0.0f;                                       // Fuel amount in kg

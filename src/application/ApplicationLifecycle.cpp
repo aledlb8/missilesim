@@ -513,6 +513,8 @@ void Application::update(float deltaTime)
                 // Store previous position of missile for hit detection
                 glm::vec3 prevMissilePos = m_missile->getPosition();
 
+                updateMissileLaunchSequence(m_timeStep);
+
                 // Update physics
                 m_physicsEngine->update(m_timeStep);
 

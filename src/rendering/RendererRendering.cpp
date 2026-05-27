@@ -99,6 +99,42 @@ namespace
                (glm::cross(normalizedAxis, vector) * sine) +
                (normalizedAxis * glm::dot(normalizedAxis, vector) * (1.0f - cosine));
     }
+
+    glm::mat4 buildAxisOrientationMatrix(const glm::vec3 &direction)
+    {
+        const glm::vec3 forward = normalizeOrFallback(direction, glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::vec3 defaultDirection(0.0f, 1.0f, 0.0f);
+        const float angle = std::acos(glm::clamp(glm::dot(defaultDirection, forward), -1.0f, 1.0f));
+
+        if (std::abs(angle) <= 0.001f)
+        {
+            return glm::mat4(1.0f);
+        }
+
+        if (std::abs(angle - glm::pi<float>()) <= 0.001f)
+        {
+            return glm::rotate(glm::mat4(1.0f), glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
+        }
+
+        const glm::vec3 rotationAxis = normalizeOrFallback(glm::cross(defaultDirection, forward),
+                                                           glm::vec3(1.0f, 0.0f, 0.0f));
+        return glm::rotate(glm::mat4(1.0f), angle, rotationAxis);
+    }
+
+    glm::vec3 getMissileRenderDirection(const Missile *missile)
+    {
+        if (missile == nullptr)
+        {
+            return glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        if (!missile->isThrustEnabled())
+        {
+            return normalizeOrFallback(missile->getThrustDirection(), missile->getVelocity());
+        }
+
+        return normalizeOrFallback(missile->getVelocity(), missile->getThrustDirection());
+    }
 }
 
 namespace
@@ -165,23 +201,7 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
         // Orient based on object type
         if (isMissile)
         {
-            glm::vec3 velocity = object->getVelocity();
-            if (glm::length(velocity) > 0.001f)
-            {
-                glm::vec3 direction = glm::normalize(velocity);
-                glm::vec3 defaultDir = glm::vec3(0.0f, 1.0f, 0.0f);
-                float angle = acos(glm::dot(defaultDir, direction));
-
-                if (abs(angle) > 0.001f && abs(angle - glm::pi<float>()) > 0.001f)
-                {
-                    glm::vec3 rotationAxis = glm::normalize(glm::cross(defaultDir, direction));
-                    model = glm::rotate(model, angle, rotationAxis);
-                }
-                else if (abs(angle - glm::pi<float>()) <= 0.001f)
-                {
-                    model = glm::rotate(model, glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
-                }
-            }
+            model *= buildAxisOrientationMatrix(getMissileRenderDirection(static_cast<const Missile *>(object)));
         }
         else if (object->getType() == "Target")
         {
@@ -268,21 +288,13 @@ void Renderer::render(PhysicsObject *object)
     {
         model *= buildTargetOrientationMatrix(velocity, object->getRenderAcceleration());
     }
+    else if (isMissile)
+    {
+        model *= buildAxisOrientationMatrix(getMissileRenderDirection(static_cast<const Missile *>(object)));
+    }
     else if (glm::length(velocity) > 0.001f)
     {
-        glm::vec3 direction = glm::normalize(velocity);
-        glm::vec3 defaultDir = glm::vec3(0.0f, 1.0f, 0.0f);
-        float angle = acos(glm::dot(defaultDir, direction));
-
-        if (abs(angle) > 0.001f && abs(angle - glm::pi<float>()) > 0.001f)
-        {
-            glm::vec3 rotationAxis = glm::normalize(glm::cross(defaultDir, direction));
-            model = glm::rotate(model, angle, rotationAxis);
-        }
-        else if (abs(angle - glm::pi<float>()) <= 0.001f)
-        {
-            model = glm::rotate(model, glm::pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
-        }
+        model *= buildAxisOrientationMatrix(velocity);
     }
 
     // Scale and draw/submit

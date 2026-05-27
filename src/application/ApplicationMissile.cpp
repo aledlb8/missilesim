@@ -42,6 +42,50 @@ using missilesim::application::detail::parseVec3Value;
 using missilesim::application::detail::safeNormalize;
 using missilesim::application::detail::trimWhitespace;
 
+namespace
+{
+    constexpr float kGroundLaunchClearanceMeters = 1.6f;
+    constexpr float kGroundLaunchProfileHeightMeters = 12.0f;
+    constexpr float kGroundLaunchMinimumPitchDegrees = 8.0f;
+    constexpr float kGroundLaunchMaximumPitchDegrees = 82.0f;
+
+    // Cold-launch tuning. The ejection charge lobs the round vertically at a
+    // gentle speed so the lift is readable; the booster then multiplies the
+    // configured motor thrust for a short, violent climb before the sustainer.
+    constexpr float kColdLaunchEjectSpeed = 26.0f;       // ejection muzzle velocity (m/s)
+    constexpr float kColdLaunchEjectPitchDegrees = 82.0f; // near-vertical ejection
+    constexpr float kBoostThrustMultiplier = 4.0f;        // booster vs. sustainer thrust
+    constexpr float kColdLaunchIgnitionThrottle = 0.35f;  // throttle at motor light-up
+
+    // Pitch-over: the powered round turns its aim toward the live target at a
+    // capped rate, then hands off to proportional navigation the moment its
+    // velocity sits comfortably inside the seeker cone (so it never commits to a
+    // blind vertical climb that the seeker would later reject).
+    constexpr float kColdLaunchPitchRateDegPerSec = 110.0f;
+    constexpr float kColdLaunchHandoffConeDegrees = 55.0f;
+
+    glm::vec3 normalizeOrFallback(const glm::vec3 &value, const glm::vec3 &fallback)
+    {
+        if (glm::length2(value) > 0.0001f)
+        {
+            return glm::normalize(value);
+        }
+
+        if (glm::length2(fallback) > 0.0001f)
+        {
+            return glm::normalize(fallback);
+        }
+
+        return glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    float smooth01(float value)
+    {
+        const float t = glm::clamp(value, 0.0f, 1.0f);
+        return t * t * (3.0f - (2.0f * t));
+    }
+}
+
 void Application::launchMissile()
 {
     try
@@ -73,34 +117,74 @@ void Application::launchMissile()
         const glm::vec3 cameraForward = m_renderer
                                             ? safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f))
                                             : glm::vec3(0.0f, 0.0f, 1.0f);
-        const glm::vec3 thrustDirection = safeNormalize(cameraForward, safeNormalize(stagedVelocity, glm::vec3(0.0f, 0.0f, 1.0f)));
+        const glm::vec3 launchDirection = computeMissileLaunchDirection(lockedTarget, cameraForward, stagedVelocity);
+        const float groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
+        glm::vec3 launchPosition = m_missile->getPosition();
+        if (launchPosition.y < groundLevel + kGroundLaunchClearanceMeters)
+        {
+            launchPosition.y = groundLevel + kGroundLaunchClearanceMeters;
+        }
 
-        // Set thrust parameters and preserve the pre-launch lock.
-        m_missile->setGuidanceEnabled(m_guidanceEnabled);
+        const bool groundLaunchProfile =
+            (launchPosition.y - groundLevel) <= (kGroundLaunchProfileHeightMeters + kGroundLaunchClearanceMeters);
+
+        // The ejection charge throws the round near-vertically; only once it is
+        // clear of the cell does the motor light and pitch over toward the
+        // target. A launch already clear of the ground skips the eject and
+        // lights almost immediately.
+        const glm::vec3 ejectDirection = groundLaunchProfile
+                                             ? computeColdLaunchEjectDirection(launchDirection)
+                                             : launchDirection;
+        m_missile->setPosition(launchPosition + (ejectDirection * 0.45f));
+
+        // Stage the round inert: no thrust, no guidance. Both are armed by the
+        // launch sequence so the missile never snap-steers at t=0.
+        m_missile->setGuidanceEnabled(false);
         m_missile->setThrust(m_missileThrust);
-        m_missile->setThrustDirection(thrustDirection);
+        m_missile->setThrustDirection(ejectDirection);
         m_missile->setFuel(m_missileFuel);
         m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
+        m_missile->setThrottle(0.0f);
+        m_missile->setThrustEnabled(false);
 
-        // Enable thrust engine
-        m_missile->setThrustEnabled(true);
-
-        // Fire in the player's aim direction after a valid seeker lock.
-        float initialSpeed = glm::length(stagedVelocity);
-        if (initialSpeed < 0.1f)
+        const float ejectSpeed = groundLaunchProfile
+                                     ? kColdLaunchEjectSpeed
+                                     : std::max(glm::length(stagedVelocity), kColdLaunchEjectSpeed);
+        m_missile->setVelocity(ejectDirection * ejectSpeed);
+        if (m_physicsEngine)
         {
-            initialSpeed = std::max(m_missileThrust / 50.0f, 40.0f);
+            m_physicsEngine->addObject(m_missile.get());
         }
-        m_missile->setVelocity(thrustDirection * initialSpeed);
 
-        if (m_audioSystem)
+        m_launchSequence = MissileLaunchSequence{};
+        m_launchSequence.active = true;
+        m_launchSequence.restoreGuidanceEnabled = m_guidanceEnabled;
+        m_launchSequence.ejectDirection = ejectDirection;
+        m_launchSequence.launchDirection = launchDirection;
+        m_launchSequence.aimDirection = ejectDirection;
+        m_launchSequence.sustainThrust = m_missileThrust;
+        if (!groundLaunchProfile)
         {
-            m_audioSystem->playLaunch(m_missile->getPosition(), m_missile->getVelocity());
+            // No ejection coast when we are already airborne: light at once.
+            m_launchSequence.ignitionDelay = 0.05f;
+            m_launchSequence.guidanceArmDelay = 0.55f;
+        }
+
+        // Roll a big, lingering ground cloud of ejection gas across the pad. The
+        // violent ignition plume is spawned in mid-air by the launch sequence
+        // once the motor lights.
+        if (m_renderer && groundLaunchProfile)
+        {
+            const glm::vec3 padPosition(launchPosition.x, groundLevel + 0.2f, launchPosition.z);
+            m_renderer->spawnLaunchGroundCloudEffect(padPosition, glm::vec3(0.0f, 1.0f, 0.0f), 1.4f);
         }
 
         // Log launch
-        std::cout << "Missile launched with thrust: " << m_missileThrust
-                  << " N, fuel: " << m_missileFuel << " kg, target lock retained" << std::endl;
+        std::cout << "Cold-launch sequence initialized: eject " << ejectSpeed
+                  << " m/s, ignition delay " << m_launchSequence.ignitionDelay
+                  << " s, booster " << (m_missileThrust * kBoostThrustMultiplier)
+                  << " N for " << m_launchSequence.boostDuration
+                  << " s, fuel " << m_missileFuel << " kg, target lock retained" << std::endl;
 
         m_seekerCueEnabled = false;
         m_missileInFlight = true;
@@ -118,6 +202,218 @@ void Application::launchMissile()
     }
 }
 
+glm::vec3 Application::computeMissileLaunchDirection(Target *lockedTarget,
+                                                     const glm::vec3 &cameraForward,
+                                                     const glm::vec3 &stagedVelocity) const
+{
+    const glm::vec3 fallbackDirection = normalizeOrFallback(stagedVelocity, glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 aimDirection = normalizeOrFallback(cameraForward, fallbackDirection);
+    glm::vec3 targetDirection = aimDirection;
+
+    if (m_missile && lockedTarget)
+    {
+        targetDirection = normalizeOrFallback(lockedTarget->getPosition() - m_missile->getPosition(), aimDirection);
+    }
+
+    glm::vec3 launchDirection = (lockedTarget != nullptr) ? targetDirection : aimDirection;
+
+    const float groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
+    const float terrainClearance = m_missile ? (m_missile->getPosition().y - groundLevel) : kGroundLaunchProfileHeightMeters;
+    if (terrainClearance <= kGroundLaunchProfileHeightMeters)
+    {
+        glm::vec3 flatDirection(launchDirection.x, 0.0f, launchDirection.z);
+        if (glm::length2(flatDirection) <= 0.0001f)
+        {
+            flatDirection = glm::vec3(targetDirection.x, 0.0f, targetDirection.z);
+        }
+        flatDirection = normalizeOrFallback(flatDirection, glm::vec3(0.0f, 0.0f, 1.0f));
+
+        const float currentPitch = std::asin(glm::clamp(launchDirection.y, -1.0f, 1.0f));
+        const float minimumPitch = glm::radians(kGroundLaunchMinimumPitchDegrees);
+        const float maximumPitch = glm::radians(kGroundLaunchMaximumPitchDegrees);
+        const float launchPitch = glm::clamp(std::max(currentPitch, minimumPitch), minimumPitch, maximumPitch);
+
+        launchDirection = normalizeOrFallback((flatDirection * std::cos(launchPitch)) +
+                                                  (glm::vec3(0.0f, 1.0f, 0.0f) * std::sin(launchPitch)),
+                                              glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+
+    return launchDirection;
+}
+
+glm::vec3 Application::computeColdLaunchEjectDirection(const glm::vec3 &launchDirection) const
+{
+    // Lob the round near-vertically, leaning slightly toward the target azimuth
+    // so the subsequent pitch-over reads as a deliberate turn rather than a
+    // sharp kink.
+    glm::vec3 flatDirection(launchDirection.x, 0.0f, launchDirection.z);
+    flatDirection = normalizeOrFallback(flatDirection, glm::vec3(0.0f, 0.0f, 1.0f));
+
+    const float ejectPitch = glm::radians(kColdLaunchEjectPitchDegrees);
+    return normalizeOrFallback((flatDirection * std::cos(ejectPitch)) +
+                                   (glm::vec3(0.0f, 1.0f, 0.0f) * std::sin(ejectPitch)),
+                               glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+void Application::resetMissileLaunchSequence()
+{
+    m_launchSequence = MissileLaunchSequence{};
+    if (m_missile)
+    {
+        // Clear any leftover booster thrust so a re-staged round uses the
+        // configured sustainer value.
+        m_missile->setThrust(m_missileThrust);
+        m_missile->setThrottle(1.0f);
+    }
+}
+
+void Application::updateMissileLaunchSequence(float deltaTime)
+{
+    if (!m_launchSequence.active || !m_missile || !m_missileInFlight)
+    {
+        return;
+    }
+
+    const float dt = (deltaTime > 0.0f && std::isfinite(deltaTime)) ? deltaTime : 0.0f;
+    m_launchSequence.elapsed += dt;
+
+    const glm::vec3 ejectDirection = normalizeOrFallback(m_launchSequence.ejectDirection, m_missile->getThrustDirection());
+    const glm::vec3 launchDirection = normalizeOrFallback(m_launchSequence.launchDirection, ejectDirection);
+
+    // Phase 1 - eject coast: the round rises on the ejection charge alone,
+    // pointed along the launch (vertical) vector while the motor stays cold.
+    if (!m_launchSequence.motorIgnited)
+    {
+        m_missile->setThrustDirection(ejectDirection);
+        m_missile->setThrottle(0.0f);
+
+        if (m_launchSequence.elapsed >= m_launchSequence.ignitionDelay)
+        {
+            // Phase 2 - ignition: light the booster at elevated thrust and
+            // announce it with the airborne plume + roar.
+            m_launchSequence.motorIgnited = true;
+            m_missile->setThrust(m_launchSequence.sustainThrust * kBoostThrustMultiplier);
+            m_missile->setThrustEnabled(true);
+            m_missile->setThrottle(kColdLaunchIgnitionThrottle);
+
+            if (!m_launchSequence.ignitionEffectEmitted)
+            {
+                m_launchSequence.ignitionEffectEmitted = true;
+                if (m_renderer)
+                {
+                    m_renderer->spawnMissileLaunchEffect(m_missile->getPosition(),
+                                                         ejectDirection,
+                                                         m_missile->getVelocity(),
+                                                         1.35f);
+                }
+                if (m_audioSystem)
+                {
+                    m_audioSystem->playLaunch(m_missile->getPosition(), m_missile->getVelocity());
+                }
+            }
+        }
+    }
+
+    if (m_launchSequence.motorIgnited)
+    {
+        const float timeSinceIgnition = m_launchSequence.elapsed - m_launchSequence.ignitionDelay;
+
+        // Throttle ramps quickly from the ignition kick to full boost.
+        const float rampProgress = (m_launchSequence.thrustRampDuration > 0.0001f)
+                                       ? (timeSinceIgnition / m_launchSequence.thrustRampDuration)
+                                       : 1.0f;
+        m_missile->setThrottle(glm::mix(kColdLaunchIgnitionThrottle, 1.0f, smooth01(rampProgress)));
+
+        // Phase 3 - pitch-over: turn the aim from the vertical eject vector
+        // toward the *live* target at a capped rate, then hand off to guidance
+        // as soon as the velocity sits inside the seeker cone. This keeps the
+        // dramatic vertical pop without committing to a blind climb the seeker
+        // would later reject.
+        if (!m_launchSequence.guidanceArmed)
+        {
+            // Aim at where the target is now, not a stale launch-time bearing.
+            glm::vec3 targetAim = launchDirection;
+            const Target *target = m_missile->getTargetObject();
+            if (target && target->isActive())
+            {
+                targetAim = normalizeOrFallback(target->getPosition() - m_missile->getPosition(), launchDirection);
+            }
+
+            // Rotate the current aim toward the target by at most this step.
+            const float maxStep = glm::radians(kColdLaunchPitchRateDegPerSec) * dt;
+            const glm::vec3 currentAim = normalizeOrFallback(m_launchSequence.aimDirection, ejectDirection);
+            const float angleToTarget = std::acos(glm::clamp(glm::dot(currentAim, targetAim), -1.0f, 1.0f));
+            const float stepFraction = (angleToTarget > 1e-4f) ? glm::clamp(maxStep / angleToTarget, 0.0f, 1.0f) : 1.0f;
+            const glm::vec3 nextAim = normalizeOrFallback(glm::mix(currentAim, targetAim, stepFraction), targetAim);
+            m_launchSequence.aimDirection = nextAim;
+            m_missile->setThrustDirection(nextAim);
+
+            // Hand off once the flight path is comfortably within the seeker
+            // cone of the line of sight (PN finishes the turn cleanly from here).
+            const glm::vec3 velocity = m_missile->getVelocity();
+            const float speed = glm::length(velocity);
+            if (speed > 1.0f && target && target->isActive())
+            {
+                const glm::vec3 lineOfSight =
+                    normalizeOrFallback(target->getPosition() - m_missile->getPosition(), nextAim);
+                const float alignment = glm::dot(velocity / speed, lineOfSight);
+                if (alignment >= std::cos(glm::radians(kColdLaunchHandoffConeDegrees)))
+                {
+                    m_launchSequence.guidanceArmed = true;
+                    m_missile->setGuidanceEnabled(m_launchSequence.restoreGuidanceEnabled);
+                }
+            }
+        }
+
+        // Phase 4 - booster cutoff: drop back to the configured sustainer.
+        if (!m_launchSequence.boostComplete && timeSinceIgnition >= m_launchSequence.boostDuration)
+        {
+            m_launchSequence.boostComplete = true;
+            m_missile->setThrust(m_launchSequence.sustainThrust);
+        }
+    }
+
+    // Time backstop: never leave guidance disarmed past this point.
+    if (!m_launchSequence.guidanceArmed && m_launchSequence.elapsed >= m_launchSequence.guidanceArmDelay)
+    {
+        m_launchSequence.guidanceArmed = true;
+        m_missile->setGuidanceEnabled(m_launchSequence.restoreGuidanceEnabled);
+    }
+
+    const float sequenceEnd = std::max(m_launchSequence.guidanceArmDelay,
+                                       m_launchSequence.ignitionDelay + m_launchSequence.boostDuration);
+    if (m_launchSequence.elapsed >= sequenceEnd)
+    {
+        if (!m_launchSequence.guidanceArmed)
+        {
+            m_launchSequence.guidanceArmed = true;
+            m_missile->setGuidanceEnabled(m_launchSequence.restoreGuidanceEnabled);
+        }
+        if (!m_launchSequence.boostComplete)
+        {
+            m_launchSequence.boostComplete = true;
+            m_missile->setThrust(m_launchSequence.sustainThrust);
+        }
+        m_missile->setThrottle(1.0f);
+        m_launchSequence.active = false;
+    }
+}
+
+void Application::updatePreLaunchMissileAim(Target *trackedTarget)
+{
+    if (!m_missile || m_missileInFlight)
+    {
+        return;
+    }
+
+    const glm::vec3 stagedVelocity(m_initialVelocity[0], m_initialVelocity[1], m_initialVelocity[2]);
+    const glm::vec3 fallbackAim = normalizeOrFallback(stagedVelocity, m_missile->getThrustDirection());
+    const glm::vec3 cameraForward = m_renderer
+                                        ? safeNormalize(m_renderer->getCameraFront(), fallbackAim)
+                                        : fallbackAim;
+    m_missile->setThrustDirection(computeMissileLaunchDirection(trackedTarget, cameraForward, stagedVelocity));
+}
+
 void Application::resetMissile()
 {
     try
@@ -125,6 +421,7 @@ void Application::resetMissile()
         m_missileInFlight = false;
         m_missileFlightTime = 0.0f;
         m_closestTargetDistance = 1000000.0f;
+        resetMissileLaunchSequence();
         m_explosions.clear();
         if (m_renderer)
         {
@@ -255,14 +552,27 @@ void Application::resetMissile()
 
         // Set thrust parameters but disable thrust until launch
         m_missile->setThrust(m_missileThrust);
+        m_missile->setThrottle(1.0f);
         m_missile->setThrustEnabled(false);
         m_missile->setFuel(m_missileFuel);
         m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
         m_missile->setNozzleExitArea(m_simulationConfig.missile.motor.nozzleExitArea);
         m_missile->setNozzleExitPressure(m_simulationConfig.missile.motor.nozzleExitPressure);
 
-        // Add missile to physics engine
-        m_physicsEngine->addObject(m_missile.get());
+        const glm::vec3 stagedVelocity(m_initialVelocity[0], m_initialVelocity[1], m_initialVelocity[2]);
+        const glm::vec3 standbyAim = normalizeOrFallback(stagedVelocity, glm::vec3(0.0f, 0.0f, 1.0f));
+        m_missile->setThrustDirection(computeMissileLaunchDirection(nullptr, standbyAim, stagedVelocity));
+
+        const float groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
+        glm::vec3 stagedPosition = m_missile->getPosition();
+        if (stagedPosition.y < groundLevel + kGroundLaunchClearanceMeters)
+        {
+            stagedPosition.y = groundLevel + kGroundLaunchClearanceMeters;
+            m_missile->setPosition(stagedPosition);
+        }
+
+        // Keep the staged missile inert until launch; it is added to physics
+        // by launchMissile() after the rail kick and arming sequence are set.
     }
     catch (const std::exception &e)
     {
@@ -461,6 +771,7 @@ void Application::updatePreLaunchSeekerLock()
     if (!m_seekerCueEnabled || !m_guidanceEnabled)
     {
         m_missile->clearTarget();
+        updatePreLaunchMissileAim(nullptr);
         return;
     }
 
@@ -473,6 +784,8 @@ void Application::updatePreLaunchSeekerLock()
     {
         m_missile->clearTarget();
     }
+
+    updatePreLaunchMissileAim(cueTarget);
 }
 
 void Application::renderPreLaunchSeekerCue() const
@@ -513,6 +826,7 @@ void Application::beginDetonationHold(const glm::vec3 &position)
     m_detonationHoldActive = true;
     m_detonationHoldTimer = 0.0f;
     m_detonationHoldPosition = position;
+    resetMissileLaunchSequence();
 
     // The missile is destroyed in the blast: stop flight management and pull it
     // out of the physics engine so it neither falls nor renders during the

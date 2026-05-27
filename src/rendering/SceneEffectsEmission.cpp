@@ -105,6 +105,229 @@ void SceneEffects::emitFlareEffect(const glm::vec3 &start,
     addHeatHaze(haze);
 }
 
+void SceneEffects::spawnMissileLaunch(const glm::vec3 &position,
+                                      const glm::vec3 &forward,
+                                      const glm::vec3 &carrierVelocity,
+                                      float intensity)
+{
+    const float clampedIntensity = glm::clamp(intensity, 0.45f, 2.2f);
+    const glm::vec3 launchForward = safeNormalize(forward, glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 exhaustDirection = safeNormalize(-launchForward, glm::vec3(0.0f, -1.0f, 0.0f));
+    const glm::vec3 lateralDirection = perpendicularTo(exhaustDirection);
+    const glm::vec3 verticalDirection = safeNormalize(glm::cross(exhaustDirection, lateralDirection), glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 nozzlePosition = position + (exhaustDirection * 1.05f);
+
+    // Tight, blinding ignition core.
+    EffectParticle flashCore{};
+    flashCore.position = nozzlePosition;
+    flashCore.velocity = (carrierVelocity * 0.04f) + (exhaustDirection * 10.0f);
+    flashCore.axis = exhaustDirection;
+    flashCore.color = glm::vec4(1.0f, 0.88f, 0.55f, 1.0f);
+    flashCore.lifetime = 0.18f;
+    flashCore.startSize = 1.4f * clampedIntensity;
+    flashCore.endSize = 6.5f * clampedIntensity;
+    flashCore.stretch = 1.1f;
+    flashCore.softness = 1.2f;
+    flashCore.emissive = 2.4f;
+    flashCore.seed = randomRange(0.0f, 1000.0f);
+    flashCore.material = ParticleMaterial::GLOW;
+    flashCore.blendMode = BlendMode::ADDITIVE;
+    addParticle(flashCore);
+
+    // Broad soft bloom around the core for a punchy light flash.
+    EffectParticle flashBloom = flashCore;
+    flashBloom.velocity = carrierVelocity * 0.03f;
+    flashBloom.color = glm::vec4(1.0f, 0.7f, 0.34f, 0.8f);
+    flashBloom.lifetime = 0.30f;
+    flashBloom.startSize = 3.2f * clampedIntensity;
+    flashBloom.endSize = 13.0f * clampedIntensity;
+    flashBloom.emissive = 1.5f;
+    flashBloom.seed = randomRange(0.0f, 1000.0f);
+    addParticle(flashBloom);
+
+    const int flameCount = std::clamp(static_cast<int>(std::round(22.0f * clampedIntensity)), 12, 44);
+    for (int index = 0; index < flameCount; ++index)
+    {
+        const glm::vec3 sideJitter = (lateralDirection * randomRange(-0.22f, 0.22f)) +
+                                     (verticalDirection * randomRange(-0.22f, 0.22f));
+
+        EffectParticle flame{};
+        flame.position = nozzlePosition + sideJitter + (exhaustDirection * randomRange(0.0f, 0.6f));
+        flame.velocity = (carrierVelocity * 0.08f) +
+                         (exhaustDirection * randomRange(28.0f, 64.0f) * clampedIntensity) +
+                         (sideJitter * randomRange(8.0f, 18.0f));
+        flame.axis = exhaustDirection;
+        flame.color = glm::vec4(glm::mix(glm::vec3(1.0f, 0.44f, 0.12f),
+                                         glm::vec3(1.0f, 0.92f, 0.72f),
+                                         randomRange(0.12f, 0.48f)),
+                                1.0f);
+        flame.lifetime = randomRange(0.16f, 0.34f);
+        flame.startSize = randomRange(0.22f, 0.42f) * clampedIntensity;
+        flame.endSize = randomRange(2.2f, 4.6f) * clampedIntensity;
+        flame.stretch = randomRange(2.4f, 5.0f);
+        flame.rotation = randomRange(0.0f, 6.28318f);
+        flame.angularVelocity = randomRange(-4.0f, 4.0f);
+        flame.softness = 0.95f;
+        flame.emissive = randomRange(1.2f, 1.7f);
+        flame.seed = randomRange(0.0f, 1000.0f);
+        flame.drag = 2.2f;
+        flame.material = ParticleMaterial::FLAME;
+        flame.blendMode = BlendMode::ADDITIVE;
+        addParticle(flame);
+    }
+
+    // Billowing exhaust smoke. Longer-lived than a blast so it hangs in the
+    // air and seeds the base of the climb-out pillar.
+    const int smokeCount = std::clamp(static_cast<int>(std::round(56.0f * clampedIntensity)), 40, 120);
+    for (int index = 0; index < smokeCount; ++index)
+    {
+        const float azimuth = randomRange(0.0f, 6.28318f);
+        const glm::vec3 radialDirection =
+            (lateralDirection * std::cos(azimuth)) + (verticalDirection * std::sin(azimuth));
+        const glm::vec3 blastDirection = safeNormalize((radialDirection * randomRange(0.35f, 1.0f)) +
+                                                           (exhaustDirection * randomRange(0.55f, 1.45f)) +
+                                                           (glm::vec3(0.0f, 1.0f, 0.0f) * randomRange(0.0f, 0.35f)),
+                                                       exhaustDirection);
+
+        EffectParticle smoke{};
+        smoke.position = nozzlePosition + (blastDirection * randomRange(0.12f, 1.4f) * clampedIntensity);
+        smoke.velocity = (carrierVelocity * 0.05f) +
+                         (blastDirection * randomRange(16.0f, 40.0f) * clampedIntensity) +
+                         (glm::vec3(0.0f, 1.0f, 0.0f) * randomRange(0.0f, 5.0f));
+        smoke.axis = safeNormalize(smoke.velocity, blastDirection);
+        smoke.color = glm::vec4(glm::vec3(randomRange(0.26f, 0.46f)), randomRange(0.58f, 0.8f));
+        smoke.lifetime = randomRange(1.8f, 3.6f);
+        smoke.startSize = randomRange(0.5f, 1.0f) * clampedIntensity;
+        smoke.endSize = randomRange(5.5f, 11.0f) * clampedIntensity;
+        smoke.stretch = randomRange(1.0f, 1.5f);
+        smoke.rotation = randomRange(0.0f, 6.28318f);
+        smoke.angularVelocity = randomRange(-1.4f, 1.4f);
+        smoke.softness = 0.85f;
+        smoke.emissive = 1.0f;
+        smoke.seed = randomRange(0.0f, 1000.0f);
+        smoke.drag = randomRange(0.18f, 0.36f);
+        smoke.upwardAcceleration = randomRange(2.5f, 6.5f);
+        smoke.material = ParticleMaterial::SMOKE;
+        smoke.blendMode = BlendMode::ALPHA;
+        addParticle(smoke);
+    }
+
+    const int sparkCount = std::clamp(static_cast<int>(std::round(20.0f * clampedIntensity)), 10, 34);
+    for (int index = 0; index < sparkCount; ++index)
+    {
+        glm::vec3 sparkDirection = randomUnitVector();
+        sparkDirection = safeNormalize(glm::mix(sparkDirection, exhaustDirection, 0.35f), exhaustDirection);
+
+        EffectParticle spark{};
+        spark.position = nozzlePosition;
+        spark.velocity = (sparkDirection * randomRange(24.0f, 62.0f) * clampedIntensity) + (carrierVelocity * 0.12f);
+        spark.axis = sparkDirection;
+        spark.color = glm::vec4(1.0f, randomRange(0.72f, 0.94f), 0.34f, 1.0f);
+        spark.lifetime = randomRange(0.14f, 0.28f);
+        spark.startSize = randomRange(0.06f, 0.12f) * clampedIntensity;
+        spark.endSize = randomRange(0.65f, 1.35f) * clampedIntensity;
+        spark.stretch = randomRange(3.5f, 6.5f);
+        spark.softness = 1.0f;
+        spark.emissive = 1.35f;
+        spark.seed = randomRange(0.0f, 1000.0f);
+        spark.drag = 3.2f;
+        spark.material = ParticleMaterial::SPARK;
+        spark.blendMode = BlendMode::ADDITIVE;
+        addParticle(spark);
+    }
+
+    const int hazeCount = std::clamp(static_cast<int>(std::round(8.0f * clampedIntensity)), 5, 16);
+    for (int index = 0; index < hazeCount; ++index)
+    {
+        HeatHazeSprite haze{};
+        haze.position = nozzlePosition + (randomInUnitSphere() * 0.7f * clampedIntensity);
+        haze.velocity = (exhaustDirection * randomRange(5.0f, 16.0f) * clampedIntensity) + (randomInUnitSphere() * 4.0f);
+        haze.axis = safeNormalize(haze.velocity, exhaustDirection);
+        haze.lifetime = randomRange(0.16f, 0.32f);
+        haze.radius = randomRange(2.1f, 4.8f) * clampedIntensity;
+        haze.stretch = randomRange(1.2f, 1.8f);
+        haze.rotation = randomRange(0.0f, 6.28318f);
+        haze.angularVelocity = randomRange(-2.2f, 2.2f);
+        haze.strength = randomRange(3.2f, 6.8f) * clampedIntensity;
+        haze.seed = randomRange(0.0f, 1000.0f);
+        haze.drag = 0.8f;
+        addHeatHaze(haze);
+    }
+}
+
+void SceneEffects::spawnLaunchGroundCloud(const glm::vec3 &position, const glm::vec3 &up, float intensity)
+{
+    const float clampedIntensity = glm::clamp(intensity, 0.5f, 2.2f);
+    const glm::vec3 upDirection = safeNormalize(up, glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 groundAxisA = perpendicularTo(upDirection);
+    const glm::vec3 groundAxisB = safeNormalize(glm::cross(upDirection, groundAxisA), glm::vec3(1.0f, 0.0f, 0.0f));
+
+    // A big, slow, ground-hugging cloud of ejection gas that rolls outward and
+    // lingers for several seconds: the iconic launch-site signature.
+    const int billowCount = std::clamp(static_cast<int>(std::round(80.0f * clampedIntensity)), 56, 150);
+    for (int index = 0; index < billowCount; ++index)
+    {
+        const float azimuth = randomRange(0.0f, 6.28318f);
+        const glm::vec3 radialDirection =
+            (groundAxisA * std::cos(azimuth)) + (groundAxisB * std::sin(azimuth));
+
+        EffectParticle billow{};
+        billow.position = position + (radialDirection * randomRange(0.2f, 3.2f) * clampedIntensity) +
+                          (upDirection * randomRange(0.0f, 1.2f));
+        billow.velocity = (radialDirection * randomRange(4.0f, 15.0f) * clampedIntensity) +
+                          (upDirection * randomRange(1.5f, 5.5f));
+        billow.axis = safeNormalize(billow.velocity, radialDirection);
+        billow.color = glm::vec4(glm::vec3(randomRange(0.32f, 0.52f)), randomRange(0.5f, 0.72f));
+        billow.lifetime = randomRange(4.0f, 8.0f);
+        billow.startSize = randomRange(1.2f, 2.8f) * clampedIntensity;
+        billow.endSize = randomRange(8.0f, 16.0f) * clampedIntensity;
+        billow.stretch = randomRange(1.0f, 1.35f);
+        billow.rotation = randomRange(0.0f, 6.28318f);
+        billow.angularVelocity = randomRange(-0.8f, 0.8f);
+        billow.softness = 0.8f;
+        billow.emissive = 0.85f;
+        billow.seed = randomRange(0.0f, 1000.0f);
+        billow.drag = randomRange(0.55f, 1.1f);
+        billow.upwardAcceleration = randomRange(0.6f, 2.2f);
+        billow.material = ParticleMaterial::SMOKE;
+        billow.blendMode = BlendMode::ALPHA;
+        addParticle(billow);
+    }
+
+    // A few warm, low dust puffs kicked up at the base.
+    const int dustCount = std::clamp(static_cast<int>(std::round(14.0f * clampedIntensity)), 8, 26);
+    for (int index = 0; index < dustCount; ++index)
+    {
+        const float azimuth = randomRange(0.0f, 6.28318f);
+        const glm::vec3 radialDirection =
+            (groundAxisA * std::cos(azimuth)) + (groundAxisB * std::sin(azimuth));
+
+        EffectParticle dust{};
+        dust.position = position + (radialDirection * randomRange(0.1f, 1.8f) * clampedIntensity);
+        dust.velocity = (radialDirection * randomRange(8.0f, 22.0f) * clampedIntensity) +
+                        (upDirection * randomRange(0.5f, 3.0f));
+        dust.axis = safeNormalize(dust.velocity, radialDirection);
+        dust.color = glm::vec4(glm::mix(glm::vec3(0.62f, 0.5f, 0.34f),
+                                        glm::vec3(0.42f, 0.4f, 0.38f),
+                                        randomRange(0.0f, 1.0f)),
+                               randomRange(0.42f, 0.62f));
+        dust.lifetime = randomRange(1.4f, 3.0f);
+        dust.startSize = randomRange(0.6f, 1.2f) * clampedIntensity;
+        dust.endSize = randomRange(3.5f, 7.0f) * clampedIntensity;
+        dust.stretch = randomRange(1.1f, 1.6f);
+        dust.rotation = randomRange(0.0f, 6.28318f);
+        dust.angularVelocity = randomRange(-1.6f, 1.6f);
+        dust.softness = 0.85f;
+        dust.emissive = 0.9f;
+        dust.seed = randomRange(0.0f, 1000.0f);
+        dust.drag = randomRange(0.9f, 1.6f);
+        dust.upwardAcceleration = randomRange(0.0f, 1.0f);
+        dust.material = ParticleMaterial::SMOKE;
+        dust.blendMode = BlendMode::ALPHA;
+        addParticle(dust);
+    }
+}
+
 void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &velocityHint, float intensity)
 {
     const float clampedIntensity = glm::clamp(intensity, 0.5f, 2.0f);

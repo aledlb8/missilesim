@@ -224,7 +224,7 @@ void Application::emitFrameVisualEffects(float deltaTime)
         return;
     }
 
-    if (m_missile && m_missile->isThrustEnabled() && m_missile->getFuel() > 0.0f)
+    if (m_missile && m_missile->isThrustEnabled() && m_missile->getFuel() > 0.0f && m_missile->getThrottle() > 0.01f)
     {
         const glm::vec3 missileForward = safeNormalize(m_missile->getVelocity(), m_missile->getThrustDirection());
         const glm::vec3 currentEmitter = m_missile->getPosition() - (missileForward * 1.12f);
@@ -232,7 +232,13 @@ void Application::emitFrameVisualEffects(float deltaTime)
         const float fuelFraction = (m_missileFuel > 0.0f)
                                        ? glm::clamp(m_missile->getFuel() / m_missileFuel, 0.0f, 1.0f)
                                        : 1.0f;
-        const float plumeIntensity = glm::clamp(glm::mix(0.38f, 0.68f, fuelFraction), 0.36f, 0.74f);
+        // The booster burns at elevated thrust; lay a noticeably thicker, brighter
+        // plume for its duration so the climb-out reads as a hard rocket boost.
+        const float boostPlume = (m_launchSequence.motorIgnited && !m_launchSequence.boostComplete) ? 0.34f : 0.0f;
+        const float throttle = glm::clamp(m_missile->getThrottle(), 0.0f, 1.0f);
+        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle,
+                                                0.22f,
+                                                1.0f);
         m_renderer->emitMissileExhaust(previousEmitter, currentEmitter, missileForward, m_missile->getVelocity(), plumeIntensity);
     }
 

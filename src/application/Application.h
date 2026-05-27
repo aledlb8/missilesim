@@ -104,6 +104,28 @@ private:
         bool valid = false;
     };
 
+    // Drives a cold-launch profile: a soft ejection charge lobs the round
+    // vertically clear of the cell, the main motor lights in mid-air, then the
+    // missile pitches over toward the target before guidance takes the steer.
+    struct MissileLaunchSequence
+    {
+        bool active = false;
+        bool motorIgnited = false;
+        bool guidanceArmed = false;
+        bool boostComplete = false;
+        bool ignitionEffectEmitted = false;
+        bool restoreGuidanceEnabled = true;
+        float elapsed = 0.0f;
+        float ignitionDelay = 0.85f;      // eject coast time before the motor lights
+        float thrustRampDuration = 0.30f; // ignition -> full throttle (punchy)
+        float guidanceArmDelay = 1.30f;    // backstop: hand off to guidance by here
+        float boostDuration = 1.5f;        // high-thrust booster burn after ignition
+        float sustainThrust = 10000.0f;    // configured motor thrust, restored post-boost
+        glm::vec3 ejectDirection{0.0f, 1.0f, 0.0f};  // near-vertical ejection vector
+        glm::vec3 launchDirection{0.0f, 0.0f, 1.0f}; // fallback boost aim toward target
+        glm::vec3 aimDirection{0.0f, 1.0f, 0.0f};    // live pitch-over aim, rate-limited
+    };
+
     void processInput(float deltaTime);
     void update(float deltaTime);
     void render();
@@ -149,6 +171,13 @@ private:
     // Missile functions
     void launchMissile();
     void resetMissile();
+    glm::vec3 computeMissileLaunchDirection(Target *lockedTarget,
+                                            const glm::vec3 &cameraForward,
+                                            const glm::vec3 &stagedVelocity) const;
+    glm::vec3 computeColdLaunchEjectDirection(const glm::vec3 &launchDirection) const;
+    void resetMissileLaunchSequence();
+    void updateMissileLaunchSequence(float deltaTime);
+    void updatePreLaunchMissileAim(Target *trackedTarget);
     Target *findBestTarget();
     bool projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
     Target *findSeekerCueTarget() const;
@@ -276,6 +305,7 @@ private:
     bool m_missileInFlight = false;
     float m_missileFlightTime = 0.0f;
     float m_closestTargetDistance = 1000000.0f;
+    MissileLaunchSequence m_launchSequence;
 
     // Random number generator
     std::mt19937 m_rng;
