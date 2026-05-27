@@ -362,16 +362,30 @@ void PBRPipeline::shadowPass()
     // Directional light shadow
     {
         float boxSize = m_dirLight.orthoBoxSize;
+
+        // Centre the shadow frustum on the ground beneath the camera so shadows
+        // render wherever we are looking (and track the missile in flight),
+        // instead of a fixed box pinned to the world origin. Snap the centre to
+        // shadow-texel steps to stop the shadow edges crawling as we move.
+        const float texelWorld = (2.0f * boxSize) / static_cast<float>(m_dirLight.shadowRes);
+        glm::vec3 focus(m_cameraPos.x, 0.0f, m_cameraPos.z);
+        focus.x = std::floor(focus.x / texelWorld) * texelWorld;
+        focus.z = std::floor(focus.z / texelWorld) * texelWorld;
+
         m_dirLight.shadowProjectionMat = glm::ortho(-boxSize, boxSize,
                                                      -boxSize, boxSize,
                                                      m_dirLight.zNear, m_dirLight.zFar);
         m_dirLight.lightView = glm::lookAt(
-            m_dirLight.distance * glm::normalize(-m_dirLight.direction),
-            glm::vec3(0.0f),
+            focus + m_dirLight.distance * glm::normalize(-m_dirLight.direction),
+            focus,
             glm::vec3(0.0f, 1.0f, 0.0f));
         m_dirLight.lightSpaceMatrix = m_dirLight.shadowProjectionMat * m_dirLight.lightView;
 
         m_dirShadowFBO.bind();
+        // The shadow map is shadowRes x shadowRes; without this the depth pass
+        // renders at the window viewport and only fills a corner of the map,
+        // so almost every fragment samples "no shadow".
+        glViewport(0, 0, static_cast<GLsizei>(m_dirLight.shadowRes), static_cast<GLsizei>(m_dirLight.shadowRes));
         glClear(GL_DEPTH_BUFFER_BIT);
 
         m_dirShadowShader.use();
@@ -413,6 +427,7 @@ void PBRPipeline::shadowPass()
         light.depthMapTextureID = m_pointShadowFBOs[li].depthCubemap();
 
         m_pointShadowFBOs[li].bind();
+        glViewport(0, 0, static_cast<GLsizei>(light.shadowRes), static_cast<GLsizei>(light.shadowRes));
         glClear(GL_DEPTH_BUFFER_BIT);
 
         m_pointShadowShader.use();
@@ -505,7 +520,9 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     shader.setFloat("zFar", m_farPlane);
     shader.setFloat("zNear", m_nearPlane);
     shader.setVec3("fogColor", glm::vec3(0.52f, 0.63f, 0.74f));
-    shader.setFloat("fogDensity", 1.0f / std::max(m_farPlane * 0.32f, 4500.0f));
+    // Thinner aerial haze: the previous density washed the whole scene flat
+    // grey and buried ground colour and shadow contrast.
+    shader.setFloat("fogDensity", 1.0f / std::max(m_farPlane * 0.6f, 9000.0f));
 
     // Bind point light shadow cubemaps (texture units 5..8)
     constexpr unsigned int numMaterialTexUnits = 5;

@@ -424,22 +424,13 @@ void Renderer::renderEnvironment()
 void Renderer::renderWorldGuides()
 {
     const float guideY = 0.08f;
-    const float runwayHalfWidth = glm::clamp(m_airspaceHalfExtent * 0.035f, 14.0f, 72.0f);
-    const float runwayHalfLength = glm::clamp(m_airspaceHalfExtent * 0.55f, 230.0f, m_groundHalfExtent * 0.45f);
     const float airspaceHalfExtent = m_airspaceHalfExtent;
     const float beaconHeight = m_airspaceHeight;
     const float ringStep = glm::clamp(m_airspaceHalfExtent * 0.25f, 160.0f, 2500.0f);
     const int ringCount = std::max(3, std::min(5, static_cast<int>(airspaceHalfExtent / ringStep)));
 
-    const glm::vec3 runwayColor(0.92f, 0.94f, 0.96f);
-    const glm::vec3 runwayAccent(0.72f, 0.82f, 0.90f);
-    const glm::vec3 axisXColor(0.82f, 0.40f, 0.38f);
-    const glm::vec3 axisZColor(0.36f, 0.70f, 0.82f);
     const glm::vec3 guideColor(0.50f, 0.60f, 0.68f);
     const glm::vec3 beaconColor(0.72f, 0.78f, 0.86f);
-
-    renderLine(glm::vec3(-airspaceHalfExtent, guideY, 0.0f), glm::vec3(airspaceHalfExtent, guideY, 0.0f), axisXColor);
-    renderLine(glm::vec3(0.0f, guideY, -airspaceHalfExtent), glm::vec3(0.0f, guideY, airspaceHalfExtent), axisZColor);
 
     for (int ringIndex = 1; ringIndex <= ringCount; ++ringIndex)
     {
@@ -449,23 +440,8 @@ void Renderer::renderWorldGuides()
         renderGroundCircle(radius, ringColor, 48);
     }
 
-    renderLine(glm::vec3(-runwayHalfWidth, guideY, -runwayHalfLength), glm::vec3(runwayHalfWidth, guideY, -runwayHalfLength), runwayColor);
-    renderLine(glm::vec3(runwayHalfWidth, guideY, -runwayHalfLength), glm::vec3(runwayHalfWidth, guideY, runwayHalfLength), runwayColor);
-    renderLine(glm::vec3(runwayHalfWidth, guideY, runwayHalfLength), glm::vec3(-runwayHalfWidth, guideY, runwayHalfLength), runwayColor);
-    renderLine(glm::vec3(-runwayHalfWidth, guideY, runwayHalfLength), glm::vec3(-runwayHalfWidth, guideY, -runwayHalfLength), runwayColor);
-
-    const float dashLength = glm::clamp(runwayHalfLength * 0.08f, 18.0f, 140.0f);
-    const float dashStep = dashLength * 1.9f;
-    for (float z = -runwayHalfLength + dashLength; z < runwayHalfLength - dashLength; z += dashStep)
-    {
-        renderLine(glm::vec3(0.0f, guideY, z), glm::vec3(0.0f, guideY, z + dashLength), runwayAccent);
-    }
-
-    const float padHalf = glm::clamp(runwayHalfWidth * 1.3f, 18.0f, 54.0f);
-    renderLine(glm::vec3(-padHalf, guideY, -padHalf), glm::vec3(padHalf, guideY, -padHalf), guideColor);
-    renderLine(glm::vec3(padHalf, guideY, -padHalf), glm::vec3(padHalf, guideY, padHalf), guideColor);
-    renderLine(glm::vec3(padHalf, guideY, padHalf), glm::vec3(-padHalf, guideY, padHalf), guideColor);
-    renderLine(glm::vec3(-padHalf, guideY, padHalf), glm::vec3(-padHalf, guideY, -padHalf), guideColor);
+    // A small launch-point marker at the origin (the runway/pad markings were
+    // removed - they formed a cross across the launch site).
     renderPoint(glm::vec3(0.0f, 0.18f, 0.0f), glm::vec3(0.98f, 0.82f, 0.30f), 6.0f);
 
     const glm::vec3 corners[4] = {

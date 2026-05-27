@@ -254,9 +254,14 @@ void Renderer::initialize()
         {
             // Configure default directional light (sun)
             pbr::DirectionalLight sun{};
-            sun.direction = glm::vec3(-0.35f, -0.9f, 0.2f);
+            // A low, raking afternoon angle (~33 deg elevation) so objects cast
+            // long, clearly-visible shadows instead of short noon stubs.
+            sun.direction = glm::vec3(-0.72f, -0.55f, 0.42f);
             sun.color = glm::vec3(1.0f, 0.95f, 0.85f);
-            sun.strength = 2.5f;
+            // The sun was washed out by the blue ambient/IBL: the lit ground was
+            // dark and shadows had no contrast. A stronger key light brightens
+            // sunlit surfaces and makes shadows clearly readable.
+            sun.strength = 5.5f;
             sun.orthoBoxSize = 500.0f;
             sun.distance = 800.0f;
             sun.zNear = 1.0f;
