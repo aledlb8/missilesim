@@ -406,6 +406,17 @@ void Application::updatePreLaunchMissileAim(Target *trackedTarget)
         return;
     }
 
+    // A ground-staged round stands upright in its cell until launch; it only
+    // pitches over after the eject. Don't let the seeker re-tilt it on the pad.
+    const float groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
+    const bool groundLaunchProfile =
+        (m_missile->getPosition().y - groundLevel) <= (kGroundLaunchProfileHeightMeters + kGroundLaunchClearanceMeters);
+    if (groundLaunchProfile)
+    {
+        m_missile->setThrustDirection(glm::vec3(0.0f, 1.0f, 0.0f));
+        return;
+    }
+
     const glm::vec3 stagedVelocity(m_initialVelocity[0], m_initialVelocity[1], m_initialVelocity[2]);
     const glm::vec3 fallbackAim = normalizeOrFallback(stagedVelocity, m_missile->getThrustDirection());
     const glm::vec3 cameraForward = m_renderer
@@ -560,19 +571,28 @@ void Application::resetMissile()
         m_missile->setNozzleExitPressure(m_simulationConfig.missile.motor.nozzleExitPressure);
 
         const glm::vec3 stagedVelocity(m_initialVelocity[0], m_initialVelocity[1], m_initialVelocity[2]);
-        const glm::vec3 standbyAim = normalizeOrFallback(stagedVelocity, glm::vec3(0.0f, 0.0f, 1.0f));
-        m_missile->setThrustDirection(computeMissileLaunchDirection(nullptr, standbyAim, stagedVelocity));
-
         const float groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
         glm::vec3 stagedPosition = m_missile->getPosition();
-        if (stagedPosition.y < groundLevel + kGroundLaunchClearanceMeters)
+        const bool groundLaunchProfile =
+            (stagedPosition.y - groundLevel) <= (kGroundLaunchProfileHeightMeters + kGroundLaunchClearanceMeters);
+
+        if (groundLaunchProfile)
         {
-            stagedPosition.y = groundLevel + kGroundLaunchClearanceMeters;
+            // Stand the round upright in its cell with its base resting on the
+            // ground - not tilted, not half-buried.
+            m_missile->setThrustDirection(glm::vec3(0.0f, 1.0f, 0.0f));
+            const float restOffset = m_renderer ? m_renderer->getMissileGroundRestOffset() : kGroundLaunchClearanceMeters;
+            stagedPosition.y = groundLevel + restOffset;
             m_missile->setPosition(stagedPosition);
+        }
+        else
+        {
+            const glm::vec3 standbyAim = normalizeOrFallback(stagedVelocity, glm::vec3(0.0f, 0.0f, 1.0f));
+            m_missile->setThrustDirection(computeMissileLaunchDirection(nullptr, standbyAim, stagedVelocity));
         }
 
         // Keep the staged missile inert until launch; it is added to physics
-        // by launchMissile() after the rail kick and arming sequence are set.
+        // by launchMissile() after the eject and arming sequence are set.
     }
     catch (const std::exception &e)
     {

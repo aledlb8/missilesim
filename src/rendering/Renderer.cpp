@@ -78,6 +78,16 @@ void Renderer::initialize()
 
     // Create model data
     createMissileModel();
+    // Capture how far the missile mesh extends below its centre along the body
+    // axis (local -Y), so it can be stood upright with its base on the ground.
+    {
+        float lowestAxisPoint = 0.0f;
+        for (const Vertex &vertex : m_vertices)
+        {
+            lowestAxisPoint = std::min(lowestAxisPoint, vertex.position.y);
+        }
+        m_missileGroundRestOffset = std::max(-lowestAxisPoint, 0.0f);
+    }
     createFloor();
     createTargetModel();
     createExplosionModel();

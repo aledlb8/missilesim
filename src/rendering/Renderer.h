@@ -59,6 +59,11 @@ public:
                               const glm::vec3 &velocityHint = glm::vec3(0.0f),
                               float intensity = 1.0f);
 
+    // Distance from the missile mesh centre to its tail tip along the body
+    // axis, so a vertically-staged round can rest its base exactly on the
+    // ground (centre height = ground + this offset).
+    float getMissileGroundRestOffset() const { return m_missileGroundRestOffset; }
+
     // Debug visualization
     void renderLine(const glm::vec3 &start, const glm::vec3 &end, const glm::vec3 &color = glm::vec3(1.0f, 1.0f, 1.0f));
     void renderPoint(const glm::vec3 &position, const glm::vec3 &color = glm::vec3(1.0f, 1.0f, 1.0f), float size = 5.0f);
@@ -208,6 +213,7 @@ private:
     // Mesh data
     std::vector<Vertex> m_vertices;
     std::vector<unsigned int> m_indices;
+    float m_missileGroundRestOffset = 1.0f;
 
     // Shader locations
     GLint m_modelLoc;
