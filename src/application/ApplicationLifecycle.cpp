@@ -766,8 +766,9 @@ void Application::render()
                 {
                     m_renderer->render(target.get());
 
-                    // Render target debug info if enabled, or always in hidden HUD mode.
-                    if (m_missile && (m_showTargetInfo || !m_showUI))
+                    // Render target labels when enabled (toggle lives in both
+                    // the full UI and the minimal Flight HUD).
+                    if (m_missile && m_showTargetInfo)
                     {
                         const float distance = glm::length(target->getPosition() - m_missile->getPosition());
                         const float targetAltitude = std::max(target->getPosition().y, 0.0f);
@@ -826,8 +827,10 @@ void Application::render()
                     renderMinimalHUD();
                 }
 
-                // Draw world labels using ImGui in screen space projected from the scene.
-                if (m_window && m_missile && ((m_showUI && m_showTargetInfo) || !m_showUI))
+                // Draw world labels (target labels + the minimal-HUD missile
+                // readout) in screen space projected from the scene. The whole
+                // set follows the "Show target labels" toggle.
+                if (m_window && m_missile && m_showTargetInfo)
                 {
                     glm::mat4 view = glm::lookAt(m_renderer->getCameraPosition(),
                                                  m_renderer->getCameraPosition() + m_renderer->getCameraFront(),

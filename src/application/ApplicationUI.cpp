@@ -80,6 +80,9 @@ void Application::renderMinimalHUD()
         }
 
         ImGui::Spacing();
+        ImGui::Checkbox("Show target labels", &m_showTargetInfo);
+
+        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Text("Camera: %s", getCameraModeLabel());
         if (ImGui::Button("Free"))
