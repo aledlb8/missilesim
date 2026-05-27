@@ -619,9 +619,9 @@ Target *Application::findBestTarget()
     return nullptr;
 }
 
-bool Application::projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter) const
+bool Application::projectWorldPointToScreen(const glm::vec3 &worldPosition, ImVec2 &screenPosition, float *pixelDistanceFromCenter) const
 {
-    if (!m_renderer || !target || !target->isActive())
+    if (!m_renderer)
     {
         return false;
     }
@@ -639,16 +639,15 @@ bool Application::projectTargetToSeekerScreen(const Target *target, ImVec2 &scre
     const glm::vec3 cameraRight = safeNormalize(m_renderer->getCameraRight(), glm::vec3(1.0f, 0.0f, 0.0f));
     const glm::vec3 cameraUp = safeNormalize(m_renderer->getCameraUp(), glm::vec3(0.0f, 1.0f, 0.0f));
 
-    const glm::vec3 aimPoint = target->getPosition() + glm::vec3(0.0f, target->getRadius() * 0.3f, 0.0f);
-    const glm::vec3 toTarget = aimPoint - cameraPosition;
-    const float forwardDepth = glm::dot(toTarget, cameraForward);
+    const glm::vec3 toPoint = worldPosition - cameraPosition;
+    const float forwardDepth = glm::dot(toPoint, cameraForward);
     if (forwardDepth <= 0.1f)
     {
         return false;
     }
 
-    const float ndcX = glm::dot(toTarget, cameraRight) / (forwardDepth * tanHalfFovY * aspectRatio);
-    const float ndcY = glm::dot(toTarget, cameraUp) / (forwardDepth * tanHalfFovY);
+    const float ndcX = glm::dot(toPoint, cameraRight) / (forwardDepth * tanHalfFovY * aspectRatio);
+    const float ndcY = glm::dot(toPoint, cameraUp) / (forwardDepth * tanHalfFovY);
     if (std::abs(ndcX) > 1.0f || std::abs(ndcY) > 1.0f)
     {
         return false;
@@ -665,6 +664,17 @@ bool Application::projectTargetToSeekerScreen(const Target *target, ImVec2 &scre
     }
 
     return true;
+}
+
+bool Application::projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter) const
+{
+    if (!target || !target->isActive())
+    {
+        return false;
+    }
+
+    const glm::vec3 aimPoint = target->getPosition() + glm::vec3(0.0f, target->getRadius() * 0.3f, 0.0f);
+    return projectWorldPointToScreen(aimPoint, screenPosition, pixelDistanceFromCenter);
 }
 
 Target *Application::findSeekerCueTarget() const
@@ -827,6 +837,101 @@ void Application::renderPreLaunchSeekerCue() const
     drawList->AddCircle(cueCenter, m_seekerCueRadiusPixels, ringColor, 64, 2.2f);
     drawList->AddLine(ImVec2(cueCenter.x - 7.0f, cueCenter.y), ImVec2(cueCenter.x + 7.0f, cueCenter.y), ringColor, 1.2f);
     drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - 7.0f), ImVec2(cueCenter.x, cueCenter.y + 7.0f), ringColor, 1.2f);
+}
+
+void Application::renderSeekerXrayOverlay() const
+{
+    if (!m_seekerXrayEnabled || !m_renderer || !m_missile || ImGui::GetCurrentContext() == nullptr)
+    {
+        return;
+    }
+
+    // The x-ray is the autonomous "bulldog" view: it only has meaning once the
+    // missile is in flight and the seeker is actually powered/guiding.
+    if (!m_missileInFlight || !m_missile->isGuidanceEnabled())
+    {
+        return;
+    }
+
+    // Corner-bracket box centred on a screen point. Drawn on the foreground draw
+    // list so it sits on top of the scene regardless of depth - that "through
+    // walls / terrain" behaviour is the whole point of the x-ray view.
+    auto drawBracket = [](ImDrawList *drawList, const ImVec2 &center, float half, ImU32 color, float thickness)
+    {
+        const float leg = half * 0.45f;
+        const float left = center.x - half;
+        const float right = center.x + half;
+        const float top = center.y - half;
+        const float bottom = center.y + half;
+        // Top-left
+        drawList->AddLine(ImVec2(left, top), ImVec2(left + leg, top), color, thickness);
+        drawList->AddLine(ImVec2(left, top), ImVec2(left, top + leg), color, thickness);
+        // Top-right
+        drawList->AddLine(ImVec2(right, top), ImVec2(right - leg, top), color, thickness);
+        drawList->AddLine(ImVec2(right, top), ImVec2(right, top + leg), color, thickness);
+        // Bottom-left
+        drawList->AddLine(ImVec2(left, bottom), ImVec2(left + leg, bottom), color, thickness);
+        drawList->AddLine(ImVec2(left, bottom), ImVec2(left, bottom - leg), color, thickness);
+        // Bottom-right
+        drawList->AddLine(ImVec2(right, bottom), ImVec2(right - leg, bottom), color, thickness);
+        drawList->AddLine(ImVec2(right, bottom), ImVec2(right, bottom - leg), color, thickness);
+    };
+
+    ImDrawList *drawList = ImGui::GetForegroundDrawList();
+
+    // The bold marker tracks the missile's actual aimpoint - the airframe while
+    // locked, or the flare position the moment the seeker is decoyed. Only the
+    // airframe is suppressed from the faint pass while it owns the bold marker;
+    // once the seeker is spoofed onto a flare the real jet drops back to a faint
+    // cue so you can see the seeker chasing the decoy past the live target.
+    const bool hasAimpoint = m_missile->hasTarget();
+    const bool trackingDecoy = hasAimpoint && m_missile->isTrackingDecoy();
+    Target *boldAirframe = (hasAimpoint && !trackingDecoy) ? getTrackedMissileTarget() : nullptr;
+
+    // Faint cue on every other resolvable target so the whole picture is visible
+    // through obstacles, with the bold marker reserved for the live aimpoint.
+    const ImU32 ambientColor = IM_COL32(120, 200, 255, 140);
+    for (const auto &target : m_targets)
+    {
+        if (!target || !target->isActive() || target.get() == boldAirframe)
+        {
+            continue;
+        }
+
+        ImVec2 screenPosition(0.0f, 0.0f);
+        if (projectTargetToSeekerScreen(target.get(), screenPosition, nullptr))
+        {
+            drawBracket(drawList, screenPosition, 12.0f, ambientColor, 1.4f);
+        }
+    }
+
+    if (!hasAimpoint)
+    {
+        return;
+    }
+
+    const glm::vec3 aimWorld = m_missile->getTargetPosition();
+    ImVec2 lockScreen(0.0f, 0.0f);
+    if (!projectWorldPointToScreen(aimWorld, lockScreen, nullptr))
+    {
+        return; // Current aimpoint is off-screen or behind the camera.
+    }
+
+    const ImU32 lockColor = trackingDecoy ? IM_COL32(255, 196, 64, 255) : IM_COL32(255, 60, 60, 255);
+    const ImU32 leadColor = trackingDecoy ? IM_COL32(255, 196, 64, 110) : IM_COL32(255, 60, 60, 110);
+
+    const float lockHalf = 24.0f;
+    drawBracket(drawList, lockScreen, lockHalf, lockColor, 2.4f);
+    drawList->AddCircleFilled(lockScreen, 2.4f, lockColor, 8);
+
+    // Seeker line of sight, drawn from the boresight (screen centre) to the aimpoint.
+    const ImVec2 boresight(m_width * 0.5f, m_height * 0.5f);
+    drawList->AddLine(boresight, lockScreen, leadColor, 1.4f);
+
+    const float range = glm::distance(m_missile->getPosition(), aimWorld);
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%s  %.0f m", trackingDecoy ? "FLARE" : "LOCK", range);
+    drawList->AddText(ImVec2(lockScreen.x + lockHalf + 5.0f, lockScreen.y - 7.0f), lockColor, buffer);
 }
 
 void Application::beginDetonationHold(const glm::vec3 &position)

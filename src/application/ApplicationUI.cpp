@@ -81,6 +81,11 @@ void Application::renderMinimalHUD()
 
         ImGui::Spacing();
         ImGui::Checkbox("Show target labels", &m_showTargetInfo);
+        ImGui::Checkbox("Seeker x-ray", &m_seekerXrayEnabled);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("See-through-terrain overlay marking what the\nautonomous seeker is tracking once in flight.");
+        }
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -595,6 +600,11 @@ void Application::setupUI()
 
         ImGui::Checkbox("Show predicted trajectory", &m_showTrajectory);
         ImGui::Checkbox("Show target labels", &m_showTargetInfo);
+        ImGui::Checkbox("Seeker x-ray", &m_seekerXrayEnabled);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("See-through-terrain overlay marking what the\nautonomous seeker is tracking once in flight.");
+        }
         ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
         ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
         ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 600);

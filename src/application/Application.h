@@ -116,11 +116,11 @@ private:
         bool ignitionEffectEmitted = false;
         bool restoreGuidanceEnabled = true;
         float elapsed = 0.0f;
-        float ignitionDelay = 0.85f;      // eject coast time before the motor lights
-        float thrustRampDuration = 0.30f; // ignition -> full throttle (punchy)
-        float guidanceArmDelay = 1.30f;    // backstop: hand off to guidance by here
-        float boostDuration = 1.5f;        // high-thrust booster burn after ignition
-        float sustainThrust = 10000.0f;    // configured motor thrust, restored post-boost
+        float ignitionDelay = 0.85f;                 // eject coast time before the motor lights
+        float thrustRampDuration = 0.30f;            // ignition -> full throttle (punchy)
+        float guidanceArmDelay = 1.30f;              // backstop: hand off to guidance by here
+        float boostDuration = 1.5f;                  // high-thrust booster burn after ignition
+        float sustainThrust = 10000.0f;              // configured motor thrust, restored post-boost
         glm::vec3 ejectDirection{0.0f, 1.0f, 0.0f};  // near-vertical ejection vector
         glm::vec3 launchDirection{0.0f, 0.0f, 1.0f}; // fallback boost aim toward target
         glm::vec3 aimDirection{0.0f, 1.0f, 0.0f};    // live pitch-over aim, rate-limited
@@ -179,6 +179,7 @@ private:
     void updateMissileLaunchSequence(float deltaTime);
     void updatePreLaunchMissileAim(Target *trackedTarget);
     Target *findBestTarget();
+    bool projectWorldPointToScreen(const glm::vec3 &worldPosition, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
     bool projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
     Target *findSeekerCueTarget() const;
     Target *getTrackedMissileTarget() const;
@@ -186,6 +187,7 @@ private:
     const char *getMissileSeekerTrackLabel() const;
     void updatePreLaunchSeekerLock();
     void renderPreLaunchSeekerCue() const;
+    void renderSeekerXrayOverlay() const;
 
     // Interception / detonation handling. Instead of resetting the instant a
     // missile detonates, we spawn the explosion and hold the scene for a few
@@ -258,6 +260,7 @@ private:
     std::chrono::milliseconds m_trajectoryPreviewRefreshInterval{100};
     bool m_seekerCueEnabled = false;
     float m_seekerCueRadiusPixels = 44.0f;
+    bool m_seekerXrayEnabled = false; // In-flight seeker x-ray overlay toggle
 
     // Simulation properties
     float m_timeStep = 0.01f; // Physics time step in seconds
