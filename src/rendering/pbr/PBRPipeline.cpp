@@ -139,10 +139,10 @@ bool PBRPipeline::loadShaders()
     }
 
     // Post-processing shaders
-    ok &= m_highPassShader.load(shaderDir / "splitHighShader.vert",
-                                 shaderDir / "splitHighShader.frag");
-    ok &= m_blurShader.load(shaderDir / "blurShader.vert",
-                              shaderDir / "blurShader.frag");
+    ok &= m_bloomDownShader.load(shaderDir / "screenShader.vert",
+                                  shaderDir / "bloomDownsampleShader.frag");
+    ok &= m_bloomUpShader.load(shaderDir / "screenShader.vert",
+                                shaderDir / "bloomUpsampleShader.frag");
 
     if (!ok)
     {
@@ -162,8 +162,7 @@ bool PBRPipeline::initFBOs()
 {
     m_multisampledFBO.setupFrameBuffer(m_width, m_height);
     m_resolveFBO.setupFrameBuffer(m_width, m_height);
-    m_pingPongFBO.setupFrameBuffer(m_width, m_height);
-    m_simpleFBO.setupFrameBuffer(m_width, m_height);
+    m_bloomChain.setup(m_width, m_height);
 
     std::cout << "PBR: FBOs initialized." << std::endl;
     return true;
@@ -184,8 +183,7 @@ void PBRPipeline::resize(int width, int height)
     // Rebuild rendering FBOs
     m_multisampledFBO.setupFrameBuffer(width, height);
     m_resolveFBO.setupFrameBuffer(width, height);
-    m_pingPongFBO.setupFrameBuffer(width, height);
-    m_simpleFBO.setupFrameBuffer(width, height);
+    m_bloomChain.setup(width, height);
 
     // Rebuild cluster grid
     glm::mat4 proj = glm::perspective(
@@ -579,44 +577,53 @@ void PBRPipeline::postProcess()
 {
     glDisable(GL_DEPTH_TEST);
 
-    // High-pass filter on resolved color
-    m_pingPongFBO.bind();
-    glClear(GL_COLOR_BUFFER_BIT);
+    const int levels = m_bloomPasses <= 0
+                           ? 0
+                           : std::min(m_bloomPasses, m_bloomChain.mipCount());
+    const bool bloomEnabled = levels > 0;
 
-    if (m_bloomPasses > 0)
+    if (bloomEnabled)
     {
-        m_highPassShader.use();
-        m_canvas.draw(m_resolveFBO.colorTexture());
+        // Downsample chain: resolve -> mip0 -> ... -> mipN. The first pass
+        // applies the soft-knee bright pass and Karis firefly suppression.
+        m_bloomDownShader.use();
+        GLuint srcTex = m_resolveFBO.colorTexture();
+        for (int i = 0; i < levels; ++i)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_bloomChain.fbo(i));
+            glViewport(0, 0, m_bloomChain.mipWidth(i), m_bloomChain.mipHeight(i));
+            m_bloomDownShader.setBool("firstPass", i == 0);
+            m_canvas.draw(srcTex);
+            srcTex = m_bloomChain.texture(i);
+        }
+
+        // Upsample: tent-filter each mip additively into the next larger one,
+        // accumulating progressively wider halos on the way back to mip0.
+        m_bloomUpShader.use();
+        m_bloomUpShader.setFloat("filterRadius", 0.005f);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
+        glBlendEquation(GL_FUNC_ADD);
+        for (int i = levels - 1; i > 0; --i)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_bloomChain.fbo(i - 1));
+            glViewport(0, 0, m_bloomChain.mipWidth(i - 1), m_bloomChain.mipHeight(i - 1));
+            m_canvas.draw(m_bloomChain.texture(i));
+        }
+        glDisable(GL_BLEND);
     }
 
-    // Gaussian blur ping-pong between pingPong and simpleFBO's bloom attachment
-    m_blurShader.use();
-    for (int i = 0; i < m_bloomPasses; ++i)
-    {
-        // Horizontal pass → simpleFBO bloom attachment
-        glBindFramebuffer(GL_FRAMEBUFFER, m_simpleFBO.fbo());
-        glViewport(0, 0, m_width, m_height);
-        m_blurShader.setBool("horizontal", true);
-        m_canvas.draw(m_pingPongFBO.colorTexture());
-
-        // Vertical pass → pingPong
-        m_pingPongFBO.bind();
-        m_blurShader.setBool("horizontal", false);
-        m_canvas.draw(m_simpleFBO.colorTexture());
-    }
-
-    // Final compositing: tone mapping + bloom merge → default framebuffer
+    // Final compositing: bloom merge + tone mapping + sRGB encode → default FB
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, m_width, m_height);
 
     m_screenShader.use();
     m_screenShader.setFloat("exposure", m_exposure);
-    // Interim strength for the single-resolution blur; retuned when the
-    // bloom mip chain lands.
-    m_screenShader.setFloat("bloomStrength", 0.6f);
+    m_screenShader.setFloat("bloomStrength", bloomEnabled ? m_bloomStrength : 0.0f);
     m_screenShader.setInt("screenTexture", 0);
     m_screenShader.setInt("bloomBlur", 1);
-    m_canvas.draw(m_resolveFBO.colorTexture(), m_pingPongFBO.colorTexture());
+    m_canvas.draw(m_resolveFBO.colorTexture(),
+                  bloomEnabled ? m_bloomChain.texture(0) : m_resolveFBO.colorTexture());
 
     glEnable(GL_DEPTH_TEST);
 }

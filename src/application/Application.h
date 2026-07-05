@@ -199,8 +199,6 @@ private:
 
     // Visual effects
     void createExplosion(const glm::vec3 &position);
-    void updateExplosions(float deltaTime);
-    void renderExplosions();
     void emitFrameVisualEffects(float deltaTime);
     void updateAudioFrame(float deltaTime);
 

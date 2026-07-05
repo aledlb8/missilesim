@@ -128,94 +128,21 @@ void FrameBufferMultiSampled::setupFrameBuffer(int width, int height)
 }
 
 // ===========================================================================
-// ResolveBuffer  --  2 colour attachments (main + bloom high-pass) + depth
+// ResolveBuffer  --  HDR colour + depth target for the MSAA resolve
 // ===========================================================================
-
-ResolveBuffer::~ResolveBuffer()
-{
-    if (m_texBloomBuffer != 0)
-    {
-        glDeleteTextures(1, &m_texBloomBuffer);
-    }
-}
 
 ResolveBuffer::ResolveBuffer(ResolveBuffer &&other) noexcept
-    : FrameBuffer(std::move(other)),
-      m_texBloomBuffer(other.m_texBloomBuffer)
-{
-    other.m_texBloomBuffer = 0;
-}
-
-ResolveBuffer &ResolveBuffer::operator=(ResolveBuffer &&other) noexcept
-{
-    if (this != &other)
-    {
-        if (m_texBloomBuffer != 0)
-        {
-            glDeleteTextures(1, &m_texBloomBuffer);
-        }
-        FrameBuffer::operator=(std::move(other));
-        m_texBloomBuffer = other.m_texBloomBuffer;
-        other.m_texBloomBuffer = 0;
-    }
-    return *this;
-}
-
-void ResolveBuffer::setupFrameBuffer(int width, int height)
-{
-    if (m_texBloomBuffer != 0)
-    {
-        glDeleteTextures(1, &m_texBloomBuffer);
-        m_texBloomBuffer = 0;
-    }
-    destroy();
-
-    m_width = width;
-    m_height = height;
-
-    glGenFramebuffers(1, &m_frameBufferID);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_frameBufferID);
-
-    // Attachment 0: main resolved colour
-    m_texColorBuffer = Texture::genTextureDirectlyOnGPU(
-        width, height, 0, TextureType::SingleColor);
-
-    // Attachment 1: bloom / bright-pass
-    m_texBloomBuffer = Texture::genTextureDirectlyOnGPU(
-        width, height, 1, TextureType::SingleColor);
-
-    // Depth
-    m_depthBuffer = Texture::genTextureDirectlyOnGPU(
-        width, height, 0, TextureType::SingleDepth);
-
-    // Tell OpenGL which colour attachments we are drawing into
-    GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    glDrawBuffers(2, attachments);
-
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-    {
-        std::cerr << "PBR: ResolveBuffer is not complete!" << std::endl;
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-}
-
-// ===========================================================================
-// QuadHDRBuffer  --  single HDR colour for ping-pong Gaussian blur
-// ===========================================================================
-
-QuadHDRBuffer::QuadHDRBuffer(QuadHDRBuffer &&other) noexcept
     : FrameBuffer(std::move(other))
 {
 }
 
-QuadHDRBuffer &QuadHDRBuffer::operator=(QuadHDRBuffer &&other) noexcept
+ResolveBuffer &ResolveBuffer::operator=(ResolveBuffer &&other) noexcept
 {
     FrameBuffer::operator=(std::move(other));
     return *this;
 }
 
-void QuadHDRBuffer::setupFrameBuffer(int width, int height)
+void ResolveBuffer::setupFrameBuffer(int width, int height)
 {
     destroy();
 
@@ -226,11 +153,14 @@ void QuadHDRBuffer::setupFrameBuffer(int width, int height)
     glBindFramebuffer(GL_FRAMEBUFFER, m_frameBufferID);
 
     m_texColorBuffer = Texture::genTextureDirectlyOnGPU(
-        width, height, 0, TextureType::SingleColorClamp);
+        width, height, 0, TextureType::SingleColor);
+
+    m_depthBuffer = Texture::genTextureDirectlyOnGPU(
+        width, height, 0, TextureType::SingleDepth);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
-        std::cerr << "PBR: QuadHDRBuffer is not complete!" << std::endl;
+        std::cerr << "PBR: ResolveBuffer is not complete!" << std::endl;
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -352,80 +282,71 @@ void DirShadowBuffer::setupFrameBuffer(int width, int height)
 }
 
 // ===========================================================================
-// PointShadowBuffer  --  cubemap depth for omnidirectional point light shadows
+// BloomMipChain  --  descending half-resolution RGBA16F mips for bloom
 // ===========================================================================
 
-PointShadowBuffer::~PointShadowBuffer()
+BloomMipChain::~BloomMipChain()
 {
-    if (m_depthCubemap != 0)
-    {
-        glDeleteTextures(1, &m_depthCubemap);
-    }
+    destroy();
 }
 
-PointShadowBuffer::PointShadowBuffer(PointShadowBuffer &&other) noexcept
-    : FrameBuffer(std::move(other)),
-      m_depthCubemap(other.m_depthCubemap)
+void BloomMipChain::destroy()
 {
-    other.m_depthCubemap = 0;
+    for (Mip &mip : m_mips)
+    {
+        if (mip.texture != 0)
+            glDeleteTextures(1, &mip.texture);
+        if (mip.fbo != 0)
+            glDeleteFramebuffers(1, &mip.fbo);
+    }
+    m_mips.clear();
 }
 
-PointShadowBuffer &PointShadowBuffer::operator=(PointShadowBuffer &&other) noexcept
+void BloomMipChain::setup(int width, int height)
 {
-    if (this != &other)
-    {
-        if (m_depthCubemap != 0)
-        {
-            glDeleteTextures(1, &m_depthCubemap);
-        }
-        FrameBuffer::operator=(std::move(other));
-        m_depthCubemap = other.m_depthCubemap;
-        other.m_depthCubemap = 0;
-    }
-    return *this;
-}
-
-void PointShadowBuffer::setupFrameBuffer(int width, int height)
-{
-    if (m_depthCubemap != 0)
-    {
-        glDeleteTextures(1, &m_depthCubemap);
-        m_depthCubemap = 0;
-    }
     destroy();
 
-    m_width = width;
-    m_height = height;
+    // Enough mips to reach a very small base level (wide halos) without
+    // degenerating below ~10px: 1080p -> 6 mips (960x540 ... 30x17).
+    int shortest = width < height ? width : height;
+    int count = 3;
+    while ((shortest >> (count + 1)) >= 10 && count < 6)
+        ++count;
 
-    glGenFramebuffers(1, &m_frameBufferID);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_frameBufferID);
-
-    // Create a cubemap depth texture
-    glGenTextures(1, &m_depthCubemap);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_depthCubemap);
-    for (unsigned int i = 0; i < 6; ++i)
+    int mipW = width;
+    int mipH = height;
+    for (int i = 0; i < count; ++i)
     {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0,
-                     GL_DEPTH_COMPONENT32F,
-                     width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        mipW = mipW > 1 ? mipW / 2 : 1;
+        mipH = mipH > 1 ? mipH / 2 : 1;
+
+        Mip mip;
+        mip.width = mipW;
+        mip.height = mipH;
+
+        glGenTextures(1, &mip.texture);
+        glBindTexture(GL_TEXTURE_2D, mip.texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, mipW, mipH, 0,
+                     GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenFramebuffers(1, &mip.fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, mip.fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, mip.texture, 0);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        {
+            std::cerr << "PBR: BloomMipChain mip " << i << " is not complete!" << std::endl;
+        }
+
+        m_mips.push_back(mip);
     }
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_depthCubemap, 0);
-
-    // No colour buffer -- depth only
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-    {
-        std::cerr << "PBR: PointShadowBuffer is not complete!" << std::endl;
-    }
-
+    glBindTexture(GL_TEXTURE_2D, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 

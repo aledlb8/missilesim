@@ -88,15 +88,6 @@ void Application::createExplosion(const glm::vec3 &position)
     }
 }
 
-void Application::updateExplosions(float deltaTime)
-{
-    (void)deltaTime;
-}
-
-void Application::renderExplosions()
-{
-}
-
 void Application::updateAudioFrame(float deltaTime)
 {
     if (!m_audioSystem || !m_renderer)

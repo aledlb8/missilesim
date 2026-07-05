@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pbr/PBRLight.h"
+
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <cstddef>
@@ -119,6 +121,28 @@ private:
         float size;
     };
 
+    // Transient dynamic light emitted by a visual effect (explosion flash,
+    // launch plume, engine exhaust); fed into the PBR clustered light system
+    // so effects illuminate nearby geometry.
+    struct EffectLight
+    {
+        enum class Envelope
+        {
+            Flash,  // sharp exponential decay
+            Ember,  // quadratic fade over lifetime
+            Steady  // constant while alive
+        };
+
+        glm::vec3 position{0.0f};
+        glm::vec3 color{1.0f};
+        float intensity = 0.0f;  // radiance scale at 1 m (pre-attenuation)
+        float radius = 50.0f;    // attenuation window (m)
+        float age = 0.0f;
+        float lifetime = 0.0f;   // seconds; <= 0 lives for a single frame
+        float seed = 0.0f;       // flicker phase offset
+        Envelope envelope = Envelope::Steady;
+    };
+
     void createShaders();
     void createSimpleCube();
     void createMissileModel();
@@ -142,6 +166,9 @@ private:
     void normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const;
     void ensureDebugBufferCapacity(std::size_t vertexCount);
     void flushDebugPrimitivesInternal();
+    void addEffectLight(const EffectLight &light);
+    void updateEffectLights(float deltaTime);
+    void uploadEffectLights();
     void updateCameraVectors();
     glm::mat4 buildViewMatrix() const;
     glm::mat4 buildProjectionMatrix() const;
@@ -209,6 +236,10 @@ private:
     std::unique_ptr<SceneEffects> m_sceneEffects;
     std::unique_ptr<pbr::PBRPipeline> m_pbrPipeline;
     bool m_usePBR = true;
+
+    // Dynamic effect lights (aged in updateEffects, uploaded each frame)
+    std::vector<EffectLight> m_effectLights;
+    std::vector<pbr::PointLight> m_effectLightScratch;
 
     // Mesh data
     std::vector<Vertex> m_vertices;

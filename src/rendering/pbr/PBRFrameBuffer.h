@@ -2,6 +2,8 @@
 
 #include <glad/glad.h>
 
+#include <vector>
+
 namespace pbr {
 
 // ---------------------------------------------------------------------------
@@ -59,38 +61,17 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// ResolveBuffer  --  2 colour attachments (main + bloom high-pass) + depth
+// ResolveBuffer  --  HDR colour + depth target for the MSAA resolve
 // ---------------------------------------------------------------------------
 
 class ResolveBuffer : public FrameBuffer
 {
 public:
     ResolveBuffer() = default;
-    ~ResolveBuffer() override;
+    ~ResolveBuffer() override = default;
 
     ResolveBuffer(ResolveBuffer &&other) noexcept;
     ResolveBuffer &operator=(ResolveBuffer &&other) noexcept;
-
-    void setupFrameBuffer(int width, int height);
-
-    GLuint bloomTexture() const { return m_texBloomBuffer; }
-
-private:
-    GLuint m_texBloomBuffer = 0;
-};
-
-// ---------------------------------------------------------------------------
-// QuadHDRBuffer  --  single HDR colour for ping-pong blur
-// ---------------------------------------------------------------------------
-
-class QuadHDRBuffer : public FrameBuffer
-{
-public:
-    QuadHDRBuffer() = default;
-    ~QuadHDRBuffer() override = default;
-
-    QuadHDRBuffer(QuadHDRBuffer &&other) noexcept;
-    QuadHDRBuffer &operator=(QuadHDRBuffer &&other) noexcept;
 
     void setupFrameBuffer(int width, int height);
 };
@@ -134,24 +115,39 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// PointShadowBuffer  --  cubemap depth for point light shadows
+// BloomMipChain  --  descending half-resolution RGBA16F mips, each with its
+// own FBO, for progressive downsample/upsample bloom
 // ---------------------------------------------------------------------------
 
-class PointShadowBuffer : public FrameBuffer
+class BloomMipChain
 {
 public:
-    PointShadowBuffer() = default;
-    ~PointShadowBuffer() override;
+    BloomMipChain() = default;
+    ~BloomMipChain();
 
-    PointShadowBuffer(PointShadowBuffer &&other) noexcept;
-    PointShadowBuffer &operator=(PointShadowBuffer &&other) noexcept;
+    BloomMipChain(const BloomMipChain &) = delete;
+    BloomMipChain &operator=(const BloomMipChain &) = delete;
 
-    void setupFrameBuffer(int width, int height);
+    /// (Re)build the chain for the given full-resolution size.
+    void setup(int width, int height);
+    void destroy();
 
-    GLuint depthCubemap() const { return m_depthCubemap; }
+    int mipCount() const { return static_cast<int>(m_mips.size()); }
+    GLuint fbo(int i) const { return m_mips[i].fbo; }
+    GLuint texture(int i) const { return m_mips[i].texture; }
+    int mipWidth(int i) const { return m_mips[i].width; }
+    int mipHeight(int i) const { return m_mips[i].height; }
 
 private:
-    GLuint m_depthCubemap = 0;
+    struct Mip
+    {
+        GLuint fbo = 0;
+        GLuint texture = 0;
+        int width = 0;
+        int height = 0;
+    };
+
+    std::vector<Mip> m_mips;
 };
 
 } // namespace pbr

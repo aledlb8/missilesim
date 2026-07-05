@@ -42,8 +42,10 @@ public:
     void setPointLights(const std::vector<PointLight> &lights);
     void setExposure(float exposure) { m_exposure = exposure; }
     void setBloomPasses(int passes) { m_bloomPasses = passes; }
+    void setBloomStrength(float strength) { m_bloomStrength = strength; }
     float getExposure() const { return m_exposure; }
     int getBloomPasses() const { return m_bloomPasses; }
+    float getBloomStrength() const { return m_bloomStrength; }
     DirectionalLight &directionalLight() { return m_dirLight; }
     const DirectionalLight &directionalLight() const { return m_dirLight; }
 
@@ -118,7 +120,10 @@ private:
 
     // Rendering parameters
     float m_exposure = 1.0f;
+    // Number of bloom mip levels used (<=0 disables bloom; clamped to the
+    // chain length at render time).
     int m_bloomPasses = 5;
+    float m_bloomStrength = 0.06f;
 
     // Per-frame camera state
     glm::mat4 m_viewMatrix{1.0f};
@@ -142,14 +147,13 @@ private:
     // Shadows
     Shader m_dirShadowShader;
     // Post-processing
-    Shader m_highPassShader;
-    Shader m_blurShader;
+    Shader m_bloomDownShader;
+    Shader m_bloomUpShader;
 
     // --- FBOs ---
     FrameBufferMultiSampled m_multisampledFBO;
     ResolveBuffer m_resolveFBO;
-    QuadHDRBuffer m_pingPongFBO;
-    QuadHDRBuffer m_simpleFBO;
+    BloomMipChain m_bloomChain;
     CaptureBuffer m_captureFBO;
     DirShadowBuffer m_dirShadowFBO;
 
