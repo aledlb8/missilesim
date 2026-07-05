@@ -42,11 +42,6 @@ uniform vec3 cameraPos_wS;
 uniform vec3 fogColor;
 uniform float fogDensity;
 
-//To be changed in the future..
-//This is at the core as to why I want to change the current shadow mapping system to something
-//like a virtual texture addressing, so we don't have to explicitely tell the compiler how many shadow casting
-//lights there will be in a given scene
-#define SHADOW_CASTING_POINT_LIGHTS 4
 #define M_PI 3.1415926535897932384626433832795
 
 //Cluster shading structs and buffers
@@ -93,9 +88,6 @@ vec3 colors[8] = vec3[](
    vec3(1,  0,  0),  vec3( 1,  0,  1), vec3( 1, 1, 0),  vec3(1, 1, 1)
 );
 
-//TODO: change far plane to a different location
-uniform samplerCube depthMaps[SHADOW_CASTING_POINT_LIGHTS];
-uniform float far_plane;
 uniform float zFar;
 uniform float zNear;
 
@@ -111,8 +103,7 @@ uniform bool slices;
 //Function prototypes
 vec3 calcDirLight(DirLight light, vec3 normal, vec3 viewDir, vec3 albedo, float rough, float metal, float shadow, vec3 F0);
 float calcDirShadow(vec4 fragPosLightSpace);
-vec3 calcPointLight(uint index, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 albedo, float rough, float metal, vec3 F0,  float viewDistance);
-float calcPointLightShadows(samplerCube depthMap, vec3 fragPos, float viewDistance);
+vec3 calcPointLight(uint index, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 albedo, float rough, float metal, vec3 F0);
 float linearDepth(float depthSample);
 
 //PBR Functions
@@ -184,7 +175,7 @@ void main(){
     //Reading from the global light list and calculating the radiance contribution of each light.
     for(uint i = 0; i < lightCount; i++){
         uint lightVectorIndex = globalLightIndexList[lightIndexOffset + i];
-        radianceOut += calcPointLight(lightVectorIndex, norm, fs_in.fragPos_wS, viewDir, albedo, roughness, metallic, F0, viewDistance);
+        radianceOut += calcPointLight(lightVectorIndex, norm, fs_in.fragPos_wS, viewDir, albedo, roughness, metallic, F0);
     }
 
     //Treating the ambient light term as the incoming indirect light affecting the fragment
@@ -278,10 +269,10 @@ float calcDirShadow(vec4 fragPosLightSpace){
 
 vec3 calcPointLight(uint index, vec3 normal, vec3 fragPos,
                     vec3 viewDir, vec3 albedo, float rough,
-                    float metal, vec3 F0,  float viewDistance){
+                    float metal, vec3 F0){
     //Point light basics
     vec3 position = pointLight[index].position.xyz;
-    vec3 color    = 100.0 * pointLight[index].color.rgb;
+    vec3 color    = pointLight[index].color.rgb * pointLight[index].intensity;
     float radius  = pointLight[index].range;
 
     //Stuff common to the BRDF subfunctions 
@@ -312,33 +303,7 @@ vec3 calcPointLight(uint index, vec3 normal, vec3 fragPos,
 
     vec3 radiance = (kD * (albedo / M_PI) + specular ) * radianceIn * nDotL;
 
-    //shadow stuff
-    vec3 fragToLight = fragPos - position;
-    float shadow = calcPointLightShadows(depthMaps[index], fragToLight, viewDistance);
-    
-    radiance *= (1.0 - shadow);
-
     return radiance;
-}
-
-//sample amount is small but this was killing perf
-//This will probably be re-written as soon as the shadow mapping update comes in
-float calcPointLightShadows(samplerCube depthMap, vec3 fragToLight, float viewDistance){
-    float shadow      = 0.0;
-    float bias        = 0.0;
-    int   samples     = 8;
-    float fraction    = 1.0/float(samples);
-    float diskRadius  = (1.0 + (viewDistance / far_plane)) / 25.0;
-    float currentDepth = (length(fragToLight) - bias);
-
-    for(int i = 0; i < samples; ++i){
-        float closestDepth = texture(depthMap, fragToLight + sampleOffsetDirections[i], diskRadius).r;
-        closestDepth *= far_plane;
-        if(currentDepth > closestDepth){
-            shadow += fraction;
-        }
-    }
-    return shadow;
 }
 
 float linearDepth(float depthSample){

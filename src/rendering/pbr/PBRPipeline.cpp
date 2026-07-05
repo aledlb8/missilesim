@@ -131,9 +131,6 @@ bool PBRPipeline::loadShaders()
     // Shadow shaders
     ok &= m_dirShadowShader.load(shaderDir / "shadowShader.vert",
                                   shaderDir / "shadowShader.frag");
-    ok &= m_pointShadowShader.load(shaderDir / "pointShadowShader.vert",
-                                    shaderDir / "pointShadowShader.frag",
-                                    shaderDir / "pointShadowShader.geom");
 
     if (!ok)
     {
@@ -286,17 +283,6 @@ void PBRPipeline::setDirectionalLight(const DirectionalLight &light)
 void PBRPipeline::setPointLights(const std::vector<PointLight> &lights)
 {
     m_pointLights = lights;
-
-    // Set up point shadow FBOs
-    m_pointShadowFBOs.clear();
-    m_pointShadowFBOs.resize(lights.size());
-    for (std::size_t i = 0; i < lights.size(); ++i)
-    {
-        m_pointShadowFBOs[i].setupFrameBuffer(
-            lights[i].shadowRes, lights[i].shadowRes);
-    }
-
-    // Upload to cluster grid SSBO
     m_clusterGrid.uploadLights(m_pointLights);
 }
 
@@ -404,56 +390,6 @@ void PBRPipeline::shadowPass()
             glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
         }
     }
-
-    // Point light shadows
-    for (std::size_t li = 0; li < m_pointLights.size() && li < 4; ++li)
-    {
-        PointLight &light = m_pointLights[li];
-
-        // Build shadow projection
-        float aspect = 1.0f;
-        light.shadowProjectionMat = glm::perspective(
-            glm::radians(90.0f), aspect, light.zNear, light.zFar);
-
-        // Build lookAt matrices for 6 faces
-        glm::vec3 pos = light.position;
-        light.lookAtPerFace[0] = glm::lookAt(pos, pos + glm::vec3(1, 0, 0), glm::vec3(0, -1, 0));
-        light.lookAtPerFace[1] = glm::lookAt(pos, pos + glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0));
-        light.lookAtPerFace[2] = glm::lookAt(pos, pos + glm::vec3(0, 1, 0), glm::vec3(0, 0, 1));
-        light.lookAtPerFace[3] = glm::lookAt(pos, pos + glm::vec3(0, -1, 0), glm::vec3(0, 0, -1));
-        light.lookAtPerFace[4] = glm::lookAt(pos, pos + glm::vec3(0, 0, 1), glm::vec3(0, -1, 0));
-        light.lookAtPerFace[5] = glm::lookAt(pos, pos + glm::vec3(0, 0, -1), glm::vec3(0, -1, 0));
-
-        light.depthMapTextureID = m_pointShadowFBOs[li].depthCubemap();
-
-        m_pointShadowFBOs[li].bind();
-        glViewport(0, 0, static_cast<GLsizei>(light.shadowRes), static_cast<GLsizei>(light.shadowRes));
-        glClear(GL_DEPTH_BUFFER_BIT);
-
-        m_pointShadowShader.use();
-        m_pointShadowShader.setVec3("lightPos", light.position);
-        m_pointShadowShader.setFloat("far_plane", light.zFar);
-
-        for (unsigned int face = 0; face < 6; ++face)
-        {
-            glm::mat4 lightMatrix = light.shadowProjectionMat * light.lookAtPerFace[face];
-            m_pointShadowShader.setMat4(
-                ("shadowMatrices[" + std::to_string(face) + "]"),
-                lightMatrix);
-        }
-
-        for (auto &dc : m_modelDrawCalls)
-        {
-            m_pointShadowShader.setMat4("M", dc.modelMatrix);
-            dc.model->draw(m_pointShadowShader, false);
-        }
-        for (auto &dc : m_legacyDrawCalls)
-        {
-            m_pointShadowShader.setMat4("M", dc.modelMatrix);
-            glBindVertexArray(dc.vao);
-            glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,20 +460,8 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     // grey and buried ground colour and shadow contrast.
     shader.setFloat("fogDensity", 1.0f / std::max(m_farPlane * 0.6f, 9000.0f));
 
-    // Bind point light shadow cubemaps (texture units 5..8)
-    constexpr unsigned int numMaterialTexUnits = 5;
-    for (std::size_t i = 0; i < m_pointLights.size() && i < 4; ++i)
-    {
-        glActiveTexture(GL_TEXTURE0 + numMaterialTexUnits + static_cast<GLenum>(i));
-        glBindTexture(GL_TEXTURE_CUBE_MAP, m_pointLights[i].depthMapTextureID);
-        shader.setInt("depthMaps[" + std::to_string(i) + "]",
-                      static_cast<int>(numMaterialTexUnits + i));
-        shader.setFloat("far_plane", m_pointLights[i].zFar);
-    }
-
-    // Directional shadow map
-    unsigned int shadowUnit = numMaterialTexUnits + static_cast<unsigned int>(
-                                  std::min(m_pointLights.size(), std::size_t(4)));
+    // Directional shadow map (unit 5, after the material texture units)
+    constexpr unsigned int shadowUnit = 5;
     glActiveTexture(GL_TEXTURE0 + shadowUnit);
     glBindTexture(GL_TEXTURE_2D, m_dirShadowFBO.depthTexture());
     shader.setInt("shadowMap", static_cast<int>(shadowUnit));

@@ -98,8 +98,6 @@ private:
     // Initialization stages
     bool loadShaders();
     bool initFBOs();
-    void initIBL();
-    void initShadowMaps();
 
     // Render passes
     void shadowPass();
@@ -110,7 +108,6 @@ private:
 
     // Shared setup for PBR shaders
     void bindPBRUniforms(Shader &shader);
-    void bindShadowTextures(Shader &shader, int startUnit);
 
     // Dimensions
     int m_width = 0;
@@ -144,7 +141,6 @@ private:
     Shader m_screenShader;
     // Shadows
     Shader m_dirShadowShader;
-    Shader m_pointShadowShader;
     // Post-processing
     Shader m_highPassShader;
     Shader m_blurShader;
@@ -156,7 +152,6 @@ private:
     QuadHDRBuffer m_simpleFBO;
     CaptureBuffer m_captureFBO;
     DirShadowBuffer m_dirShadowFBO;
-    std::vector<PointShadowBuffer> m_pointShadowFBOs;
 
     // --- Scene resources ---
     Skybox m_skybox;

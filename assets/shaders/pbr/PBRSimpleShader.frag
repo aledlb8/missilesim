@@ -35,7 +35,6 @@ uniform vec3 cameraPos_wS;
 uniform vec3 fogColor;
 uniform float fogDensity;
 
-#define SHADOW_CASTING_POINT_LIGHTS 4
 #define M_PI 3.1415926535897932384626433832795
 
 // Clustered shading structures
@@ -67,8 +66,6 @@ layout (std430, binding = 5) buffer lightGridSSBO {
     LightGrid lightGrid[];
 };
 
-uniform samplerCube depthMaps[SHADOW_CASTING_POINT_LIGHTS];
-uniform float far_plane;
 uniform float zFar;
 uniform float zNear;
 
@@ -135,22 +132,6 @@ float calcDirShadow(vec4 fragPosLightSpace) {
     return shadow;
 }
 
-float calcPointLightShadows(samplerCube depthMap, vec3 fragToLight, float viewDistance) {
-    float shadow = 0.0;
-    int   samples = 8;
-    float fraction = 1.0 / float(samples);
-    float diskRadius = (1.0 + (viewDistance / far_plane)) / 25.0;
-    float currentDepth = length(fragToLight);
-
-    for (int i = 0; i < samples; ++i) {
-        float closestDepth = texture(depthMap, fragToLight + sampleOffsetDirections[i] * diskRadius).r;
-        closestDepth *= far_plane;
-        if (currentDepth > closestDepth)
-            shadow += fraction;
-    }
-    return shadow;
-}
-
 void main() {
     vec3 albedo    = u_useVertexColor ? fs_in.vertexColor : u_albedo;
     float metallic = u_metallic;
@@ -199,7 +180,7 @@ void main() {
     for (uint i = 0; i < lightCount; i++) {
         uint idx = globalLightIndexList[lightIndexOffset + i];
         vec3 position = pointLight[idx].position.xyz;
-        vec3 color    = 100.0 * pointLight[idx].color.rgb;
+        vec3 color    = pointLight[idx].color.rgb * pointLight[idx].intensity;
         float radius  = pointLight[idx].range;
 
         vec3 lightDir = normalize(position - fs_in.fragPos_wS);
@@ -218,13 +199,7 @@ void main() {
 
         vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
         vec3 specular = (NDF * G * F) / max(4.0 * nDotV * nDotL, 0.0001);
-        vec3 radiance = (kD * (albedo / M_PI) + specular) * radianceIn * nDotL;
-
-        // Point light shadow
-        vec3 fragToLight = fs_in.fragPos_wS - position;
-        float ptShadow = calcPointLightShadows(depthMaps[min(idx, uint(SHADOW_CASTING_POINT_LIGHTS - 1))],
-                                                fragToLight, viewDistance);
-        radianceOut += radiance * (1.0 - ptShadow);
+        radianceOut += (kD * (albedo / M_PI) + specular) * radianceIn * nDotL;
     }
 
     // Ambient / IBL
