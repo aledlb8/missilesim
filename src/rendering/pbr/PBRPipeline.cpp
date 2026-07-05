@@ -162,6 +162,7 @@ bool PBRPipeline::initFBOs()
 {
     m_multisampledFBO.setupFrameBuffer(m_width, m_height);
     m_resolveFBO.setupFrameBuffer(m_width, m_height);
+    m_sceneCopyFBO.setupFrameBuffer(m_width, m_height);
     m_bloomChain.setup(m_width, m_height);
 
     std::cout << "PBR: FBOs initialized." << std::endl;
@@ -183,6 +184,7 @@ void PBRPipeline::resize(int width, int height)
     // Rebuild rendering FBOs
     m_multisampledFBO.setupFrameBuffer(width, height);
     m_resolveFBO.setupFrameBuffer(width, height);
+    m_sceneCopyFBO.setupFrameBuffer(width, height);
     m_bloomChain.setup(width, height);
 
     // Rebuild cluster grid
@@ -372,6 +374,11 @@ void PBRPipeline::shadowPass()
         glViewport(0, 0, static_cast<GLsizei>(m_dirLight.shadowRes), static_cast<GLsizei>(m_dirLight.shadowRes));
         glClear(GL_DEPTH_BUFFER_BIT);
 
+        // Slope-scaled depth offset during rasterization; paired with the
+        // receiver-side normal-offset bias in the shading shaders.
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(2.0f, 4.0f);
+
         m_dirShadowShader.use();
 
         glm::mat4 VP = m_dirLight.lightSpaceMatrix;
@@ -387,6 +394,8 @@ void PBRPipeline::shadowPass()
             glBindVertexArray(dc.vao);
             glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
         }
+
+        glDisable(GL_POLYGON_OFFSET_FILL);
     }
 }
 
@@ -450,6 +459,9 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     shader.setVec3("dirLight.direction", m_dirLight.direction);
     shader.setVec3("dirLight.color", m_dirLight.strength * m_dirLight.color);
     shader.setMat4("lightSpaceMatrix", m_dirLight.lightSpaceMatrix);
+    shader.setFloat("shadowTexelWorld",
+                    2.0f * m_dirLight.orthoBoxSize /
+                        static_cast<float>(m_dirLight.shadowRes));
     shader.setVec3("cameraPos_wS", m_cameraPos);
     shader.setFloat("zFar", m_farPlane);
     shader.setFloat("zNear", m_nearPlane);
@@ -567,6 +579,28 @@ void PBRPipeline::bindResolvedFBO()
 {
     glBindFramebuffer(GL_FRAMEBUFFER, m_resolveFBO.fbo());
     glViewport(0, 0, m_width, m_height);
+}
+
+void PBRPipeline::copySceneDepthForEffects()
+{
+    m_resolveFBO.blitTo(m_sceneCopyFBO, m_width, m_height, m_width, m_height,
+                        GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+}
+
+void PBRPipeline::copySceneColorForDistortion()
+{
+    m_resolveFBO.blitTo(m_sceneCopyFBO, m_width, m_height, m_width, m_height,
+                        GL_COLOR_BUFFER_BIT, GL_NEAREST);
+}
+
+GLuint PBRPipeline::sceneCopyColorTexture() const
+{
+    return m_sceneCopyFBO.colorTexture();
+}
+
+GLuint PBRPipeline::sceneCopyDepthTexture() const
+{
+    return m_sceneCopyFBO.depthTexture();
 }
 
 // ===========================================================================

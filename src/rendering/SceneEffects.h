@@ -21,9 +21,18 @@ public:
     void renderParticlesToScene();
     void presentScene();
 
-    /// When PBR pipeline is active, use its resolved depth for soft particles.
+    /// Screen-space heat distortion into the currently bound framebuffer.
+    /// In PBR mode the caller supplies scene colour/depth snapshots via the
+    /// setExternal* hooks; the legacy path uses the internal scene FBO.
+    void renderHeatHazePass();
+
+    /// When PBR pipeline is active, use its depth snapshot for soft particles.
     void setExternalDepthTexture(GLuint depthTex) { m_externalDepthTexture = depthTex; }
     void clearExternalDepthTexture() { m_externalDepthTexture = 0; }
+
+    /// Scene colour snapshot sampled by the heat-haze refraction pass.
+    void setExternalSceneColor(GLuint colorTex) { m_externalSceneColor = colorTex; }
+    void clearExternalSceneColor() { m_externalSceneColor = 0; }
 
     void update(float deltaTime);
     void clear();
@@ -130,7 +139,6 @@ private:
     void ensureParticleInstanceCapacity(std::size_t instanceCount);
     void ensureHazeInstanceCapacity(std::size_t instanceCount);
     void renderParticlePass(const std::vector<ParticleInstance> &instances, BlendMode blendMode);
-    void renderHeatHazePass();
 
     void addParticle(const EffectParticle &particle);
     void addHeatHaze(const HeatHazeSprite &sprite);
@@ -168,6 +176,7 @@ private:
     GLuint m_sceneColorTexture = 0;
     GLuint m_sceneDepthTexture = 0;
     GLuint m_externalDepthTexture = 0;
+    GLuint m_externalSceneColor = 0;
     bool m_sceneFramebufferValid = false;
     std::size_t m_particleInstanceCapacity = 0;
     std::size_t m_hazeInstanceCapacity = 0;

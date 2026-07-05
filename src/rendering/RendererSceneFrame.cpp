@@ -63,13 +63,26 @@ void Renderer::renderSceneEffects()
         // Execute the full PBR render pipeline (shadows → depth → cull → shade → skybox → resolve)
         m_pbrPipeline->executeRenderPass();
 
-        // Render particles into the PBR resolved FBO
         if (m_sceneEffects)
         {
-            m_sceneEffects->setExternalDepthTexture(m_pbrPipeline->getResolvedDepthTexture());
+            // Snapshot the opaque depth so soft particles sample a texture
+            // that is not attached to the framebuffer they render into.
+            m_pbrPipeline->copySceneDepthForEffects();
+            m_sceneEffects->setExternalDepthTexture(m_pbrPipeline->sceneCopyDepthTexture());
+
+            // Composite particles into the resolved HDR scene.
             m_pbrPipeline->bindResolvedFBO();
             m_sceneEffects->setCamera(m_cameraPosition, buildViewMatrix(), buildProjectionMatrix());
             m_sceneEffects->renderParticlesToScene();
+
+            // Snapshot the colour (now including particles) and run the heat
+            // distortion pass back into the resolve target, pre-bloom/tonemap
+            // so the shimmer inherits HDR bloom.
+            m_pbrPipeline->copySceneColorForDistortion();
+            m_sceneEffects->setExternalSceneColor(m_pbrPipeline->sceneCopyColorTexture());
+            m_pbrPipeline->bindResolvedFBO();
+            m_sceneEffects->renderHeatHazePass();
+            m_sceneEffects->clearExternalSceneColor();
         }
         return;
     }

@@ -132,6 +132,12 @@ namespace
         in vec4 vParams0;
         flat in vec2 vParams1;
 
+        uniform sampler2D sceneDepth;
+        uniform vec2 viewportSize;
+        uniform float zNear;
+        uniform float zFar;
+        uniform bool depthFadeEnabled;
+
         out vec4 FragColor;
 
         float hash12(vec2 value)
@@ -151,6 +157,12 @@ namespace
             float d = hash12(i + vec2(1.0, 1.0));
             vec2 u = f * f * (3.0 - 2.0 * f);
             return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        }
+
+        float linearizeDepth(float depthSample)
+        {
+            float ndc = 2.0 * depthSample - 1.0;
+            return 2.0 * zNear * zFar / (zFar + zNear - ndc * (zFar - zNear));
         }
 
         void main()
@@ -196,6 +208,23 @@ namespace
             }
 
             alpha = clamp(alpha * softness, 0.0, 1.0);
+
+            if (depthFadeEnabled)
+            {
+                vec2 screenUv = gl_FragCoord.xy / viewportSize;
+                float sceneLinear = linearizeDepth(texture(sceneDepth, screenUv).r);
+                float fragLinear = linearizeDepth(gl_FragCoord.z);
+
+                // Soft particles: fade out where the billboard approaches
+                // scene geometry. Fade distance scales with particle size so
+                // large smoke fades over metres and sparks stay crisp.
+                float fadeDistance = clamp(vParams0.x * 0.5, 0.3, 8.0);
+                alpha *= clamp((sceneLinear - fragLinear) / fadeDistance, 0.0, 1.0);
+
+                // Fade near the camera so flying through a plume doesn't pop.
+                alpha *= clamp((fragLinear - zNear * 2.0) / 1.5, 0.0, 1.0);
+            }
+
             vec3 premultiplied = color * alpha * max(emissive, 0.0);
             FragColor = vec4(premultiplied, alpha);
         }

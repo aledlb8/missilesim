@@ -24,6 +24,8 @@ uniform bool  u_useVertexColor;
 
 // Shadow map
 uniform sampler2D shadowMap;
+uniform mat4 lightSpaceMatrix;
+uniform float shadowTexelWorld;  // world-space size of one shadow texel
 
 // IBL textures
 uniform samplerCube irradianceMap;
@@ -69,14 +71,6 @@ layout (std430, binding = 5) buffer lightGridSSBO {
 uniform float zFar;
 uniform float zNear;
 
-vec3 sampleOffsetDirections[20] = vec3[](
-   vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
-   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
-   vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
-   vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-   vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
-);
-
 // PBR functions
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     float val = 1.0 - cosTheta;
@@ -112,23 +106,49 @@ float linearDepth(float depthSample) {
     return 2.0 * zNear * zFar / (zFar + zNear - depthRange * (zFar - zNear));
 }
 
-float calcDirShadow(vec4 fragPosLightSpace) {
+// Per-pixel dither angle for rotating the PCF sample disk; breaks the
+// banding a fixed kernel produces at soft shadow edges.
+float interleavedGradientNoise(vec2 pixel) {
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+float calcDirShadow(vec3 fragPos, vec3 normal) {
+    // Normal-offset bias: sample the shadow map as if the receiver sat a
+    // texel and a half above its surface, escaping acne on slopes.
+    vec3 offsetPos = fragPos + normal * shadowTexelWorld * 1.5;
+    vec4 fragPosLightSpace = lightSpaceMatrix * vec4(offsetPos, 1.0);
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
-    if (projCoords.z > 1.0 ||
-        any(lessThan(projCoords.xy, vec2(0.0))) ||
-        any(greaterThan(projCoords.xy, vec2(1.0)))) {
+    if (projCoords.z > 1.0) {
         return 0.0;
     }
 
-    float shadow = 0.0;
-    float bias = 0.0015;
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    float nDotL = max(dot(normal, normalize(-dirLight.direction)), 0.0);
+    float bias = max(0.0006, 0.0035 * (1.0 - nDotL));
 
-    for (int i = 0; i < 9; ++i) {
-        float pcfDepth = texture(shadowMap, projCoords.xy + sampleOffsetDirections[i].xy * texelSize).r;
-        shadow += projCoords.z - bias > pcfDepth ? 0.111111 : 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    float angle = interleavedGradientNoise(gl_FragCoord.xy) * 6.2831853;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotation = mat2(c, s, -s, c);
+
+    // 16-tap Vogel disk, radius 2 texels.
+    const int SAMPLE_COUNT = 16;
+    const float GOLDEN_ANGLE = 2.39996323;
+    float shadow = 0.0;
+    for (int i = 0; i < SAMPLE_COUNT; ++i) {
+        float r = sqrt((float(i) + 0.5) / float(SAMPLE_COUNT)) * 2.0;
+        float theta = float(i) * GOLDEN_ANGLE;
+        vec2 offset = rotation * (vec2(cos(theta), sin(theta)) * r) * texelSize;
+        float pcfDepth = texture(shadowMap, projCoords.xy + offset).r;
+        shadow += (projCoords.z - bias > pcfDepth) ? 1.0 : 0.0;
     }
+    shadow /= float(SAMPLE_COUNT);
+
+    // Fade out at the moving shadow-frustum border instead of hard-cutting
+    // (the map clamps to a white border beyond it).
+    vec2 border = abs(projCoords.xy * 2.0 - 1.0);
+    shadow *= 1.0 - smoothstep(0.9, 1.0, max(border.x, border.y));
     return shadow;
 }
 
@@ -156,7 +176,7 @@ void main() {
     vec3 radianceOut = vec3(0.0);
 
     // Directional light with shadow
-    float shadow = calcDirShadow(fs_in.fragPos_lS);
+    float shadow = calcDirShadow(fs_in.fragPos_wS, norm);
     float viewDistance = length(cameraPos_wS - fs_in.fragPos_wS);
     {
         vec3 lightDir = normalize(-dirLight.direction);

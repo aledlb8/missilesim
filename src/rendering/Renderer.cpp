@@ -265,7 +265,8 @@ void Renderer::initialize()
             sun.distance = 800.0f;
             sun.zNear = 1.0f;
             sun.zFar = 2000.0f;
-            sun.shadowRes = 2048;
+            // 4096 over a 500 m half-extent box ≈ 24 cm/texel.
+            sun.shadowRes = 4096;
             m_pbrPipeline->setDirectionalLight(sun);
 
             // ACES darkens midtones vs the old exponential tonemap.

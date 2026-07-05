@@ -73,6 +73,14 @@ public:
     GLuint getResolvedDepthTexture() const;
     void bindResolvedFBO();
 
+    /// Scene-copy helpers for screen-space effects: sampling the resolve
+    /// FBO's own attachments while it is bound is undefined, so effects read
+    /// from this snapshot instead.
+    void copySceneDepthForEffects();      // blit depth (call before particles)
+    void copySceneColorForDistortion();   // blit colour (call before heat haze)
+    GLuint sceneCopyColorTexture() const;
+    GLuint sceneCopyDepthTexture() const;
+
     /// Bloom + tone mapping to default framebuffer.
     void postProcess();
 
@@ -153,6 +161,7 @@ private:
     // --- FBOs ---
     FrameBufferMultiSampled m_multisampledFBO;
     ResolveBuffer m_resolveFBO;
+    ResolveBuffer m_sceneCopyFBO;
     BloomMipChain m_bloomChain;
     CaptureBuffer m_captureFBO;
     DirShadowBuffer m_dirShadowFBO;

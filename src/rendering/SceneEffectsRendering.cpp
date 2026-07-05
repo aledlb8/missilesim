@@ -123,6 +123,54 @@ void SceneEffects::renderParticlePass(const std::vector<ParticleInstance> &insta
         glUniform3fv(cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
     }
 
+    // Soft particles: fade against the scene depth buffer when one is
+    // available (PBR resolve depth, or the legacy scene FBO's own depth).
+    const GLuint depthTexture = (m_externalDepthTexture != 0) ? m_externalDepthTexture
+                                                              : m_sceneDepthTexture;
+    const GLint depthFadeLoc = glGetUniformLocation(m_particleProgram, "depthFadeEnabled");
+    if (depthTexture != 0)
+    {
+        // Recover the perspective near/far planes from the projection matrix
+        // (glm::perspective: P[2][2] = -(f+n)/(f-n), P[3][2] = -2fn/(f-n)).
+        const float p22 = m_projection[2][2];
+        const float p32 = m_projection[3][2];
+        const float nearPlane = p32 / (p22 - 1.0f);
+        const float farPlane = p32 / (p22 + 1.0f);
+
+        const GLint sceneDepthLoc = glGetUniformLocation(m_particleProgram, "sceneDepth");
+        const GLint viewportSizeLoc = glGetUniformLocation(m_particleProgram, "viewportSize");
+        const GLint zNearLoc = glGetUniformLocation(m_particleProgram, "zNear");
+        const GLint zFarLoc = glGetUniformLocation(m_particleProgram, "zFar");
+
+        if (sceneDepthLoc != -1)
+        {
+            glUniform1i(sceneDepthLoc, 0);
+        }
+        if (viewportSizeLoc != -1)
+        {
+            glUniform2f(viewportSizeLoc, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight));
+        }
+        if (zNearLoc != -1)
+        {
+            glUniform1f(zNearLoc, nearPlane);
+        }
+        if (zFarLoc != -1)
+        {
+            glUniform1f(zFarLoc, farPlane);
+        }
+        if (depthFadeLoc != -1)
+        {
+            glUniform1i(depthFadeLoc, 1);
+        }
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, depthTexture);
+    }
+    else if (depthFadeLoc != -1)
+    {
+        glUniform1i(depthFadeLoc, 0);
+    }
+
     glBindVertexArray(m_particleVAO);
     glBindBuffer(GL_ARRAY_BUFFER, m_particleInstanceVBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, instances.size() * sizeof(ParticleInstance), instances.data());
@@ -135,7 +183,8 @@ void SceneEffects::renderParticlePass(const std::vector<ParticleInstance> &insta
 
 void SceneEffects::renderHeatHazePass()
 {
-    if (!m_sceneFramebufferValid || m_hazeProgram == 0 || m_heatHazeSprites.empty())
+    const bool haveSceneColor = (m_externalSceneColor != 0) || m_sceneFramebufferValid;
+    if (!haveSceneColor || m_hazeProgram == 0 || m_heatHazeSprites.empty())
     {
         return;
     }
@@ -226,7 +275,7 @@ void SceneEffects::renderHeatHazePass()
     }
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_sceneColorTexture);
+    glBindTexture(GL_TEXTURE_2D, m_externalSceneColor != 0 ? m_externalSceneColor : m_sceneColorTexture);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, m_externalDepthTexture != 0 ? m_externalDepthTexture : m_sceneDepthTexture);
 
