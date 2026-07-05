@@ -258,16 +258,18 @@ void Renderer::initialize()
             // long, clearly-visible shadows instead of short noon stubs.
             sun.direction = glm::vec3(-0.72f, -0.55f, 0.42f);
             sun.color = glm::vec3(1.0f, 0.95f, 0.85f);
-            // The sun was washed out by the blue ambient/IBL: the lit ground was
-            // dark and shadows had no contrast. A stronger key light brightens
-            // sunlit surfaces and makes shadows clearly readable.
-            sun.strength = 5.5f;
+            // 5.5 was compensating for the missing sRGB encode on output;
+            // with gamma-correct output that reads blown-out.
+            sun.strength = 3.5f;
             sun.orthoBoxSize = 500.0f;
             sun.distance = 800.0f;
             sun.zNear = 1.0f;
             sun.zFar = 2000.0f;
             sun.shadowRes = 2048;
             m_pbrPipeline->setDirectionalLight(sun);
+
+            // ACES darkens midtones vs the old exponential tonemap.
+            m_pbrPipeline->setExposure(1.4f);
 
             // Load a natural open-air HDRI; urban rooftops read poorly at missile-sim scale.
             m_pbrPipeline->setSkybox("monoLake", 512);

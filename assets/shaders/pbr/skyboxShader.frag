@@ -8,7 +8,9 @@ uniform samplerCube environmentMap;
 void main(){
     vec3 direction = normalize(TexCoords);
     vec3 envColor = texture(environmentMap, direction).rgb;
-    vec3 hazeColor = vec3(0.52, 0.63, 0.74);
+    // Linear-space haze, kept in sync with the scene fogColor in
+    // PBRPipeline::bindPBRUniforms (sRGB 0.52/0.63/0.74 linearized).
+    vec3 hazeColor = vec3(0.237, 0.362, 0.516);
     float skyAmount = smoothstep(-0.12, 0.32, direction.y);
     float horizonHaze = 1.0 - smoothstep(0.05, 0.55, abs(direction.y));
     envColor = mix(hazeColor, envColor, skyAmount);

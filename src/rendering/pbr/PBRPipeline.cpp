@@ -455,7 +455,9 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     shader.setVec3("cameraPos_wS", m_cameraPos);
     shader.setFloat("zFar", m_farPlane);
     shader.setFloat("zNear", m_nearPlane);
-    shader.setVec3("fogColor", glm::vec3(0.52f, 0.63f, 0.74f));
+    // Fog color in linear space (authored as sRGB 0.52/0.63/0.74; the
+    // tonemap stage now applies the sRGB encode, so inputs must be linear).
+    shader.setVec3("fogColor", glm::vec3(0.237f, 0.362f, 0.516f));
     // Thinner aerial haze: the previous density washed the whole scene flat
     // grey and buried ground colour and shadow contrast.
     shader.setFloat("fogDensity", 1.0f / std::max(m_farPlane * 0.6f, 9000.0f));
@@ -609,6 +611,9 @@ void PBRPipeline::postProcess()
 
     m_screenShader.use();
     m_screenShader.setFloat("exposure", m_exposure);
+    // Interim strength for the single-resolution blur; retuned when the
+    // bloom mip chain lands.
+    m_screenShader.setFloat("bloomStrength", 0.6f);
     m_screenShader.setInt("screenTexture", 0);
     m_screenShader.setInt("bloomBlur", 1);
     m_canvas.draw(m_resolveFBO.colorTexture(), m_pingPongFBO.colorTexture());
