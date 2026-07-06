@@ -465,12 +465,11 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     shader.setVec3("cameraPos_wS", m_cameraPos);
     shader.setFloat("zFar", m_farPlane);
     shader.setFloat("zNear", m_nearPlane);
-    // Fog color in linear space (authored as sRGB 0.52/0.63/0.74; the
-    // tonemap stage now applies the sRGB encode, so inputs must be linear).
-    shader.setVec3("fogColor", glm::vec3(0.237f, 0.362f, 0.516f));
-    // Thinner aerial haze: the previous density washed the whole scene flat
-    // grey and buried ground colour and shadow contrast.
-    shader.setFloat("fogDensity", 1.0f / std::max(m_farPlane * 0.6f, 9000.0f));
+    shader.setVec3("fogColor", m_fogColor);
+    shader.setFloat("fogDensity", m_fogDensity > 0.0f
+                                      ? m_fogDensity
+                                      : 1.0f / std::max(m_farPlane * 0.6f, 9000.0f));
+    shader.setFloat("fogHeightFalloff", m_fogHeightFalloff);
 
     // Directional shadow map (unit 5, after the material texture units)
     constexpr unsigned int shadowUnit = 5;
@@ -558,6 +557,11 @@ void PBRPipeline::renderSkybox()
 {
     glm::mat4 viewNoTranslation = glm::mat4(glm::mat3(m_viewMatrix));
     glm::mat4 VPCubeMap = m_projectionMatrix * viewNoTranslation;
+
+    m_skyboxShader.use();
+    m_skyboxShader.setVec3("sunDirection", glm::normalize(m_dirLight.direction));
+    m_skyboxShader.setVec3("sunColor", m_dirLight.strength * m_dirLight.color);
+
     m_skybox.draw(m_skyboxShader, VPCubeMap);
 }
 

@@ -36,6 +36,7 @@ uniform bool IBL;
 uniform vec3 cameraPos_wS;
 uniform vec3 fogColor;
 uniform float fogDensity;
+uniform float fogHeightFalloff;
 
 #define M_PI 3.1415926535897932384626433832795
 
@@ -70,6 +71,24 @@ layout (std430, binding = 5) buffer lightGridSSBO {
 
 uniform float zFar;
 uniform float zNear;
+
+// Value noise for procedural ground detail
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash12(i);
+    float b = hash12(i + vec2(1.0, 0.0));
+    float c = hash12(i + vec2(0.0, 1.0));
+    float d = hash12(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
 
 // PBR functions
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
@@ -159,6 +178,37 @@ void main() {
 
     vec3 norm = normalize(fs_in.N);
     vec3 viewDir = normalize(cameraPos_wS - fs_in.fragPos_wS);
+    float viewDistance = length(cameraPos_wS - fs_in.fragPos_wS);
+
+    // Procedural terrain detail. Only the ground plane uses vertex colours,
+    // so gate on that to leave missiles/jets untouched: multi-octave albedo
+    // variation plus a distance-faded normal perturbation so the terrain
+    // reads as scrubland at close range and stays calm at distance.
+    if (u_useVertexColor) {
+        vec2 groundUv = fs_in.fragPos_wS.xz;
+        float detailNoise = valueNoise(groundUv * (1.0 / 7.0)) * 0.5 +
+                            valueNoise(groundUv * (1.0 / 29.0)) * 0.3 +
+                            valueNoise(groundUv * (1.0 / 450.0)) * 0.2;
+        albedo *= 0.82 + 0.36 * detailNoise;
+
+        // Macro patchiness: hue drift toward dry grass over hundreds of metres.
+        float macro = valueNoise(groundUv * (1.0 / 450.0) + 17.3);
+        albedo = mix(albedo, albedo * vec3(1.12, 1.05, 0.78), macro * 0.45);
+
+        // Bump from the noise gradient, fading out by ~900 m so the far
+        // field doesn't sparkle under the sun.
+        float detailFade = clamp(1.0 - viewDistance / 900.0, 0.0, 1.0);
+        if (detailFade > 0.001) {
+            const float eps = 0.35;
+            const float freq = 1.0 / 7.0;
+            float h0 = valueNoise(groundUv * freq);
+            float hx = valueNoise((groundUv + vec2(eps, 0.0)) * freq);
+            float hz = valueNoise((groundUv + vec2(0.0, eps)) * freq);
+            vec3 gradient = vec3(hx - h0, 0.0, hz - h0) * (1.4 * detailFade);
+            norm = normalize(norm - gradient);
+        }
+    }
+
     vec3 R = reflect(-viewDir, norm);
 
     vec3 F0 = vec3(0.04);
@@ -177,7 +227,6 @@ void main() {
 
     // Directional light with shadow
     float shadow = calcDirShadow(fs_in.fragPos_wS, norm);
-    float viewDistance = length(cameraPos_wS - fs_in.fragPos_wS);
     {
         vec3 lightDir = normalize(-dirLight.direction);
         vec3 halfway  = normalize(lightDir + viewDir);
@@ -238,8 +287,14 @@ void main() {
     }
     radianceOut += ambient;
 
-    float fogFactor = clamp(exp(-viewDistance * fogDensity), 0.0, 1.0);
-    radianceOut = mix(fogColor, radianceOut, fogFactor);
+    // Height fog with sun forward-scatter: extinction thins with altitude,
+    // and fog looking toward the sun warms up (cheap aerial perspective).
+    float fogHeight = mix(fs_in.fragPos_wS.y, cameraPos_wS.y, 0.5);
+    float sigma = fogDensity * exp(-max(fogHeight, 0.0) * fogHeightFalloff);
+    float fogAmount = 1.0 - clamp(exp(-viewDistance * sigma), 0.0, 1.0);
+    float sunAmount = pow(max(dot(-viewDir, normalize(-dirLight.direction)), 0.0), 8.0);
+    vec3 scatterColor = mix(fogColor, fogColor * vec3(1.35, 1.15, 0.85), sunAmount * 0.6);
+    radianceOut = mix(radianceOut, scatterColor, fogAmount);
 
     FragColor = vec4(radianceOut, 1.0);
 }

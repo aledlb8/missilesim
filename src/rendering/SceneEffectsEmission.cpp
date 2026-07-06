@@ -263,32 +263,40 @@ void SceneEffects::spawnLaunchGroundCloud(const glm::vec3 &position, const glm::
     const glm::vec3 groundAxisB = safeNormalize(glm::cross(upDirection, groundAxisA), glm::vec3(1.0f, 0.0f, 0.0f));
 
     // A big, slow, ground-hugging cloud of ejection gas that rolls outward and
-    // lingers for several seconds: the iconic launch-site signature.
-    const int billowCount = std::clamp(static_cast<int>(std::round(80.0f * clampedIntensity)), 56, 150);
+    // lingers for several seconds: the iconic launch-site signature. Fewer,
+    // more varied billows read better than a dense wall of identical puffs
+    // now that the shader erodes them individually.
+    const int billowCount = std::clamp(static_cast<int>(std::round(52.0f * clampedIntensity)), 36, 90);
     for (int index = 0; index < billowCount; ++index)
     {
         const float azimuth = randomRange(0.0f, 6.28318f);
         const glm::vec3 radialDirection =
             (groundAxisA * std::cos(azimuth)) + (groundAxisB * std::sin(azimuth));
 
+        // Slight warm tint variation so the cloud is not uniformly grey.
+        const float tone = randomRange(0.30f, 0.56f);
+        const glm::vec3 warmDust(tone * 1.12f, tone * 1.02f, tone * 0.88f);
+        const glm::vec3 greyGas(tone);
+
         EffectParticle billow{};
-        billow.position = position + (radialDirection * randomRange(0.2f, 3.2f) * clampedIntensity) +
-                          (upDirection * randomRange(0.0f, 1.2f));
-        billow.velocity = (radialDirection * randomRange(4.0f, 15.0f) * clampedIntensity) +
-                          (upDirection * randomRange(1.5f, 5.5f));
+        billow.position = position + (radialDirection * randomRange(0.2f, 3.6f) * clampedIntensity) +
+                          (upDirection * randomRange(0.0f, 1.6f));
+        billow.velocity = (radialDirection * randomRange(3.0f, 17.0f) * clampedIntensity) +
+                          (upDirection * randomRange(1.0f, 6.5f));
         billow.axis = safeNormalize(billow.velocity, radialDirection);
-        billow.color = glm::vec4(glm::vec3(randomRange(0.32f, 0.52f)), randomRange(0.5f, 0.72f));
-        billow.lifetime = randomRange(4.0f, 8.0f);
-        billow.startSize = randomRange(1.2f, 2.8f) * clampedIntensity;
-        billow.endSize = randomRange(8.0f, 16.0f) * clampedIntensity;
-        billow.stretch = randomRange(1.0f, 1.35f);
+        billow.color = glm::vec4(glm::mix(greyGas, warmDust, randomRange(0.0f, 1.0f)),
+                                 randomRange(0.45f, 0.75f));
+        billow.lifetime = randomRange(3.2f, 8.5f);
+        billow.startSize = randomRange(0.9f, 3.4f) * clampedIntensity;
+        billow.endSize = randomRange(6.0f, 19.0f) * clampedIntensity;
+        billow.stretch = randomRange(0.85f, 1.6f);
         billow.rotation = randomRange(0.0f, 6.28318f);
-        billow.angularVelocity = randomRange(-0.8f, 0.8f);
-        billow.softness = 0.8f;
-        billow.emissive = 0.85f;
+        billow.angularVelocity = randomRange(-1.4f, 1.4f);
+        billow.softness = randomRange(0.65f, 0.95f);
+        billow.emissive = randomRange(0.75f, 0.95f);
         billow.seed = randomRange(0.0f, 1000.0f);
-        billow.drag = randomRange(0.55f, 1.1f);
-        billow.upwardAcceleration = randomRange(0.6f, 2.2f);
+        billow.drag = randomRange(0.45f, 1.25f);
+        billow.upwardAcceleration = randomRange(0.4f, 2.6f);
         billow.material = ParticleMaterial::SMOKE;
         billow.blendMode = BlendMode::ALPHA;
         addParticle(billow);
@@ -352,6 +360,52 @@ void SceneEffects::spawnExplosion(const glm::vec3 &position, const glm::vec3 &ve
     flash.material = ParticleMaterial::GLOW;
     flash.blendMode = BlendMode::ADDITIVE;
     addParticle(flash);
+
+    // Expanding blast ring: the quad stays at full blast radius while the
+    // shader sweeps a thin ring outward across it over the lifetime.
+    EffectParticle shockRing{};
+    shockRing.position = position;
+    shockRing.velocity = velocityHint * 0.05f;
+    shockRing.axis = forwardBias;
+    shockRing.color = glm::vec4(1.0f, 0.9f, 0.75f, 1.0f);
+    shockRing.lifetime = 0.7f;
+    shockRing.startSize = 42.0f * clampedIntensity;
+    shockRing.endSize = 42.0f * clampedIntensity;
+    shockRing.stretch = 1.0f;
+    shockRing.softness = 1.2f;
+    shockRing.emissive = 1.6f;
+    shockRing.seed = randomRange(0.0f, 1000.0f);
+    shockRing.material = ParticleMaterial::SHOCKWAVE;
+    shockRing.blendMode = BlendMode::ADDITIVE;
+    addParticle(shockRing);
+
+    // Glowing debris fragments: upward-biased cone, pulled down by ~2g so
+    // they arc visibly, stretched along their velocity by the update step.
+    const int debrisCount = std::clamp(static_cast<int>(std::round(24.0f * clampedIntensity)), 18, 32);
+    for (int index = 0; index < debrisCount; ++index)
+    {
+        glm::vec3 direction = randomUnitVector();
+        direction.y = std::abs(direction.y) * 0.85f + 0.15f;
+        direction = safeNormalize(direction, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        EffectParticle debris{};
+        debris.position = position + (direction * randomRange(0.3f, 1.5f));
+        debris.velocity = (direction * randomRange(35.0f, 90.0f) * clampedIntensity) + (velocityHint * 0.3f);
+        debris.axis = safeNormalize(debris.velocity, direction);
+        debris.color = glm::vec4(1.0f, randomRange(0.55f, 0.8f), 0.28f, 1.0f);
+        debris.lifetime = randomRange(1.0f, 2.2f);
+        debris.startSize = randomRange(0.35f, 0.7f) * clampedIntensity;
+        debris.endSize = randomRange(0.15f, 0.3f) * clampedIntensity;
+        debris.stretch = randomRange(3.0f, 6.0f);
+        debris.softness = 1.0f;
+        debris.emissive = randomRange(1.4f, 2.2f);
+        debris.seed = randomRange(0.0f, 1000.0f);
+        debris.drag = 0.4f;
+        debris.upwardAcceleration = -19.6f;
+        debris.material = ParticleMaterial::DEBRIS;
+        debris.blendMode = BlendMode::ADDITIVE;
+        addParticle(debris);
+    }
 
     for (int index = 0; index < flameCount; ++index)
     {

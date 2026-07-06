@@ -101,6 +101,89 @@ const char *lineFragmentShaderSource = R"(
     }
 )";
 
+// Anti-aliased instanced line shader: each segment is a screen-space
+// expanded quad (4-vertex strip, one instance per segment). Rendered into
+// the HDR resolve target pre-tonemap with depth testing.
+const char *aaLineVertexShaderSource = R"(
+    #version 430 core
+    layout (location = 0) in vec4 iStart;  // xyz world, w = width in pixels
+    layout (location = 1) in vec4 iEnd;    // xyz world
+    layout (location = 2) in vec4 iColor;
+
+    uniform mat4 viewProj;
+    uniform vec2 viewportSize;
+
+    out vec4 vColor;
+    out float vEdge;        // -1..1 across the ribbon
+    flat out float vWidthPx;
+
+    void main() {
+        vec4 clip0 = viewProj * vec4(iStart.xyz, 1.0);
+        vec4 clip1 = viewProj * vec4(iEnd.xyz, 1.0);
+
+        // Clip against the near plane in homogeneous space; a fully
+        // behind-camera segment is discarded off-screen.
+        const float nearEps = 1e-4;
+        if (clip0.w < nearEps && clip1.w < nearEps) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            vColor = vec4(0.0);
+            vEdge = 0.0;
+            vWidthPx = 1.0;
+            return;
+        }
+        if (clip0.w < nearEps) {
+            float t = (nearEps - clip0.w) / (clip1.w - clip0.w);
+            clip0 = mix(clip0, clip1, t);
+        } else if (clip1.w < nearEps) {
+            float t = (nearEps - clip1.w) / (clip0.w - clip1.w);
+            clip1 = mix(clip1, clip0, t);
+        }
+
+        // gl_VertexID 0..3 -> (start,-1) (start,+1) (end,-1) (end,+1)
+        float endSel = float(gl_VertexID >> 1);
+        float side = float((gl_VertexID & 1) * 2 - 1);
+        vec4 clip = mix(clip0, clip1, endSel);
+
+        // Screen-space perpendicular of the segment.
+        vec2 screen0 = (clip0.xy / clip0.w) * viewportSize;
+        vec2 screen1 = (clip1.xy / clip1.w) * viewportSize;
+        vec2 dir = screen1 - screen0;
+        if (dot(dir, dir) < 1e-8) {
+            dir = vec2(1.0, 0.0);
+        }
+        dir = normalize(dir);
+        vec2 perp = vec2(-dir.y, dir.x);
+
+        float widthPx = max(iStart.w, 1.0);
+        // Half width plus a 1px feather margin, converted back to NDC.
+        vec2 offsetNdc = perp * (0.5 * widthPx + 1.0) * (2.0 / viewportSize);
+        clip.xy += offsetNdc * side * clip.w;
+
+        gl_Position = clip;
+        vColor = iColor;
+        vEdge = side;
+        vWidthPx = widthPx;
+    }
+)";
+
+const char *aaLineFragmentShaderSource = R"(
+    #version 430 core
+    in vec4 vColor;
+    in float vEdge;
+    flat in float vWidthPx;
+
+    out vec4 FragColor;
+
+    void main() {
+        float distPx = abs(vEdge) * (0.5 * vWidthPx + 1.0);
+        float alpha = clamp(0.5 * vWidthPx + 0.5 - distPx, 0.0, 1.0);
+        alpha *= vColor.a;
+        // Mild HDR lift so overlay lines pick up a whisper of bloom.
+        vec3 color = vColor.rgb * 1.5;
+        FragColor = vec4(color * alpha, alpha);  // premultiplied
+    }
+)";
+
 void Renderer::createShaders()
 {
     // Vertex shader
@@ -233,4 +316,86 @@ void Renderer::createLineRendering()
     glBindVertexArray(0);
     m_debugLineVertices.reserve(512);
     m_debugPointVertices.reserve(128);
+
+    createAALineRendering();
+}
+
+void Renderer::createAALineRendering()
+{
+    GLint success;
+    GLchar infoLog[512];
+
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &aaLineVertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+        std::cerr << "ERROR: AA line vertex shader compilation failed\n"
+                  << infoLog << std::endl;
+    }
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &aaLineFragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR: AA line fragment shader compilation failed\n"
+                  << infoLog << std::endl;
+    }
+
+    m_aaLineProgram = glCreateProgram();
+    glAttachShader(m_aaLineProgram, vertexShader);
+    glAttachShader(m_aaLineProgram, fragmentShader);
+    glLinkProgram(m_aaLineProgram);
+    glGetProgramiv(m_aaLineProgram, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+        glGetProgramInfoLog(m_aaLineProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR: AA line program linking failed\n"
+                  << infoLog << std::endl;
+        glDeleteProgram(m_aaLineProgram);
+        m_aaLineProgram = 0;
+    }
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    if (m_aaLineProgram == 0)
+    {
+        return;
+    }
+
+    m_aaLineViewProjLoc = glGetUniformLocation(m_aaLineProgram, "viewProj");
+    m_aaLineViewportLoc = glGetUniformLocation(m_aaLineProgram, "viewportSize");
+
+    glGenVertexArrays(1, &m_aaLineVAO);
+    glGenBuffers(1, &m_aaLineInstanceVBO);
+
+    glBindVertexArray(m_aaLineVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_aaLineInstanceVBO);
+
+    m_aaLineInstanceCapacity = 256;
+    glBufferData(GL_ARRAY_BUFFER, m_aaLineInstanceCapacity * sizeof(LineInstance),
+                 nullptr, GL_DYNAMIC_DRAW);
+
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(LineInstance),
+                          (void *)offsetof(LineInstance, start));
+    glEnableVertexAttribArray(0);
+    glVertexAttribDivisor(0, 1);
+
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(LineInstance),
+                          (void *)offsetof(LineInstance, end));
+    glEnableVertexAttribArray(1);
+    glVertexAttribDivisor(1, 1);
+
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(LineInstance),
+                          (void *)offsetof(LineInstance, color));
+    glEnableVertexAttribArray(2);
+    glVertexAttribDivisor(2, 1);
+
+    glBindVertexArray(0);
 }

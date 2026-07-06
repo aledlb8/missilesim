@@ -121,6 +121,14 @@ private:
         float size;
     };
 
+    // One anti-aliased line segment instance (screen-space expanded quad).
+    struct LineInstance
+    {
+        glm::vec4 start;  // xyz world, w = width in pixels
+        glm::vec4 end;    // xyz world
+        glm::vec4 color;  // rgb + alpha
+    };
+
     // Transient dynamic light emitted by a visual effect (explosion flash,
     // launch plume, engine exhaust); fed into the PBR clustered light system
     // so effects illuminate nearby geometry.
@@ -150,6 +158,7 @@ private:
     void createTargetModel();
     void createExplosionModel();
     void createLineRendering();
+    void createAALineRendering();
     void uploadFloorMesh();
     void renderObject(PhysicsObject *object, const glm::mat4 &modelMatrix);
     void renderFloor();
@@ -166,6 +175,7 @@ private:
     void normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const;
     void ensureDebugBufferCapacity(std::size_t vertexCount);
     void flushDebugPrimitivesInternal();
+    void flushAALinesInternal();
     void addEffectLight(const EffectLight &light);
     void updateEffectLights(float deltaTime);
     void uploadEffectLights();
@@ -189,6 +199,15 @@ private:
     std::size_t m_lineBufferCapacity = 0;
     std::vector<DebugVertex> m_debugLineVertices;
     std::vector<DebugVertex> m_debugPointVertices;
+
+    // Anti-aliased instanced line rendering (PBR path)
+    GLuint m_aaLineVAO = 0;
+    GLuint m_aaLineInstanceVBO = 0;
+    GLuint m_aaLineProgram = 0;
+    GLint m_aaLineViewProjLoc = -1;
+    GLint m_aaLineViewportLoc = -1;
+    std::size_t m_aaLineInstanceCapacity = 0;
+    std::vector<LineInstance> m_lineInstances;
 
     // Floor resources
     GLuint m_floorVAO;

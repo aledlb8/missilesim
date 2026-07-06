@@ -40,6 +40,15 @@ public:
     void setSkybox(const std::string &skyboxName, int resolution = 512);
     void setDirectionalLight(const DirectionalLight &light);
     void setPointLights(const std::vector<PointLight> &lights);
+
+    /// Single source of truth for atmospheric fog. Colour is linear-space;
+    /// density <= 0 falls back to a far-plane-derived default.
+    void setFog(const glm::vec3 &linearColor, float density, float heightFalloff)
+    {
+        m_fogColor = linearColor;
+        m_fogDensity = density;
+        m_fogHeightFalloff = heightFalloff;
+    }
     void setExposure(float exposure) { m_exposure = exposure; }
     void setBloomPasses(int passes) { m_bloomPasses = passes; }
     void setBloomStrength(float strength) { m_bloomStrength = strength; }
@@ -132,6 +141,12 @@ private:
     // chain length at render time).
     int m_bloomPasses = 5;
     float m_bloomStrength = 0.06f;
+
+    // Atmospheric fog (linear-space colour; density <= 0 -> derived default;
+    // falloff is 1/scale-height in metres for the height fog).
+    glm::vec3 m_fogColor{0.237f, 0.362f, 0.516f};
+    float m_fogDensity = 0.0f;
+    float m_fogHeightFalloff = 1.0f / 900.0f;
 
     // Per-frame camera state
     glm::mat4 m_viewMatrix{1.0f};

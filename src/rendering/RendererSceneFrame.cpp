@@ -100,11 +100,14 @@ void Renderer::presentSceneFrame()
 {
     if (isPBRActive())
     {
+        // Draw trajectory/debug lines into the HDR resolve target first,
+        // depth-tested against the scene, so they are anti-aliased and go
+        // through the same tonemap/bloom as everything else.
+        m_pbrPipeline->bindResolvedFBO();
+        flushDebugPrimitivesInternal();
+
         // Bloom + tone mapping → default framebuffer
         m_pbrPipeline->postProcess();
-
-        // Draw debug primitives on top of tonemapped result
-        flushDebugPrimitivesInternal();
 
         if (m_sceneEffects)
         {

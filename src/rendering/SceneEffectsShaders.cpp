@@ -180,31 +180,70 @@ namespace
 
             if (material < 0.5)
             {
+                // FLAME: flickering teardrop with noise-erosion breakup.
                 float flicker = noise(vec2(uv.x * 4.6 + seed * 3.2, uv.y * 2.8 - ageNorm * 2.4));
                 float body = exp(-4.0 * abs(uv.x));
                 float tail = smoothstep(1.15, -0.30, uv.y);
                 float core = exp(-18.0 * uv.x * uv.x) * smoothstep(0.8, -0.1, uv.y);
                 alpha = body * tail * mix(0.84, 1.02, flicker) * pow(1.0 - ageNorm, 1.55);
+
+                float erosionNoise = noise(uv * 3.4 + seed * 5.1 + ageNorm * 1.6) * 0.65 +
+                                     noise(uv * 7.3 + seed * 2.9) * 0.35;
+                float erode = ageNorm * 0.9;
+                alpha *= smoothstep(erode, erode + 0.35, erosionNoise + 0.42);
+
                 color = mix(vColor.rgb * 0.55, vec3(1.0, 0.96, 0.88), core * 0.75) * (0.9 + core * 0.45);
             }
             else if (material < 1.5)
             {
+                // SMOKE: radial puff dissolving through turbulent erosion so
+                // ageing clouds break apart instead of fading uniformly.
                 float puff = smoothstep(1.12, 0.1, radial * mix(0.96, 1.06, noise((uv * 2.2) + seed * 2.7)));
                 alpha = puff * pow(1.0 - ageNorm, 1.15) * (1.0 - ageNorm * 0.35);
+
+                float erosionNoise = noise(uv * 3.1 + seed * 7.7 + ageNorm * 0.8) * 0.6 +
+                                     noise(uv * 6.7 + seed * 3.3) * 0.4;
+                float erode = ageNorm * 1.1;
+                alpha *= smoothstep(erode, erode + 0.3, erosionNoise + 0.35);
+
                 color = mix(vColor.rgb * 0.72, vec3(0.92), 0.14);
             }
             else if (material < 2.5)
             {
+                // SPARK: short-lived hot streak.
                 float streak = exp(-20.0 * uv.x * uv.x) * exp(-2.8 * max(uv.y + 0.12, 0.0));
                 float tip = smoothstep(1.08, 0.0, uv.y);
                 alpha = streak * tip * pow(1.0 - ageNorm, 2.0);
                 color = mix(vColor.rgb, vec3(1.0, 0.98, 0.82), 0.35);
             }
-            else
+            else if (material < 3.5)
             {
+                // GLOW: smooth radial flash.
                 float glow = smoothstep(1.06, 0.0, radial);
                 alpha = glow * pow(1.0 - ageNorm, 1.8);
                 color = mix(vColor.rgb, vec3(1.0, 0.98, 0.88), 0.25);
+            }
+            else if (material < 4.5)
+            {
+                // SHOCKWAVE: thin expanding blast ring; radius sweeps outward
+                // with sqrt(age) (fast then decelerating, like a real front).
+                float ringRadius = 0.12 + 0.82 * sqrt(ageNorm);
+                float ringDist = abs(radial - ringRadius);
+                float fade = (1.0 - ageNorm) * (1.0 - ageNorm);
+                alpha = exp(-ringDist * 22.0) * fade;
+                alpha *= smoothstep(1.05, 0.95, radial);
+                color = mix(vColor.rgb, vec3(1.0, 0.92, 0.8), 0.5);
+            }
+            else
+            {
+                // DEBRIS: gravity-arcing fragment - glowing head, fading tail.
+                float streak = exp(-16.0 * uv.x * uv.x);
+                float tail = smoothstep(1.15, -0.6, uv.y);
+                float headDist = (uv.y - 0.55) * (uv.y - 0.55) + uv.x * uv.x * 4.0;
+                float head = exp(-9.0 * headDist);
+                alpha = streak * tail * 0.55 * pow(1.0 - ageNorm, 1.5) +
+                        head * pow(1.0 - ageNorm, 1.1);
+                color = mix(vColor.rgb, vec3(1.0, 0.88, 0.62), head * 0.8);
             }
 
             alpha = clamp(alpha * softness, 0.0, 1.0);

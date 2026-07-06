@@ -68,7 +68,9 @@ private:
         FLAME = 0,
         SMOKE = 1,
         SPARK = 2,
-        GLOW = 3
+        GLOW = 3,
+        SHOCKWAVE = 4,  // expanding blast ring (radius driven by age)
+        DEBRIS = 5      // hot fragment streak with glowing head
     };
 
     enum class BlendMode

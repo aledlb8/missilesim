@@ -68,6 +68,10 @@ Renderer::~Renderer()
     glDeleteBuffers(1, &m_lineVBO);
     glDeleteProgram(m_lineShaderProgram);
 
+    glDeleteVertexArrays(1, &m_aaLineVAO);
+    glDeleteBuffers(1, &m_aaLineInstanceVBO);
+    glDeleteProgram(m_aaLineProgram);
+
     glDeleteProgram(m_shaderProgram);
 }
 

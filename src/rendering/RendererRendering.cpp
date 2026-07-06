@@ -139,9 +139,11 @@ namespace
 
 namespace
 {
+    // Legacy (non-PBR) path only; matches the PBR pipeline's default so the
+    // two paths share one fog formula.
     float computeFogDensity(float sceneFarPlane)
     {
-        return 1.0f / std::max(sceneFarPlane * 0.45f, 6000.0f);
+        return 1.0f / std::max(sceneFarPlane * 0.6f, 9000.0f);
     }
 
     glm::mat4 buildTargetOrientationMatrix(const glm::vec3 &velocity, const glm::vec3 &acceleration)

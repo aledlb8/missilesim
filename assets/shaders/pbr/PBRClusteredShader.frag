@@ -43,6 +43,7 @@ uniform sampler2D brdfLUT;
 uniform vec3 cameraPos_wS;
 uniform vec3 fogColor;
 uniform float fogDensity;
+uniform float fogHeightFalloff;
 
 #define M_PI 3.1415926535897932384626433832795
 
@@ -196,8 +197,13 @@ void main(){
     //Adding any emissive if there is an assigned map
     radianceOut += emissive;
 
-    float fogFactor = clamp(exp(-viewDistance * fogDensity), 0.0, 1.0);
-    radianceOut = mix(fogColor, radianceOut, fogFactor);
+    // Height fog with sun forward-scatter, kept in sync with PBRSimpleShader.
+    float fogHeight = mix(fs_in.fragPos_wS.y, cameraPos_wS.y, 0.5);
+    float sigma = fogDensity * exp(-max(fogHeight, 0.0) * fogHeightFalloff);
+    float fogAmount = 1.0 - clamp(exp(-viewDistance * sigma), 0.0, 1.0);
+    float sunAmount = pow(max(dot(-viewDir, normalize(-dirLight.direction)), 0.0), 8.0);
+    vec3 scatterColor = mix(fogColor, fogColor * vec3(1.35, 1.15, 0.85), sunAmount * 0.6);
+    radianceOut = mix(radianceOut, scatterColor, fogAmount);
 
     if(slices){
         FragColor = vec4(colors[int(zTile % 8u)], 1.0);
