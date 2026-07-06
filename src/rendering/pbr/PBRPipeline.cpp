@@ -345,6 +345,19 @@ void PBRPipeline::executeRenderPass()
 
 void PBRPipeline::shadowPass()
 {
+    // Shadows disabled: keep the map cleared to "no occluder" so the
+    // shading shaders sample fully lit everywhere. The identity matrix keeps
+    // light-space projection finite (a zero matrix would produce NaNs).
+    if (!m_shadowsEnabled)
+    {
+        m_dirLight.lightSpaceMatrix = glm::mat4(1.0f);
+        m_dirShadowFBO.bind();
+        glViewport(0, 0, static_cast<GLsizei>(m_dirLight.shadowRes),
+                   static_cast<GLsizei>(m_dirLight.shadowRes));
+        glClear(GL_DEPTH_BUFFER_BIT);
+        return;
+    }
+
     // Directional light shadow
     {
         float boxSize = m_dirLight.orthoBoxSize;
@@ -466,9 +479,10 @@ void PBRPipeline::bindPBRUniforms(Shader &shader)
     shader.setFloat("zFar", m_farPlane);
     shader.setFloat("zNear", m_nearPlane);
     shader.setVec3("fogColor", m_fogColor);
-    shader.setFloat("fogDensity", m_fogDensity > 0.0f
-                                      ? m_fogDensity
-                                      : 1.0f / std::max(m_farPlane * 0.6f, 9000.0f));
+    const float baseFogDensity = m_fogDensity > 0.0f
+                                     ? m_fogDensity
+                                     : 1.0f / std::max(m_farPlane * 0.6f, 9000.0f);
+    shader.setFloat("fogDensity", baseFogDensity * m_fogDensityScale);
     shader.setFloat("fogHeightFalloff", m_fogHeightFalloff);
 
     // Directional shadow map (unit 5, after the material texture units)

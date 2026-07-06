@@ -420,7 +420,10 @@ void Renderer::renderFloor()
 void Renderer::renderEnvironment()
 {
     renderFloor();
-    renderWorldGuides();
+    if (m_worldGuidesEnabled)
+    {
+        renderWorldGuides();
+    }
 }
 
 void Renderer::renderWorldGuides()

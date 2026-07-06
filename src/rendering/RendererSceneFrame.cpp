@@ -176,6 +176,12 @@ void Renderer::uploadEffectLights()
 {
     m_effectLightScratch.clear();
 
+    if (!m_effectLightsEnabled)
+    {
+        m_pbrPipeline->setPointLights(m_effectLightScratch);
+        return;
+    }
+
     for (const EffectLight &light : m_effectLights)
     {
         float envelope = 1.0f;

@@ -98,6 +98,18 @@ public:
     float getPBRExposure() const;
     void setPBRBloomPasses(int passes);
     int getPBRBloomPasses() const;
+    void setPBRBloomStrength(float strength);
+    float getPBRBloomStrength() const;
+    void setPBRShadowsEnabled(bool enabled);
+    bool getPBRShadowsEnabled() const;
+    void setPBRFogDensityScale(float scale);
+    float getPBRFogDensityScale() const;
+    void setEffectLightsEnabled(bool enabled);
+    bool getEffectLightsEnabled() const;
+    void setWorldGuidesEnabled(bool enabled) { m_worldGuidesEnabled = enabled; }
+    bool getWorldGuidesEnabled() const { return m_worldGuidesEnabled; }
+    void setSunOrientation(float azimuthDeg, float elevationDeg, float intensity);
+    void getSunOrientation(float &azimuthDeg, float &elevationDeg, float &intensity) const;
 
     // Getters for camera properties
     const glm::vec3 &getCameraPosition() const { return m_cameraPosition; }
@@ -259,6 +271,10 @@ private:
     // Dynamic effect lights (aged in updateEffects, uploaded each frame)
     std::vector<EffectLight> m_effectLights;
     std::vector<pbr::PointLight> m_effectLightScratch;
+    bool m_effectLightsEnabled = true;
+
+    // Airspace boundary box, range rings, beacons and altitude ticks
+    bool m_worldGuidesEnabled = false;
 
     // Mesh data
     std::vector<Vertex> m_vertices;

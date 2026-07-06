@@ -150,6 +150,37 @@ bool Application::loadSettings()
     m_savedCameraFOV = std::clamp(readFloat("camera_fov", m_savedCameraFOV), 10.0f, 120.0f);
     m_savedCameraSpeed = std::max(readFloat("camera_speed", m_savedCameraSpeed), 0.1f);
 
+    if (m_renderer)
+    {
+        m_renderer->setWorldGuidesEnabled(
+            readBool("world_guides_enabled", m_renderer->getWorldGuidesEnabled()));
+    }
+
+    // Graphics settings: apply straight to the live renderer (created before
+    // loadSettings runs), using its current values as fallbacks.
+    if (m_renderer && m_renderer->hasPBR())
+    {
+        m_renderer->setPBRExposure(
+            std::clamp(readFloat("pbr_exposure", m_renderer->getPBRExposure()), 0.1f, 5.0f));
+        m_renderer->setPBRBloomPasses(
+            std::clamp(readInt("pbr_bloom_passes", m_renderer->getPBRBloomPasses()), 0, 10));
+        m_renderer->setPBRBloomStrength(
+            std::clamp(readFloat("pbr_bloom_strength", m_renderer->getPBRBloomStrength()), 0.0f, 0.3f));
+        m_renderer->setPBRFogDensityScale(
+            std::clamp(readFloat("fog_density_scale", m_renderer->getPBRFogDensityScale()), 0.0f, 3.0f));
+        m_renderer->setPBRShadowsEnabled(readBool("shadows_enabled", m_renderer->getPBRShadowsEnabled()));
+        m_renderer->setEffectLightsEnabled(readBool("effect_lights_enabled", m_renderer->getEffectLightsEnabled()));
+
+        float sunAzimuth = 0.0f;
+        float sunElevation = 0.0f;
+        float sunIntensity = 0.0f;
+        m_renderer->getSunOrientation(sunAzimuth, sunElevation, sunIntensity);
+        m_renderer->setSunOrientation(
+            std::clamp(readFloat("sun_azimuth_deg", sunAzimuth), -180.0f, 180.0f),
+            std::clamp(readFloat("sun_elevation_deg", sunElevation), 5.0f, 89.0f),
+            std::clamp(readFloat("sun_intensity", sunIntensity), 0.5f, 8.0f));
+    }
+
     if (m_physicsEngine)
     {
         m_physicsEngine->setGroundEnabled(m_groundEnabled);
@@ -214,6 +245,26 @@ std::string Application::buildSettingsSnapshot() const
     output << "target_max_speed=" << m_targetAIConfig.maxSpeed << "\n";
     output << "camera_fov=" << cameraFOV << "\n";
     output << "camera_speed=" << cameraSpeed << "\n";
+    output << "world_guides_enabled="
+           << formatBoolValue(m_renderer ? m_renderer->getWorldGuidesEnabled() : false) << "\n";
+
+    if (m_renderer && m_renderer->hasPBR())
+    {
+        float sunAzimuth = 0.0f;
+        float sunElevation = 0.0f;
+        float sunIntensity = 0.0f;
+        m_renderer->getSunOrientation(sunAzimuth, sunElevation, sunIntensity);
+
+        output << "pbr_exposure=" << m_renderer->getPBRExposure() << "\n";
+        output << "pbr_bloom_passes=" << m_renderer->getPBRBloomPasses() << "\n";
+        output << "pbr_bloom_strength=" << m_renderer->getPBRBloomStrength() << "\n";
+        output << "sun_azimuth_deg=" << sunAzimuth << "\n";
+        output << "sun_elevation_deg=" << sunElevation << "\n";
+        output << "sun_intensity=" << sunIntensity << "\n";
+        output << "fog_density_scale=" << m_renderer->getPBRFogDensityScale() << "\n";
+        output << "shadows_enabled=" << formatBoolValue(m_renderer->getPBRShadowsEnabled()) << "\n";
+        output << "effect_lights_enabled=" << formatBoolValue(m_renderer->getEffectLightsEnabled()) << "\n";
+    }
 
     return output.str();
 }

@@ -320,3 +320,85 @@ int Renderer::getPBRBloomPasses() const
 {
     return isPBRActive() ? m_pbrPipeline->getBloomPasses() : 0;
 }
+
+void Renderer::setPBRBloomStrength(float strength)
+{
+    if (isPBRActive())
+        m_pbrPipeline->setBloomStrength(strength);
+}
+
+float Renderer::getPBRBloomStrength() const
+{
+    return isPBRActive() ? m_pbrPipeline->getBloomStrength() : 0.0f;
+}
+
+void Renderer::setPBRShadowsEnabled(bool enabled)
+{
+    if (isPBRActive())
+        m_pbrPipeline->setShadowsEnabled(enabled);
+}
+
+bool Renderer::getPBRShadowsEnabled() const
+{
+    return isPBRActive() ? m_pbrPipeline->getShadowsEnabled() : true;
+}
+
+void Renderer::setPBRFogDensityScale(float scale)
+{
+    if (isPBRActive())
+        m_pbrPipeline->setFogDensityScale(scale);
+}
+
+float Renderer::getPBRFogDensityScale() const
+{
+    return isPBRActive() ? m_pbrPipeline->getFogDensityScale() : 1.0f;
+}
+
+void Renderer::setEffectLightsEnabled(bool enabled)
+{
+    m_effectLightsEnabled = enabled;
+}
+
+bool Renderer::getEffectLightsEnabled() const
+{
+    return m_effectLightsEnabled;
+}
+
+void Renderer::setSunOrientation(float azimuthDeg, float elevationDeg, float intensity)
+{
+    if (!isPBRActive())
+        return;
+
+    // Direction the light travels (sun -> scene). Azimuth measured on the
+    // ground plane from +X toward +Z; elevation above the horizon.
+    const float azimuth = glm::radians(azimuthDeg);
+    const float elevation = glm::radians(glm::clamp(elevationDeg, 2.0f, 89.0f));
+    const glm::vec3 direction(
+        -std::cos(elevation) * std::cos(azimuth),
+        -std::sin(elevation),
+        -std::cos(elevation) * std::sin(azimuth));
+
+    // Mutate the live light: direction/strength feed the shadow matrix,
+    // skybox disc and fog scatter every frame. The IBL environment stays
+    // baked from the HDRI, which is acceptable for direct-light tuning.
+    pbr::DirectionalLight &sun = m_pbrPipeline->directionalLight();
+    sun.direction = glm::normalize(direction);
+    sun.strength = std::max(intensity, 0.0f);
+}
+
+void Renderer::getSunOrientation(float &azimuthDeg, float &elevationDeg, float &intensity) const
+{
+    if (!isPBRActive())
+    {
+        azimuthDeg = -30.3f;
+        elevationDeg = 33.5f;
+        intensity = 3.5f;
+        return;
+    }
+
+    const pbr::DirectionalLight &sun = m_pbrPipeline->directionalLight();
+    const glm::vec3 toward = -glm::normalize(sun.direction);  // scene -> sun
+    elevationDeg = glm::degrees(std::asin(glm::clamp(toward.y, -1.0f, 1.0f)));
+    azimuthDeg = glm::degrees(std::atan2(toward.z, toward.x));
+    intensity = sun.strength;
+}

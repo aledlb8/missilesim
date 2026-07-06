@@ -52,9 +52,13 @@ public:
     void setExposure(float exposure) { m_exposure = exposure; }
     void setBloomPasses(int passes) { m_bloomPasses = passes; }
     void setBloomStrength(float strength) { m_bloomStrength = strength; }
+    void setShadowsEnabled(bool enabled) { m_shadowsEnabled = enabled; }
+    void setFogDensityScale(float scale) { m_fogDensityScale = scale < 0.0f ? 0.0f : scale; }
     float getExposure() const { return m_exposure; }
     int getBloomPasses() const { return m_bloomPasses; }
     float getBloomStrength() const { return m_bloomStrength; }
+    bool getShadowsEnabled() const { return m_shadowsEnabled; }
+    float getFogDensityScale() const { return m_fogDensityScale; }
     DirectionalLight &directionalLight() { return m_dirLight; }
     const DirectionalLight &directionalLight() const { return m_dirLight; }
 
@@ -147,6 +151,8 @@ private:
     glm::vec3 m_fogColor{0.237f, 0.362f, 0.516f};
     float m_fogDensity = 0.0f;
     float m_fogHeightFalloff = 1.0f / 900.0f;
+    float m_fogDensityScale = 1.0f;
+    bool m_shadowsEnabled = true;
 
     // Per-frame camera state
     glm::mat4 m_viewMatrix{1.0f};

@@ -607,21 +607,86 @@ void Application::setupUI()
         }
         ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
         ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
+        bool worldGuides = m_renderer->getWorldGuidesEnabled();
+        if (ImGui::Checkbox("Show airspace guides", &worldGuides))
+        {
+            m_renderer->setWorldGuidesEnabled(worldGuides);
+            scheduleSettingsSave();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Range rings, airspace boundary box and\ncorner beacons.");
+        }
         ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 600);
         ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
 
         if (m_renderer->hasPBR())
         {
             ImGui::Separator();
+            ImGui::TextUnformatted("Graphics");
+
             float exposure = m_renderer->getPBRExposure();
             if (ImGui::SliderFloat("Exposure", &exposure, 0.1f, 5.0f, "%.2f"))
             {
                 m_renderer->setPBRExposure(exposure);
+                scheduleSettingsSave();
             }
+
+            float bloomStrength = m_renderer->getPBRBloomStrength();
+            if (ImGui::SliderFloat("Bloom strength", &bloomStrength, 0.0f, 0.2f, "%.3f"))
+            {
+                m_renderer->setPBRBloomStrength(bloomStrength);
+                scheduleSettingsSave();
+            }
+
             int bloomPasses = m_renderer->getPBRBloomPasses();
-            if (ImGui::SliderInt("Bloom passes", &bloomPasses, 0, 10))
+            if (ImGui::SliderInt("Bloom reach", &bloomPasses, 0, 10))
             {
                 m_renderer->setPBRBloomPasses(bloomPasses);
+                scheduleSettingsSave();
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Number of bloom mip levels (0 disables bloom;\nhigher reaches wider).");
+            }
+
+            float sunAzimuth = 0.0f;
+            float sunElevation = 0.0f;
+            float sunIntensity = 0.0f;
+            m_renderer->getSunOrientation(sunAzimuth, sunElevation, sunIntensity);
+            bool sunChanged = false;
+            sunChanged |= ImGui::SliderFloat("Sun azimuth", &sunAzimuth, -180.0f, 180.0f, "%.0f deg");
+            sunChanged |= ImGui::SliderFloat("Sun elevation", &sunElevation, 5.0f, 89.0f, "%.0f deg");
+            sunChanged |= ImGui::SliderFloat("Sun intensity", &sunIntensity, 0.5f, 8.0f, "%.2f");
+            if (sunChanged)
+            {
+                m_renderer->setSunOrientation(sunAzimuth, sunElevation, sunIntensity);
+                scheduleSettingsSave();
+            }
+
+            float fogScale = m_renderer->getPBRFogDensityScale();
+            if (ImGui::SliderFloat("Fog density", &fogScale, 0.0f, 3.0f, "%.2f"))
+            {
+                m_renderer->setPBRFogDensityScale(fogScale);
+                scheduleSettingsSave();
+            }
+
+            bool shadowsEnabled = m_renderer->getPBRShadowsEnabled();
+            if (ImGui::Checkbox("Shadows", &shadowsEnabled))
+            {
+                m_renderer->setPBRShadowsEnabled(shadowsEnabled);
+                scheduleSettingsSave();
+            }
+            ImGui::SameLine();
+            bool effectLights = m_renderer->getEffectLightsEnabled();
+            if (ImGui::Checkbox("Effect lights", &effectLights))
+            {
+                m_renderer->setEffectLightsEnabled(effectLights);
+                scheduleSettingsSave();
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Explosions, launches and engine plumes cast\nreal light on the scene.");
             }
         }
     }
