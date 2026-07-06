@@ -5,7 +5,6 @@ int main()
 {
     try
     {
-        // Create and run the application
         Application app(1280, 720, "Missile Physics Simulator");
         app.run();
     }
