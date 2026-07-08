@@ -46,6 +46,11 @@ public:
                             const glm::vec3 &forward,
                             const glm::vec3 &carrierVelocity,
                             float intensity);
+    void emitJetWake(const glm::vec3 &start,
+                     const glm::vec3 &end,
+                     const glm::vec3 &forward,
+                     const glm::vec3 &carrierVelocity,
+                     float intensity);
     void emitFlareEffect(const glm::vec3 &start,
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,

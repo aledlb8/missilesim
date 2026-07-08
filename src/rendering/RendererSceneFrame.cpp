@@ -276,8 +276,8 @@ void Renderer::emitMissileExhaust(const glm::vec3 &start,
     EffectLight light;
     light.position = start;
     light.color = glm::vec3(1.0f, 0.55f, 0.22f);
-    light.intensity = 120.0f * intensity;
-    light.radius = 25.0f;
+    light.intensity = 190.0f * intensity;
+    light.radius = 34.0f;
     light.seed = start.x + start.z;
     addEffectLight(light);
 }
@@ -295,11 +295,23 @@ void Renderer::emitJetAfterburner(const glm::vec3 &start,
 
     EffectLight light;
     light.position = start;
-    light.color = glm::vec3(0.45f, 0.65f, 1.0f);
-    light.intensity = 90.0f * intensity;
-    light.radius = 20.0f;
+    light.color = glm::vec3(0.38f, 0.58f, 1.0f);
+    light.intensity = 150.0f * intensity;
+    light.radius = 28.0f;
     light.seed = start.x + start.y;
     addEffectLight(light);
+}
+
+void Renderer::emitJetWake(const glm::vec3 &start,
+                           const glm::vec3 &end,
+                           const glm::vec3 &forward,
+                           const glm::vec3 &carrierVelocity,
+                           float intensity)
+{
+    if (m_sceneEffects)
+    {
+        m_sceneEffects->emitJetWake(start, end, forward, carrierVelocity, intensity);
+    }
 }
 
 void Renderer::emitFlareEffect(const glm::vec3 &start,

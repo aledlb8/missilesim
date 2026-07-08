@@ -266,6 +266,28 @@ void Application::emitFrameVisualEffects(float deltaTime)
                                        forward,
                                        target->getVelocity(),
                                        afterburnerIntensity);
+
+        const float turnLoad = glm::length(target->getRenderAcceleration()) / 9.81f;
+        const float maneuverVapor = glm::clamp((turnLoad - 1.2f) / 4.0f, 0.0f, 1.0f);
+        const float wakeIntensity = glm::clamp((speedFraction * 0.28f) +
+                                                   (maneuverVapor * 0.52f) +
+                                                   (target->isMissileWarningActive() ? 0.16f : 0.0f),
+                                               0.0f,
+                                               0.85f);
+        if (wakeIntensity > 0.04f)
+        {
+            const glm::vec3 wingOffset = (right * radius * 0.95f) + (up * radius * 0.03f) - (forward * radius * 0.08f);
+            m_renderer->emitJetWake(target->getPreviousPosition() - wingOffset,
+                                    target->getPosition() - wingOffset,
+                                    forward,
+                                    target->getVelocity(),
+                                    wakeIntensity);
+            m_renderer->emitJetWake(target->getPreviousPosition() + wingOffset,
+                                    target->getPosition() + wingOffset,
+                                    forward,
+                                    target->getVelocity(),
+                                    wakeIntensity);
+        }
     }
 
     for (const auto &flare : m_flares)

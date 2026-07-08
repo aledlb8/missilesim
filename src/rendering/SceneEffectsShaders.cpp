@@ -234,7 +234,7 @@ namespace
                 alpha *= smoothstep(1.05, 0.95, radial);
                 color = mix(vColor.rgb, vec3(1.0, 0.92, 0.8), 0.5);
             }
-            else
+            else if (material < 5.5)
             {
                 // DEBRIS: gravity-arcing fragment - glowing head, fading tail.
                 float streak = exp(-16.0 * uv.x * uv.x);
@@ -244,6 +244,18 @@ namespace
                 alpha = streak * tail * 0.55 * pow(1.0 - ageNorm, 1.5) +
                         head * pow(1.0 - ageNorm, 1.1);
                 color = mix(vColor.rgb, vec3(1.0, 0.88, 0.62), head * 0.8);
+            }
+            else
+            {
+                // SHOCK_DIAMOND: compact supersonic plume pulse. The diamond
+                // mask gives afterburners a standing-wave pattern without a mesh.
+                float diamond = abs(uv.x) * 1.42 + abs(uv.y) * 0.78;
+                float body = smoothstep(1.05, 0.18, diamond);
+                float waist = exp(-14.0 * uv.x * uv.x) * smoothstep(1.0, -0.15, abs(uv.y));
+                float core = exp(-8.0 * (uv.x * uv.x + uv.y * uv.y * 0.55));
+                float shimmer = 0.82 + 0.18 * noise(uv * 6.0 + vec2(seed * 2.3, ageNorm * 5.0));
+                alpha = (body * 0.74 + waist * 0.32 + core * 0.45) * shimmer * pow(1.0 - ageNorm, 1.25);
+                color = mix(vColor.rgb, vec3(1.0, 0.97, 0.86), core * 0.65);
             }
 
             alpha = clamp(alpha * softness, 0.0, 1.0);

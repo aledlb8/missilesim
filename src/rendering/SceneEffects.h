@@ -47,6 +47,11 @@ public:
                             const glm::vec3 &forward,
                             const glm::vec3 &carrierVelocity,
                             float intensity);
+    void emitJetWake(const glm::vec3 &start,
+                     const glm::vec3 &end,
+                     const glm::vec3 &forward,
+                     const glm::vec3 &carrierVelocity,
+                     float intensity);
     void emitFlareEffect(const glm::vec3 &start,
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,
@@ -69,8 +74,9 @@ private:
         SMOKE = 1,
         SPARK = 2,
         GLOW = 3,
-        SHOCKWAVE = 4,  // expanding blast ring (radius driven by age)
-        DEBRIS = 5      // hot fragment streak with glowing head
+        SHOCKWAVE = 4,      // expanding blast ring (radius driven by age)
+        DEBRIS = 5,         // hot fragment streak with glowing head
+        SHOCK_DIAMOND = 6   // compact Mach-diamond pulse in engine exhaust
     };
 
     enum class BlendMode
