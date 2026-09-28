@@ -178,6 +178,10 @@ void Application::launchMissile()
             const glm::vec3 padPosition(launchPosition.x, groundLevel + 0.2f, launchPosition.z);
             m_renderer->spawnLaunchGroundCloudEffect(padPosition, glm::vec3(0.0f, 1.0f, 0.0f), 1.4f);
         }
+        if (m_audioSystem && groundLaunchProfile)
+        {
+            m_audioSystem->playLaunch(launchPosition);
+        }
 
         // Log launch
         std::cout << "Cold-launch sequence initialized: eject " << ejectSpeed
@@ -306,10 +310,8 @@ void Application::updateMissileLaunchSequence(float deltaTime)
                                                          m_missile->getVelocity(),
                                                          1.35f);
                 }
-                if (m_audioSystem)
-                {
-                    m_audioSystem->playLaunch(m_missile->getPosition(), m_missile->getVelocity());
-                }
+                // The motor voice produces the ignition crack itself when it
+                // sees thrust come up.
             }
         }
     }

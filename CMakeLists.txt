@@ -72,10 +72,17 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PUBLIC glfw3)
 
+# Physical audio engine + synthesis voices (always optimised, see its CMakeLists).
+add_subdirectory(src/audio)
+
+# Offline renderer: plays scripted scenarios through the audio engine into WAVs.
+add_subdirectory(tools/audition)
+
 # Project source files
-file(GLOB_RECURSE SOURCES
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "src/*.cpp"
 )
+list(FILTER SOURCES EXCLUDE REGEX "/src/audio/(engine|synth)/")
 
 # Include directories for our project
 set(INCLUDES
@@ -94,7 +101,7 @@ set(INCLUDES
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Link libraries
-target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui miniaudio assimp::assimp nlohmann_json::nlohmann_json)
+target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui missilesim_audio assimp::assimp nlohmann_json::nlohmann_json)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     MISSILESIM_SOURCE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -110,28 +117,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/audio
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/missile.obj
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/missile.obj
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/jet.obj
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/jet.obj
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/explosion.wav
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/audio/explosion.wav
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/fire_launch.wav
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/audio/fire_launch.wav
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/jet_afterburner_loop.wav
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/audio/jet_afterburner_loop.wav
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/missile_afterburner_loop.wav
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/audio/missile_afterburner_loop.wav
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/missile_flight_loop.wav
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/audio/missile_flight_loop.wav
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/assets.md
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/assets.md

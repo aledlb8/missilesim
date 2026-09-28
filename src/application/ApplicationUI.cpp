@@ -387,6 +387,7 @@ void Application::setupUI()
 
         ImGui::Separator();
         ImGui::SliderFloat("Simulation speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
+        ImGui::SliderFloat("Audio volume", &m_audioVolume, 0.0f, 1.0f, "%.2f");
 
         float gravity = m_physicsEngine->getGravity();
         if (ImGui::SliderFloat("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s^2"))

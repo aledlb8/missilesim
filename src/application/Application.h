@@ -264,6 +264,7 @@ private:
     float m_timeStep = 0.01f; // Physics time step in seconds
     float m_simulationSpeed = 1.0f;
     bool m_isPaused = false;
+    float m_audioVolume = 1.0f; // master output gain, 0..1
 
     // Ground properties
     bool m_groundEnabled = true;

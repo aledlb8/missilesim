@@ -343,11 +343,9 @@ void Application::createFlare(const FlareLaunchRequest &request)
             return;
         }
 
+        // The flare's ejection pop and burn start with its voice, which
+        // AudioSystem::syncFlares creates on the next frame.
         m_physicsEngine->addFlare(flare.get());
-        if (m_audioSystem)
-        {
-            m_audioSystem->playFlareLaunch(request.position, request.velocity, request.heatSignature);
-        }
         m_flares.push_back(std::move(flare));
     }
     catch (const std::exception &e)

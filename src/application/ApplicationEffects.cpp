@@ -84,7 +84,7 @@ void Application::createExplosion(const glm::vec3 &position)
 
     if (m_audioSystem)
     {
-        m_audioSystem->playExplosion(position, velocityHint, 1.0f);
+        m_audioSystem->playExplosion(position);
     }
 }
 
@@ -188,19 +188,30 @@ void Application::updateAudioFrame(float deltaTime)
         mawsUrgency = computeMawsUrgency(*cockpitTarget);
     }
 
+    AudioWorldState world;
+    world.paused = m_isPaused;
+    world.timeScale = m_simulationSpeed;
+    world.seaLevelAirDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : world.seaLevelAirDensity;
+    world.groundPresent = m_groundEnabled;
+    world.groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
+    world.masterVolume = m_audioVolume;
+
+    CockpitCueState cues;
+    cues.seekerPowered = seekerPowered;
+    cues.seekerLocked = seekerLocked;
+    cues.seekerSignal = seekerSignalStrength;
+    cues.missileWarning = mawsThreatActive;
+    cues.missileWarningUrgency = mawsUrgency;
+
+    m_audioSystem->beginFrame(world, dt);
     m_audioSystem->setListener(m_renderer->getCameraPosition(),
                                m_renderer->getCameraFront(),
-                               m_renderer->getCameraUp(),
-                               dt);
-    m_audioSystem->syncMissile(m_missile.get(), m_missileInFlight, m_missileFuel);
+                               m_renderer->getCameraUp());
+    m_audioSystem->syncMissile(m_missile.get(), m_missileInFlight);
     m_audioSystem->syncTargets(activeTargets);
     m_audioSystem->syncFlares(activeFlares);
-    m_audioSystem->syncCockpitCues(seekerPowered,
-                                   seekerLocked,
-                                   seekerSignalStrength,
-                                   mawsThreatActive,
-                                   mawsUrgency);
-    m_audioSystem->update(dt);
+    m_audioSystem->syncCockpitCues(cues);
+    m_audioSystem->endFrame();
 }
 
 void Application::emitFrameVisualEffects(float deltaTime)
@@ -226,8 +237,7 @@ void Application::emitFrameVisualEffects(float deltaTime)
         // The booster burns at elevated thrust; lay a noticeably thicker, brighter
         // plume for its duration so the climb-out reads as a hard rocket boost.
         const float boostPlume = (m_launchSequence.motorIgnited && !m_launchSequence.boostComplete) ? 0.34f : 0.0f;
-        const float throttle = glm::clamp(m_missile->getThrottle(), 0.0f, 1.0f);
-        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle,
+        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * m_missile->getThrottle(),
                                                 0.22f,
                                                 1.0f);
         m_renderer->emitMissileExhaust(previousEmitter, currentEmitter, missileForward, m_missile->getVelocity(), plumeIntensity);

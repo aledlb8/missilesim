@@ -107,6 +107,7 @@ bool Application::loadSettings()
     m_trajectoryPoints = std::clamp(readInt("trajectory_points", m_trajectoryPoints), 10, 600);
     m_trajectoryTime = std::clamp(readFloat("trajectory_time", m_trajectoryTime), 0.5f, 60.0f);
     m_simulationSpeed = std::clamp(readFloat("simulation_speed", m_simulationSpeed), 0.1f, 10.0f);
+    m_audioVolume = std::clamp(readFloat("audio_volume", m_audioVolume), 0.0f, 1.0f);
 
     m_groundEnabled = readBool("ground_enabled", m_groundEnabled);
     m_groundRestitution = std::clamp(readFloat("ground_restitution", m_groundRestitution), 0.0f, 1.0f);
@@ -217,6 +218,7 @@ std::string Application::buildSettingsSnapshot() const
     output << "trajectory_points=" << m_trajectoryPoints << "\n";
     output << "trajectory_time=" << m_trajectoryTime << "\n";
     output << "simulation_speed=" << m_simulationSpeed << "\n";
+    output << "audio_volume=" << m_audioVolume << "\n";
     output << "gravity=" << gravity << "\n";
     output << "air_density=" << airDensity << "\n";
     output << "ground_enabled=" << formatBoolValue(m_groundEnabled) << "\n";

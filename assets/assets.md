@@ -29,4 +29,4 @@ The models replace these historical CC0 placeholders (not included in the new mo
 
 ## Audio
 
-Audio assets in `assets/audio` are generated in-repo by `tools/generate_audio_assets.py` and do not include third-party source material.
+There are no audio assets. Every sound is synthesized at runtime from the simulation state by the physical audio engine in `src/audio` (see the README), so no recorded or third-party audio is used.

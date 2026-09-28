@@ -102,13 +102,13 @@ Settings are autosaved beside the executable in `config/user_settings.ini`. ImGu
 - `src/physics`: atmosphere model, physics engine, gravity, drag, lift
 - `src/objects`: missile, target, flare, and shared physics-object behavior
 - `src/rendering`: OpenGL renderer, scene effects, debug drawing, asset loading
-- `src/audio`: miniaudio-based runtime audio system
-- `assets`: runtime models and audio assets
-- `tools`: utility scripts for project support tasks
+- `src/audio`: physical audio: `engine` propagates sound through the air (speed-of-sound delay, Doppler, sonic booms, atmospheric absorption, ground reflection, terrain echoes, adaptive exposure), `synth` generates every sound procedurally from physical parameters, `AudioSystem` connects them to the simulation. miniaudio is only the output device
+- `assets`: runtime models, shaders, skyboxes and config
+- `tools`: utility scripts for project support tasks; `tools/audition` builds `AudioAudition`, which renders scripted scenarios (launches, flybys, explosions at several ranges) through the audio engine to WAV files
 
 ## Assets
 
-Runtime model attribution is documented in `assets/assets.md`. Audio assets in `assets/audio` are generated in-repo.
+Runtime model attribution is documented in `assets/assets.md`. There are no audio assets: all sound is synthesized at runtime.
 
 ## License
 
