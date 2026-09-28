@@ -112,6 +112,8 @@ public:
     float getCommandedLiftCoefficient() const override { return m_commandedLiftCoefficient; }
     void setEngineThrust(float newtons) { m_maxThrust = (newtons >= 0.0f) ? newtons : 0.0f; }
     float getEngineThrust() const { return m_maxThrust; }
+    // Fraction of the thrust ceiling the engine is currently delivering.
+    float getThrottle() const { return m_throttle; }
     // Local atmospheric conditions, supplied by the physics engine each step.
     void setAmbientConditions(float density, float speedOfSound)
     {
@@ -171,6 +173,7 @@ private:
     missilesim::physics::AeroProfile m_aeroProfile;
     float m_commandedLiftCoefficient = 0.0f;
     float m_maxThrust = 60000.0f;       // engine thrust ceiling (N)
+    float m_throttle = 0.7f;            // delivered / ceiling thrust
     float m_ambientDensity = 1.225f;    // local air density (kg/m^3)
     float m_speedOfSound = 340.294f;    // local speed of sound (m/s)
     glm::vec3 m_smoothedAcceleration{0.0f}; // low-pass acceleration for rendering

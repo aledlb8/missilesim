@@ -17,25 +17,46 @@ using missilesim::rendering::detail::perpendicularTo;
 using missilesim::rendering::detail::safeNormalize;
 using missilesim::rendering::detail::saturate;
 
+void SceneEffects::submitEnginePlume(const glm::vec3 &nozzle, const glm::vec3 &direction,
+                                     float radius, float throttle, bool rocket)
+{
+    if (!std::isfinite(radius) || radius <= 0.0001f || !std::isfinite(throttle) || throttle <= 0.01f ||
+        !std::isfinite(glm::length(nozzle)) || !std::isfinite(glm::length(direction)) ||
+        m_enginePlumes.size() >= 256) return;
+    const float power = rocket ? saturate(throttle) : glm::smoothstep(0.45f, 1.0f, throttle);
+    const float length = radius * (rocket ? glm::mix(18.0f, 40.0f, power) : glm::mix(1.6f, 14.0f, power));
+    ParticleInstance instance{};
+    instance.centerRotation = glm::vec4(nozzle, 0.0f);
+    instance.axisSizeX = glm::vec4(safeNormalize(direction, glm::vec3(0, -1, 0)), radius);
+    instance.color = glm::vec4(1.0f);
+    instance.params0 = glm::vec4(length, m_effectTime, power, 1.0f);
+    instance.params1 = glm::vec4(static_cast<float>(rocket ? ParticleMaterial::ROCKET_PLUME : ParticleMaterial::JET_PLUME),
+                                radius * 71.0f, 0.0f, 0.0f);
+    m_enginePlumes.push_back(instance);
+}
+
 void SceneEffects::renderParticlesToScene()
 {
-    if (!m_initialized || m_particleProgram == 0 || m_particles.empty())
+    if (!m_initialized || m_particleProgram == 0 || (m_particles.empty() && m_enginePlumes.empty()))
     {
         return;
     }
 
-    std::vector<ParticleInstance> alphaInstances;
-    std::vector<ParticleInstance> additiveInstances;
-    alphaInstances.reserve(m_particles.size());
-    additiveInstances.reserve(m_particles.size());
+    std::vector<ParticleInstance> instances;
+    instances.reserve(m_particles.size() + m_enginePlumes.size());
 
     struct SortableParticle
     {
-        float distanceSquared = 0.0f;
+        float viewDepth = 0.0f;
         ParticleInstance instance{};
     };
-    std::vector<SortableParticle> sortableAlpha;
-    sortableAlpha.reserve(m_particles.size());
+    std::vector<SortableParticle> sortedParticles;
+    sortedParticles.reserve(m_particles.size() + m_enginePlumes.size());
+    for (const auto &engine : m_enginePlumes)
+    {
+        const glm::vec3 center = glm::vec3(engine.centerRotation) + glm::vec3(engine.axisSizeX) * engine.params0.x * 0.5f;
+        sortedParticles.push_back({-(m_view * glm::vec4(center, 1.0f)).z, engine});
+    }
 
     for (const EffectParticle &particle : m_particles)
     {
@@ -52,38 +73,36 @@ void SceneEffects::renderParticlesToScene()
         }
 
         ParticleInstance instance{};
-        instance.centerRotation = glm::vec4(particle.position, particle.rotation);
+        const bool axisAligned = particle.material == ParticleMaterial::FLAME ||
+                                 particle.material == ParticleMaterial::SPARK ||
+                                 particle.material == ParticleMaterial::DEBRIS ||
+                                 particle.material == ParticleMaterial::SHOCK_DIAMOND;
+        instance.centerRotation = glm::vec4(particle.position, axisAligned ? 0.0f : particle.rotation);
         instance.axisSizeX = glm::vec4(safeNormalize(particle.axis, particle.velocity), size);
         instance.color = particle.color;
         instance.params0 = glm::vec4(size * particle.stretch,
                                      ageNorm,
                                      particle.softness,
                                      particle.emissive);
-        instance.params1 = glm::vec4(static_cast<float>(particle.material), particle.seed, 0.0f, 0.0f);
-
-        if (particle.blendMode == BlendMode::ALPHA)
-        {
-            sortableAlpha.push_back({glm::length2(particle.position - m_cameraPosition), instance});
-        }
-        else
-        {
-            additiveInstances.push_back(instance);
-        }
+        // Sort emission and extinction together: foreground smoke must obscure
+        // fire behind it. Additive instances output zero alpha in the shader.
+        instance.params1 = glm::vec4(static_cast<float>(particle.material), particle.seed,
+                                     particle.blendMode == BlendMode::ADDITIVE ? 1.0f : 0.0f, 0.0f);
+        const float viewDepth = -(m_view * glm::vec4(particle.position, 1.0f)).z;
+        sortedParticles.push_back({viewDepth, instance});
     }
 
-    std::sort(sortableAlpha.begin(), sortableAlpha.end(), [](const SortableParticle &lhs, const SortableParticle &rhs)
-              { return lhs.distanceSquared > rhs.distanceSquared; });
-    alphaInstances.reserve(sortableAlpha.size());
-    for (const SortableParticle &entry : sortableAlpha)
+    std::stable_sort(sortedParticles.begin(), sortedParticles.end(), [](const SortableParticle &lhs, const SortableParticle &rhs)
+              { return lhs.viewDepth > rhs.viewDepth; });
+    for (const SortableParticle &entry : sortedParticles)
     {
-        alphaInstances.push_back(entry.instance);
+        instances.push_back(entry.instance);
     }
 
-    renderParticlePass(alphaInstances, BlendMode::ALPHA);
-    renderParticlePass(additiveInstances, BlendMode::ADDITIVE);
+    renderParticlePass(instances);
 }
 
-void SceneEffects::renderParticlePass(const std::vector<ParticleInstance> &instances, BlendMode blendMode)
+void SceneEffects::renderParticlePass(const std::vector<ParticleInstance> &instances)
 {
     if (instances.empty())
     {
@@ -94,19 +113,21 @@ void SceneEffects::renderParticlePass(const std::vector<ParticleInstance> &insta
 
     glEnable(GL_BLEND);
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-    if (blendMode == BlendMode::ALPHA)
-    {
-        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    }
-    else
-    {
-        glBlendFunc(GL_ONE, GL_ONE);
-    }
+    glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
 
     glUseProgram(m_particleProgram);
+    const glm::mat4 inverseView = glm::inverse(m_view);
+    const glm::mat4 inverseProjection = glm::inverse(m_projection);
+    glUniformMatrix4fv(glGetUniformLocation(m_particleProgram, "inverseView"), 1, GL_FALSE, glm::value_ptr(inverseView));
+    glUniformMatrix4fv(glGetUniformLocation(m_particleProgram, "inverseProjection"), 1, GL_FALSE, glm::value_ptr(inverseProjection));
+    glUniform1f(glGetUniformLocation(m_particleProgram, "zNear"), m_projection[3][2] / (m_projection[2][2] - 1.0f));
+    glUniform1f(glGetUniformLocation(m_particleProgram, "zFar"), m_projection[3][2] / (m_projection[2][2] + 1.0f));
+    glUniform2f(glGetUniformLocation(m_particleProgram, "viewportSize"), static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight));
+    glUniform3fv(glGetUniformLocation(m_particleProgram, "sunDirection"), 1, glm::value_ptr(m_sunDirection));
+    glUniform3fv(glGetUniformLocation(m_particleProgram, "sunRadiance"), 1, glm::value_ptr(m_sunRadiance));
     const GLint viewLoc = glGetUniformLocation(m_particleProgram, "view");
     const GLint projectionLoc = glGetUniformLocation(m_particleProgram, "projection");
     const GLint cameraPosLoc = glGetUniformLocation(m_particleProgram, "cameraPos");
@@ -123,10 +144,22 @@ void SceneEffects::renderParticlePass(const std::vector<ParticleInstance> &insta
         glUniform3fv(cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
     }
 
-    // Soft particles: fade against the scene depth buffer when one is
-    // available (PBR resolve depth, or the legacy scene FBO's own depth).
-    const GLuint depthTexture = (m_externalDepthTexture != 0) ? m_externalDepthTexture
-                                                              : m_sceneDepthTexture;
+    // Both rendering paths sample detached depth, avoiding attachment feedback.
+    GLuint depthTexture = m_externalDepthTexture;
+    GLint drawFramebuffer = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
+    if (depthTexture == 0 && m_sceneFramebufferValid &&
+        static_cast<GLuint>(drawFramebuffer) == m_sceneFramebuffer)
+    {
+        GLint readFramebuffer = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_sceneFramebuffer);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_sceneDepthSnapshot);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_viewportWidth, m_viewportHeight);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(readFramebuffer));
+        depthTexture = m_sceneDepthSnapshot;
+    }
     const GLint depthFadeLoc = glGetUniformLocation(m_particleProgram, "depthFadeEnabled");
     if (depthTexture != 0)
     {
@@ -242,6 +275,8 @@ void SceneEffects::renderHeatHazePass()
     glDepthMask(GL_FALSE);
 
     glUseProgram(m_hazeProgram);
+    glUniform1f(glGetUniformLocation(m_hazeProgram, "zNear"), m_projection[3][2] / (m_projection[2][2] - 1.0f));
+    glUniform1f(glGetUniformLocation(m_hazeProgram, "zFar"), m_projection[3][2] / (m_projection[2][2] + 1.0f));
     const GLint viewLoc = glGetUniformLocation(m_hazeProgram, "view");
     const GLint projectionLoc = glGetUniformLocation(m_hazeProgram, "projection");
     const GLint cameraPosLoc = glGetUniformLocation(m_hazeProgram, "cameraPos");

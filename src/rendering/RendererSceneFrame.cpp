@@ -24,6 +24,9 @@
 
 void Renderer::beginSceneFrame(const glm::vec3 &clearColor)
 {
+    if (m_sceneEffects) m_sceneEffects->beginEngineFrame();
+    m_effectLights.erase(std::remove_if(m_effectLights.begin(), m_effectLights.end(),
+        [](const EffectLight &light) { return light.lifetime <= 0.0f; }), m_effectLights.end());
     if (isPBRActive())
     {
         // PBR mode: store camera state; actual rendering is deferred to executeRenderPass
@@ -34,6 +37,8 @@ void Renderer::beginSceneFrame(const glm::vec3 &clearColor)
         {
             m_sceneEffects->setViewportSize(m_viewportWidth, m_viewportHeight);
             m_sceneEffects->setCamera(m_cameraPosition, buildViewMatrix(), buildProjectionMatrix());
+            const auto &sun = m_pbrPipeline->directionalLight();
+            m_sceneEffects->setSunLight(sun.direction, sun.color * sun.strength);
         }
         return;
     }
@@ -203,7 +208,7 @@ void Renderer::uploadEffectLights()
 
         float strength = light.intensity * envelope *
                          effectLightFlicker(light.seed, light.age, 0.18f);
-        if (strength < 0.5f)
+        if (strength < 0.001f)
             continue;
 
         pbr::PointLight gpuLight;
@@ -270,16 +275,6 @@ void Renderer::emitMissileExhaust(const glm::vec3 &start,
     {
         m_sceneEffects->emitMissileExhaust(start, end, forward, carrierVelocity, intensity);
     }
-
-    // Warm glow tracking the nozzle for a single frame (re-emitted while
-    // the motor burns).
-    EffectLight light;
-    light.position = start;
-    light.color = glm::vec3(1.0f, 0.55f, 0.22f);
-    light.intensity = 190.0f * intensity;
-    light.radius = 34.0f;
-    light.seed = start.x + start.z;
-    addEffectLight(light);
 }
 
 void Renderer::emitJetAfterburner(const glm::vec3 &start,
@@ -292,14 +287,6 @@ void Renderer::emitJetAfterburner(const glm::vec3 &start,
     {
         m_sceneEffects->emitJetAfterburner(start, end, forward, carrierVelocity, intensity);
     }
-
-    EffectLight light;
-    light.position = start;
-    light.color = glm::vec3(0.38f, 0.58f, 1.0f);
-    light.intensity = 150.0f * intensity;
-    light.radius = 28.0f;
-    light.seed = start.x + start.y;
-    addEffectLight(light);
 }
 
 void Renderer::emitJetWake(const glm::vec3 &start,
@@ -339,17 +326,18 @@ void Renderer::spawnMissileLaunchEffect(const glm::vec3 &position,
                                         const glm::vec3 &carrierVelocity,
                                         float intensity)
 {
+    const glm::vec3 nozzle = position + forward * (m_missileExhaustSockets.empty() ? -m_missileGroundRestOffset : m_missileExhaustSockets.front().position.y);
     if (m_sceneEffects)
     {
-        m_sceneEffects->spawnMissileLaunch(position, forward, carrierVelocity, intensity);
+        m_sceneEffects->spawnMissileLaunch(nozzle, forward, carrierVelocity, intensity);
     }
 
     EffectLight flash;
-    flash.position = position;
+    flash.position = nozzle;
     flash.color = glm::vec3(1.0f, 0.72f, 0.42f);
-    flash.intensity = 600.0f * intensity;
-    flash.radius = 50.0f;
-    flash.lifetime = 0.5f;
+    flash.intensity = 4.0f * intensity;
+    flash.radius = 4.0f;
+    flash.lifetime = 0.12f;
     flash.seed = position.x;
     flash.envelope = EffectLight::Envelope::Flash;
     addEffectLight(flash);

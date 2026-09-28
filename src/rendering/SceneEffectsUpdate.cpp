@@ -29,6 +29,7 @@ void SceneEffects::update(float deltaTime)
     {
         return;
     }
+    m_effectTime = std::fmod(m_effectTime + dt, 4096.0f);
 
     for (EffectParticle &particle : m_particles)
     {

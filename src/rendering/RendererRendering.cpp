@@ -186,92 +186,27 @@ namespace
     }
 }
 
+glm::mat4 Renderer::buildObjectModelMatrix(const PhysicsObject &object) const
+{
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), object.getPosition());
+    const glm::vec3 velocity = object.getVelocity();
+    if (object.getType() == "Missile")
+        model *= buildAxisOrientationMatrix(getMissileRenderDirection(static_cast<const Missile *>(&object)));
+    else if (object.getType() == "Target")
+    {
+        if (glm::length2(velocity) > 0.000001f)
+            model *= buildTargetOrientationMatrix(velocity, object.getRenderAcceleration());
+        model = glm::scale(model, glm::vec3(std::max(static_cast<const Target &>(object).getRadius(), 1.0f)));
+    }
+    else if (glm::length2(velocity) > 0.000001f)
+        model *= buildAxisOrientationMatrix(velocity);
+    return model;
+}
+
 void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
 {
     renderEnvironment();
-
-    for (auto *object : objects)
-    {
-        if (!object)
-            continue;
-
-        // Create model matrix for the object
-        glm::mat4 model = glm::mat4(1.0f);
-        const bool isMissile = object->getType() == "Missile";
-        model = glm::translate(model, object->getPosition());
-
-        // Orient based on object type
-        if (isMissile)
-        {
-            model *= buildAxisOrientationMatrix(getMissileRenderDirection(static_cast<const Missile *>(object)));
-        }
-        else if (object->getType() == "Target")
-        {
-            glm::vec3 velocity = object->getVelocity();
-            if (glm::length(velocity) > 0.001f)
-            {
-                model *= buildTargetOrientationMatrix(velocity, object->getRenderAcceleration());
-            }
-        }
-
-        // Scale and submit
-        if (isMissile)
-        {
-            model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
-
-            if (isPBRActive())
-            {
-                m_pbrPipeline->submitLegacyMesh(
-                    m_vao, static_cast<GLsizei>(m_indices.size()), model,
-                    glm::vec3(0.78f, 0.79f, 0.82f), 0.2f, 0.4f, true, true);
-            }
-            else
-            {
-                glm::mat4 view = buildViewMatrix();
-                glm::mat4 projection = buildProjectionMatrix();
-                glBindVertexArray(m_vao);
-                glUseProgram(m_shaderProgram);
-                glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-                glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-                glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-                if (m_cameraPosLoc != -1)
-                    glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
-                if (m_fogDensityLoc != -1)
-                    glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
-                glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
-                glBindVertexArray(0);
-            }
-        }
-        else if (object->getType() == "Target")
-        {
-            const Target *targetObject = static_cast<Target *>(object);
-            const float targetScale = std::max(targetObject->getRadius(), 1.0f);
-            model = glm::scale(model, glm::vec3(targetScale));
-
-            if (isPBRActive())
-            {
-                m_pbrPipeline->submitLegacyMesh(
-                    m_targetVAO, static_cast<GLsizei>(m_targetIndices.size()), model,
-                    glm::vec3(0.7f, 0.72f, 0.74f), 0.2f, 0.4f, true, true);
-            }
-            else
-            {
-                glm::mat4 view = buildViewMatrix();
-                glm::mat4 projection = buildProjectionMatrix();
-                glBindVertexArray(m_targetVAO);
-                glUseProgram(m_shaderProgram);
-                glUniformMatrix4fv(m_modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-                glUniformMatrix4fv(m_viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-                glUniformMatrix4fv(m_projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-                if (m_cameraPosLoc != -1)
-                    glUniform3fv(m_cameraPosLoc, 1, glm::value_ptr(m_cameraPosition));
-                if (m_fogDensityLoc != -1)
-                    glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
-                glDrawElements(GL_TRIANGLES, m_targetIndices.size(), GL_UNSIGNED_INT, 0);
-                glBindVertexArray(0);
-            }
-        }
-    }
+    for (auto *object : objects) render(object);
 }
 
 void Renderer::render(PhysicsObject *object)
@@ -279,31 +214,13 @@ void Renderer::render(PhysicsObject *object)
     if (!object)
         return;
 
-    // Create model matrix for the object
-    glm::mat4 model = glm::mat4(1.0f);
+    const glm::mat4 model = buildObjectModelMatrix(*object);
     const bool isMissile = object->getType() == "Missile";
-    model = glm::translate(model, object->getPosition());
-
-    // Orient based on type
-    glm::vec3 velocity = object->getVelocity();
-    if (object->getType() == "Target" && glm::length(velocity) > 0.001f)
-    {
-        model *= buildTargetOrientationMatrix(velocity, object->getRenderAcceleration());
-    }
-    else if (isMissile)
-    {
-        model *= buildAxisOrientationMatrix(getMissileRenderDirection(static_cast<const Missile *>(object)));
-    }
-    else if (glm::length(velocity) > 0.001f)
-    {
-        model *= buildAxisOrientationMatrix(velocity);
-    }
+    submitEnginePlumes(*object);
 
     // Scale and draw/submit
     if (isMissile)
     {
-        model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
-
         if (isPBRActive())
         {
             m_pbrPipeline->submitLegacyMesh(
@@ -329,10 +246,6 @@ void Renderer::render(PhysicsObject *object)
     }
     else if (object->getType() == "Target")
     {
-        const Target *targetObject = static_cast<Target *>(object);
-        const float targetScale = std::max(targetObject->getRadius(), 1.0f);
-        model = glm::scale(model, glm::vec3(targetScale));
-
         if (isPBRActive())
         {
             m_pbrPipeline->submitLegacyMesh(

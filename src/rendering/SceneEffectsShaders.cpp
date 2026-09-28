@@ -79,21 +79,64 @@ namespace
         uniform mat4 view;
         uniform mat4 projection;
         uniform vec3 cameraPos;
+        uniform vec3 sunDirection;
+        uniform mat4 inverseView;
+        uniform mat4 inverseProjection;
 
         out vec2 vLocalUv;
         out vec4 vColor;
         out vec4 vParams0;
-        flat out vec2 vParams1;
+        flat out vec3 vParams1;
+        flat out vec3 vLightLocal;
+        flat out vec4 vEngineNozzleRadius;
+        flat out vec4 vEngineAxisLength;
+        out vec3 vWorldRay;
 
         void main()
         {
+            vEngineNozzleRadius = vec4(0.0);
+            vEngineAxisLength = vec4(0.0);
+            vWorldRay = vec3(0.0);
+            if (iParams1.x > 7.5)
+            {
+                // Project the volume bounds, including end-on and inside views.
+                vec3 nozzle = iCenterRotation.xyz;
+                vec3 axis = normalize(iAxisSizeX.xyz);
+                float radius = iAxisSizeX.w * 2.0;
+                vec3 reference = abs(axis.y) < 0.95 ? vec3(0,1,0) : vec3(1,0,0);
+                vec3 right = normalize(cross(axis, reference));
+                vec3 up = cross(right, axis);
+                vec2 lower = vec2(1e6), upper = vec2(-1e6);
+                bool crossesEye = false;
+                for (int i = 0; i < 8; ++i)
+                {
+                    vec3 p = nozzle + axis * ((i & 1) == 0 ? 0.0 : iParams0.x)
+                           + right * ((i & 2) == 0 ? -radius : radius)
+                           + up * ((i & 4) == 0 ? -radius : radius);
+                    vec4 clip = projection * view * vec4(p, 1.0);
+                    if (clip.w <= 0.001) crossesEye = true;
+                    vec2 ndc = clip.xy / max(clip.w, 0.001);
+                    lower = min(lower, ndc); upper = max(upper, ndc);
+                }
+                if (crossesEye) { lower = vec2(-1); upper = vec2(1); }
+                vec2 ndc = mix(clamp(lower, -1.0, 1.0), clamp(upper, -1.0, 1.0), aCorner * 0.5 + 0.5);
+                gl_Position = vec4(ndc, 0.0, 1.0);
+                vec4 ray = inverseProjection * vec4(ndc, -1.0, 1.0);
+                vWorldRay = mat3(inverseView) * ray.xyz;
+                vEngineNozzleRadius = vec4(nozzle, iAxisSizeX.w);
+                vEngineAxisLength = vec4(axis, iParams0.x);
+                vParams0 = iParams0; vParams1 = iParams1.xyz;
+                vColor = iColor; vLocalUv = aCorner; vLightLocal = vec3(0.0);
+                return;
+            }
             vec3 center = iCenterRotation.xyz;
             float rotation = iCenterRotation.w;
             vec3 axis = iAxisSizeX.xyz;
             float halfWidth = iAxisSizeX.w;
             float halfHeight = iParams0.x;
 
-            vec3 viewDirection = normalize(cameraPos - center);
+            vec3 toCamera = cameraPos - center;
+            vec3 viewDirection = dot(toCamera, toCamera) > 1e-8 ? normalize(toCamera) : vec3(0.0, 0.0, 1.0);
             vec3 projectedAxis = axis - viewDirection * dot(axis, viewDirection);
             if (dot(projectedAxis, projectedAxis) < 1e-5)
             {
@@ -109,19 +152,18 @@ namespace
 
             float sineValue = sin(rotation);
             float cosineValue = cos(rotation);
-            vec2 rotatedCorner = vec2(
-                (aCorner.x * cosineValue) - (aCorner.y * sineValue),
-                (aCorner.x * sineValue) + (aCorner.y * cosineValue));
-
-            vec3 worldOffset = (bitangent * rotatedCorner.x * halfWidth) +
-                               (tangent * rotatedCorner.y * halfHeight);
+            vec3 localRight = bitangent * cosineValue + tangent * sineValue;
+            vec3 localUp = tangent * cosineValue - bitangent * sineValue;
+            vec3 worldOffset = localRight * aCorner.x * halfWidth + localUp * aCorner.y * halfHeight;
             vec4 worldPosition = vec4(center + worldOffset, 1.0);
 
             gl_Position = projection * view * worldPosition;
-            vLocalUv = rotatedCorner;
+            vLocalUv = aCorner;
             vColor = iColor;
             vParams0 = iParams0;
-            vParams1 = iParams1.xy;
+            vParams1 = iParams1.xyz;
+            vec3 lightDirection = normalize(-sunDirection);
+            vLightLocal = vec3(dot(lightDirection, localRight), dot(lightDirection, localUp), dot(lightDirection, viewDirection));
         }
     )";
 
@@ -130,7 +172,15 @@ namespace
         in vec2 vLocalUv;
         in vec4 vColor;
         in vec4 vParams0;
-        flat in vec2 vParams1;
+        flat in vec3 vParams1;
+        flat in vec3 vLightLocal;
+        uniform vec3 sunRadiance;
+        flat in vec4 vEngineNozzleRadius;
+        flat in vec4 vEngineAxisLength;
+        in vec3 vWorldRay;
+        uniform vec3 cameraPos;
+        uniform mat4 view;
+        uniform mat4 projection;
 
         uniform sampler2D sceneDepth;
         uniform vec2 viewportSize;
@@ -165,8 +215,110 @@ namespace
             return 2.0 * zNear * zFar / (zFar + zNear - ndc * (zFar - zNear));
         }
 
+        float turbulence(vec2 p)
+        {
+            mat2 turn = mat2(0.8, -0.6, 0.6, 0.8);
+            float result = noise(p) * 0.57;
+            p = turn * p * 2.03 + vec2(7.1, 3.7);
+            result += noise(p) * 0.28;
+            p = turn * p * 2.01 + vec2(2.3, 9.2);
+            return result + noise(p) * 0.15;
+        }
+
+        // Finite-cylinder intersection followed by emission/absorption integration.
+        // Geometry depth truncates the ray, so the aircraft can occlude its plume.
+        void renderEngineVolume()
+        {
+            vec3 axis = vEngineAxisLength.xyz;
+            float plumeLength = vEngineAxisLength.w;
+            float nozzleRadius = vEngineNozzleRadius.w;
+            vec3 ray = normalize(vWorldRay);
+            vec3 origin = cameraPos - vEngineNozzleRadius.xyz;
+            float axialOrigin = dot(origin, axis), axialRay = dot(ray, axis);
+            vec3 radialOrigin = origin - axis * axialOrigin;
+            vec3 radialRay = ray - axis * axialRay;
+            float a = dot(radialRay, radialRay);
+            float b = dot(radialOrigin, radialRay);
+            float c = dot(radialOrigin, radialOrigin) - 4.0 * nozzleRadius * nozzleRadius;
+            float enter = 0.0, leave = 1e8;
+            if (a > 1e-8)
+            {
+                float discriminant = b * b - a * c;
+                if (discriminant <= 0.0) discard;
+                float root = sqrt(discriminant);
+                enter = max(enter, (-b - root) / a);
+                leave = min(leave, (-b + root) / a);
+            }
+            else if (c > 0.0) discard;
+            if (abs(axialRay) > 1e-6)
+            {
+                float t0 = -axialOrigin / axialRay;
+                float t1 = (plumeLength - axialOrigin) / axialRay;
+                enter = max(enter, min(t0, t1));
+                leave = min(leave, max(t0, t1));
+            }
+            else if (axialOrigin < 0.0 || axialOrigin > plumeLength) discard;
+            float viewRayDepth = max(-(view * vec4(ray, 0.0)).z, 1e-5);
+            enter = max(enter, zNear / viewRayDepth);
+            if (depthFadeEnabled)
+                leave = min(leave, linearizeDepth(texture(sceneDepth, gl_FragCoord.xy / viewportSize).r) / viewRayDepth);
+            if (leave <= enter) discard;
+
+            bool rocket = vParams1.x > 8.5;
+            float power = vParams0.z;
+            float clock = vParams0.y;
+            vec3 reference = abs(axis.y) < 0.95 ? vec3(0,1,0) : vec3(1,0,0);
+            vec3 right = normalize(cross(axis, reference));
+            vec3 up = cross(right, axis);
+            float stepLength = (leave - enter) / 40.0;
+            vec3 radiance = vec3(0.0);
+            float transmittance = 1.0;
+            for (int i = 0; i < 40; ++i)
+            {
+                vec3 p = origin + ray * (enter + (float(i) + 0.5) * stepLength);
+                float distance = dot(p, axis);
+                float t = clamp(distance / plumeLength, 0.0, 1.0);
+                vec2 crossSection = vec2(dot(p, right), dot(p, up)) / nozzleRadius;
+                float cells = distance / (nozzleRadius * (rocket ? 4.6 : 3.3));
+                float cellPhase = 6.2831853 * cells;
+                float envelope = rocket ? (0.88 + 0.85 * (1.0 - exp(-t * 9.0))) : 0.91;
+                envelope *= 1.0 - pow(t, rocket ? 2.2 : 1.8) * 0.96;
+                envelope *= 1.0 + 0.10 * sin(cellPhase);
+                // Low-amplitude advected filaments preserve a stable silhouette.
+                float flow = sin(crossSection.x * 8.0 + cells * 7.0 - clock * 28.0)
+                           * sin(crossSection.y * 7.0 - cells * 4.0 + clock * 21.0);
+                float radius = length(crossSection + vec2(sin(cells * 4.0 - clock * 14.0),
+                                      cos(cells * 5.0 - clock * 17.0)) * (0.015 + t * 0.04));
+                float normalizedRadius = radius / max(envelope, 0.025);
+                float body = 1.0 - smoothstep(0.45, 1.02, normalizedRadius);
+                float tip = 1.0 - smoothstep(0.65, 1.0, t);
+                float cell = pow(max(0.0, cos(cellPhase)), 10.0) * exp(-t * 2.0)
+                           * exp(-normalizedRadius * normalizedRadius * 5.0);
+                float core = exp(-normalizedRadius * normalizedRadius * 7.0);
+                float density = body * tip * (0.42 + core * 0.48 + cell * 0.7);
+                density *= (0.92 + flow * 0.08) * (rocket ? 0.9 : mix(0.22, 0.65, power));
+                float absorption = 1.0 - exp(-density * stepLength / nozzleRadius * 0.8);
+                vec3 edgeColor = rocket ? vec3(2.6, 0.38, 0.035) : vec3(0.18, 0.24, 1.15);
+                vec3 coreColor = rocket ? vec3(5.5, 3.3, 1.15) : vec3(4.2, 1.9, 0.55);
+                vec3 emission = mix(edgeColor, coreColor, clamp(core * 0.65 + cell * 0.7, 0.0, 1.0));
+                emission *= (rocket ? 1.0 : mix(0.35, 1.0, power)) * (1.0 - t * 0.5);
+                radiance += transmittance * absorption * emission;
+                transmittance *= 1.0 - absorption;
+                if (transmittance < 0.015) break;
+            }
+            vec4 entryClip = projection * view * vec4(cameraPos + ray * enter, 1.0);
+            gl_FragDepth = clamp(entryClip.z / entryClip.w * 0.5 + 0.5, 0.0, 1.0);
+            FragColor = vec4(radiance, 1.0 - transmittance);
+        }
+
         void main()
         {
+            gl_FragDepth = gl_FragCoord.z;
+            if (vParams1.x > 7.5)
+            {
+                renderEngineVolume();
+                return;
+            }
             float ageNorm = clamp(vParams0.y, 0.0, 1.0);
             float softness = clamp(vParams0.z, 0.05, 2.0);
             float emissive = max(vParams0.w, 0.0);
@@ -180,46 +332,58 @@ namespace
 
             if (material < 0.5)
             {
-                // FLAME: flickering teardrop with noise-erosion breakup.
-                float flicker = noise(vec2(uv.x * 4.6 + seed * 3.2, uv.y * 2.8 - ageNorm * 2.4));
-                float body = exp(-4.0 * abs(uv.x));
-                float tail = smoothstep(1.15, -0.30, uv.y);
-                float core = exp(-18.0 * uv.x * uv.x) * smoothstep(0.8, -0.1, uv.y);
-                alpha = body * tail * mix(0.84, 1.02, flicker) * pow(1.0 - ageNorm, 1.55);
-
-                float erosionNoise = noise(uv * 3.4 + seed * 5.1 + ageNorm * 1.6) * 0.65 +
-                                     noise(uv * 7.3 + seed * 2.9) * 0.35;
-                float erode = ageNorm * 0.9;
-                alpha *= smoothstep(erode, erode + 0.35, erosionNoise + 0.42);
-
-                color = mix(vColor.rgb * 0.55, vec3(1.0, 0.96, 0.88), core * 0.75) * (0.9 + core * 0.45);
+                // Advected filaments with a compact hot core and cooling edges.
+                vec2 flow = uv * vec2(3.2, 2.1) + vec2(seed * 0.73, -ageNorm * 3.5);
+                float billow = turbulence(flow);
+                float bend = (noise(flow * 0.65 + 8.7) - 0.5) * 0.28;
+                float width = mix(0.48, 0.10, smoothstep(-0.65, 0.95, uv.y));
+                float crossSection = (uv.x + bend) / width;
+                float body = exp(-2.5 * crossSection * crossSection);
+                float ends = smoothstep(-1.0, -0.72, uv.y) * (1.0 - smoothstep(0.55, 1.0, uv.y));
+                float core = exp(-20.0 * (uv.x + bend) * (uv.x + bend)) * (1.0 - smoothstep(-0.4, 0.8, uv.y));
+                float erosion = smoothstep(ageNorm * 0.65, ageNorm * 0.65 + 0.32, billow);
+                alpha = body * ends * erosion * pow(1.0 - ageNorm, 1.35);
+                float heat = clamp(core * 0.8 + billow * 0.35 - ageNorm * 0.45, 0.0, 1.0);
+                color = mix(vColor.rgb * vec3(0.95, 0.48, 0.22), vec3(1.0, 0.94, 0.78), heat);
+                color *= 1.1 + heat * heat * 2.3;
             }
             else if (material < 1.5)
             {
-                // SMOKE: radial puff dissolving through turbulent erosion so
-                // ageing clouds break apart instead of fading uniformly.
-                float puff = smoothstep(1.12, 0.1, radial * mix(0.96, 1.06, noise((uv * 2.2) + seed * 2.7)));
-                alpha = puff * pow(1.0 - ageNorm, 1.15) * (1.0 - ageNorm * 0.35);
+                // Approximate a lit volume using turbulent optical thickness.
+                // Low-frequency lobes carry the silhouette; finer eddies erode it.
+                vec2 flow = uv * 2.6 + vec2(seed * 0.31, seed * 0.17 - ageNorm * 0.65);
+                vec2 warp = vec2(noise(flow + 4.7), noise(flow - 8.3)) - 0.5;
+                vec2 p = flow + warp * 0.85;
+                float density = turbulence(p);
+                float envelope = 1.0 - smoothstep(0.18, 1.0, radial + (density - 0.5) * 0.25);
+                float breakup = smoothstep(0.06 + ageNorm * 0.3, 0.52 + ageNorm * 0.2, density);
+                float thickness = envelope * (0.35 + density * 2.8) * breakup;
+                float life = smoothstep(0.0, 0.08, ageNorm) * (1.0 - smoothstep(0.35, 1.0, ageNorm));
+                alpha = (1.0 - exp(-thickness * 2.2)) * life;
 
-                float erosionNoise = noise(uv * 3.1 + seed * 7.7 + ageNorm * 0.8) * 0.6 +
-                                     noise(uv * 6.7 + seed * 3.3) * 0.4;
-                float erode = ageNorm * 1.1;
-                alpha *= smoothstep(erode, erode + 0.3, erosionNoise + 0.35);
-
-                color = mix(vColor.rgb * 0.72, vec3(0.92), 0.14);
+                float coarse = noise(p);
+                vec2 slope = vec2(noise(p + vec2(0.12, 0.0)) - coarse,
+                                  noise(p + vec2(0.0, 0.12)) - coarse) / 0.12;
+                vec3 normal = normalize(vec3(uv - slope * 0.65, sqrt(max(0.08, 1.0 - dot(uv, uv)))));
+                float diffuse = clamp(dot(normal, vLightLocal) * 0.55 + 0.45, 0.0, 1.0);
+                float transmission = exp(-thickness * 1.4);
+                float silver = pow(max(-vLightLocal.z, 0.0), 4.0) * transmission * 0.45;
+                vec3 ambient = vec3(0.32, 0.39, 0.48);
+                color = vColor.rgb * (ambient + sunRadiance * (diffuse * 0.38 + silver))
+                        * mix(0.62, 1.0, transmission);
             }
             else if (material < 2.5)
             {
                 // SPARK: short-lived hot streak.
                 float streak = exp(-20.0 * uv.x * uv.x) * exp(-2.8 * max(uv.y + 0.12, 0.0));
-                float tip = smoothstep(1.08, 0.0, uv.y);
+                float tip = 1.0 - smoothstep(0.0, 1.08, uv.y);
                 alpha = streak * tip * pow(1.0 - ageNorm, 2.0);
                 color = mix(vColor.rgb, vec3(1.0, 0.98, 0.82), 0.35);
             }
             else if (material < 3.5)
             {
                 // GLOW: smooth radial flash.
-                float glow = smoothstep(1.06, 0.0, radial);
+                float glow = exp(-5.0 * radial * radial) * (1.0 - smoothstep(0.65, 1.0, radial));
                 alpha = glow * pow(1.0 - ageNorm, 1.8);
                 color = mix(vColor.rgb, vec3(1.0, 0.98, 0.88), 0.25);
             }
@@ -230,35 +394,53 @@ namespace
                 float ringRadius = 0.12 + 0.82 * sqrt(ageNorm);
                 float ringDist = abs(radial - ringRadius);
                 float fade = (1.0 - ageNorm) * (1.0 - ageNorm);
-                alpha = exp(-ringDist * 22.0) * fade;
-                alpha *= smoothstep(1.05, 0.95, radial);
+                float width = max(0.012, fwidth(radial) * 1.5);
+                alpha = exp(-ringDist * ringDist / (width * width)) * fade * 0.025;
+                alpha *= 1.0 - smoothstep(0.92, 1.0, radial);
                 color = mix(vColor.rgb, vec3(1.0, 0.92, 0.8), 0.5);
             }
             else if (material < 5.5)
             {
                 // DEBRIS: gravity-arcing fragment - glowing head, fading tail.
                 float streak = exp(-16.0 * uv.x * uv.x);
-                float tail = smoothstep(1.15, -0.6, uv.y);
+                float tail = 1.0 - smoothstep(-0.6, 1.15, uv.y);
                 float headDist = (uv.y - 0.55) * (uv.y - 0.55) + uv.x * uv.x * 4.0;
                 float head = exp(-9.0 * headDist);
                 alpha = streak * tail * 0.55 * pow(1.0 - ageNorm, 1.5) +
                         head * pow(1.0 - ageNorm, 1.1);
                 color = mix(vColor.rgb, vec3(1.0, 0.88, 0.62), head * 0.8);
             }
-            else
+            else if (material < 6.5)
             {
                 // SHOCK_DIAMOND: compact supersonic plume pulse. The diamond
                 // mask gives afterburners a standing-wave pattern without a mesh.
                 float diamond = abs(uv.x) * 1.42 + abs(uv.y) * 0.78;
-                float body = smoothstep(1.05, 0.18, diamond);
-                float waist = exp(-14.0 * uv.x * uv.x) * smoothstep(1.0, -0.15, abs(uv.y));
+                float body = 1.0 - smoothstep(0.18, 1.05, diamond);
+                float waist = exp(-14.0 * uv.x * uv.x) * (1.0 - smoothstep(-0.15, 1.0, abs(uv.y)));
                 float core = exp(-8.0 * (uv.x * uv.x + uv.y * uv.y * 0.55));
                 float shimmer = 0.82 + 0.18 * noise(uv * 6.0 + vec2(seed * 2.3, ageNorm * 5.0));
                 alpha = (body * 0.74 + waist * 0.32 + core * 0.45) * shimmer * pow(1.0 - ageNorm, 1.25);
                 color = mix(vColor.rgb, vec3(1.0, 0.97, 0.86), core * 0.65);
             }
+            else
+            {
+                // FIREBALL: thick rolling lobes cool from yellow-orange to soot.
+                // Alpha compositing preserves the internal texture under overlap.
+                vec2 p = uv * 2.8 + vec2(seed * 0.19, ageNorm * -1.2);
+                vec2 warp = vec2(noise(p + 3.1), noise(p - 7.4)) - 0.5;
+                float billow = turbulence(p + warp * 1.1);
+                float silhouette = 1.0 - smoothstep(0.25, 0.95, radial + (billow - 0.5) * 0.38);
+                float density = silhouette * (0.6 + billow * 2.4);
+                alpha = (1.0 - exp(-density * 2.0)) * (1.0 - smoothstep(0.65, 1.0, ageNorm));
+                float heat = clamp(billow * 1.4 + (1.0 - radial) * 0.3 - ageNorm * 0.85, 0.0, 1.0);
+                vec3 ember = mix(vec3(0.10, 0.055, 0.035), vec3(1.8, 0.23, 0.025), smoothstep(0.08, 0.42, heat));
+                color = mix(ember, vec3(3.8, 2.2, 0.75), smoothstep(0.45, 0.95, heat));
+                color *= mix(vec3(1.0), vColor.rgb, 0.2);
+            }
 
-            alpha = clamp(alpha * softness, 0.0, 1.0);
+            // Authored opacity controls wispy wakes and dense blast clouds.
+            float edge = 1.0 - smoothstep(0.84, 1.0, max(abs(uv.x), abs(uv.y)));
+            alpha = clamp(alpha * softness * vColor.a * edge, 0.0, 1.0);
 
             if (depthFadeEnabled)
             {
@@ -277,7 +459,7 @@ namespace
             }
 
             vec3 premultiplied = color * alpha * max(emissive, 0.0);
-            FragColor = vec4(premultiplied, alpha);
+            FragColor = vec4(premultiplied, alpha * (1.0 - vParams1.z));
         }
     )";
 
@@ -293,8 +475,8 @@ namespace
         uniform vec3 cameraPos;
 
         out vec2 vLocalUv;
-        out vec2 vScreenUv;
         out vec3 vParams;
+        flat out float vFadeDistance;
 
         void main()
         {
@@ -304,7 +486,8 @@ namespace
             float halfWidth = iAxisSizeX.w;
             float halfHeight = iParams0.x;
 
-            vec3 viewDirection = normalize(cameraPos - center);
+            vec3 toCamera = cameraPos - center;
+            vec3 viewDirection = dot(toCamera, toCamera) > 1e-8 ? normalize(toCamera) : vec3(0.0, 0.0, 1.0);
             vec3 projectedAxis = axis - viewDirection * dot(axis, viewDirection);
             if (dot(projectedAxis, projectedAxis) < 1e-5)
             {
@@ -320,30 +503,29 @@ namespace
 
             float sineValue = sin(rotation);
             float cosineValue = cos(rotation);
-            vec2 rotatedCorner = vec2(
-                (aCorner.x * cosineValue) - (aCorner.y * sineValue),
-                (aCorner.x * sineValue) + (aCorner.y * cosineValue));
-
-            vec3 worldOffset = (bitangent * rotatedCorner.x * halfWidth) +
-                               (tangent * rotatedCorner.y * halfHeight);
+            vec3 localRight = bitangent * cosineValue + tangent * sineValue;
+            vec3 localUp = tangent * cosineValue - bitangent * sineValue;
+            vec3 worldOffset = localRight * aCorner.x * halfWidth + localUp * aCorner.y * halfHeight;
             vec4 clipPosition = projection * view * vec4(center + worldOffset, 1.0);
 
             gl_Position = clipPosition;
-            vLocalUv = rotatedCorner;
-            vScreenUv = (clipPosition.xy / clipPosition.w) * 0.5 + 0.5;
+            vLocalUv = aCorner;
             vParams = vec3(iParams0.y, iParams0.z, iParams0.w);
+            vFadeDistance = clamp(halfWidth * 0.5, 0.3, 8.0);
         }
     )";
 
     const char *hazeFragmentShaderSource = R"(
         #version 330 core
         in vec2 vLocalUv;
-        in vec2 vScreenUv;
         in vec3 vParams;
+        flat in float vFadeDistance;
 
         uniform sampler2D sceneColor;
         uniform sampler2D sceneDepth;
         uniform vec2 viewportSize;
+        uniform float zNear;
+        uniform float zFar;
 
         out vec4 FragColor;
 
@@ -366,28 +548,36 @@ namespace
             return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
         }
 
+        float linearizeDepth(float depthSample)
+        {
+            float ndc = 2.0 * depthSample - 1.0;
+            return 2.0 * zNear * zFar / (zFar + zNear - ndc * (zFar - zNear));
+        }
+
         void main()
         {
+            vec2 screenUv = gl_FragCoord.xy / viewportSize;
             float ageNorm = clamp(vParams.x, 0.0, 1.0);
             float strength = max(vParams.y, 0.0);
             float seed = vParams.z;
 
             float radial = length(vLocalUv);
-            float edgeMask = smoothstep(1.05, 0.02, radial);
+            float edgeMask = 1.0 - smoothstep(0.02, 1.0, radial);
             if (edgeMask <= 0.001)
             {
                 discard;
             }
 
-            float depthAtPixel = texture(sceneDepth, vScreenUv).r;
-            float fragmentDepth = gl_FragCoord.z;
-            if (fragmentDepth > depthAtPixel + 0.00035)
+            float depthAtPixel = linearizeDepth(texture(sceneDepth, screenUv).r);
+            float fragmentDepth = linearizeDepth(gl_FragCoord.z);
+            if (fragmentDepth >= depthAtPixel)
             {
                 discard;
             }
 
-            float depthFade = clamp(((depthAtPixel - fragmentDepth) * 1800.0) + 0.35, 0.0, 1.0);
-            float axialMask = smoothstep(1.18, -0.22, vLocalUv.y);
+            float depthFade = smoothstep(0.0, vFadeDistance, depthAtPixel - fragmentDepth);
+            depthFade *= smoothstep(zNear, zNear + 1.5, fragmentDepth);
+            float axialMask = 1.0 - smoothstep(-0.22, 1.18, vLocalUv.y);
             float lifeFade = pow(1.0 - ageNorm, 1.18);
             float distortionMask = edgeMask * mix(0.65, 1.0, axialMask) * lifeFade * depthFade;
 
@@ -407,16 +597,13 @@ namespace
             offsetDirection += radialDirection * (0.14 + axialMask * 0.22);
 
             vec2 distortion = offsetDirection * strength * distortionMask * pulse / max(viewportSize, vec2(1.0));
-            vec2 primaryUv = clamp(vScreenUv + distortion, vec2(0.001), vec2(0.999));
-            vec2 secondaryUv = clamp(vScreenUv + (distortion * 0.55), vec2(0.001), vec2(0.999));
-            vec2 tertiaryUv = clamp(vScreenUv - (distortion * 0.45), vec2(0.001), vec2(0.999));
-
-            vec3 baseColor = texture(sceneColor, clamp(vScreenUv + (distortion * 0.18), vec2(0.001), vec2(0.999))).rgb;
-            vec3 refracted = vec3(
-                texture(sceneColor, primaryUv).r,
-                texture(sceneColor, secondaryUv).g,
-                texture(sceneColor, tertiaryUv).b);
-            refracted = mix(baseColor, refracted, 0.78);
+            vec2 texelMargin = 0.5 / max(viewportSize, vec2(1.0));
+            vec2 refractedUv = clamp(screenUv + distortion, texelMargin, vec2(1.0) - texelMargin);
+            // Do not pull foreground geometry into a plume behind it.
+            float refractedDepth = linearizeDepth(texture(sceneDepth, refractedUv).r);
+            float refractionVisibility = smoothstep(0.0, vFadeDistance, refractedDepth - fragmentDepth);
+            refractedUv = mix(screenUv, refractedUv, refractionVisibility);
+            vec3 refracted = texture(sceneColor, refractedUv).rgb;
 
             float alpha = clamp((0.14 + (strength * 0.035)) * distortionMask, 0.0, 0.55);
             FragColor = vec4(refracted, alpha);

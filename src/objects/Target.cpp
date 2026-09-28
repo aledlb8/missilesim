@@ -443,6 +443,7 @@ void Target::updateAutonomousFlight(float deltaTime)
     const float requiredThrust =
         (vehicleMass * desiredAlongAcceleration) + dragForce + (vehicleMass * gravityAlongPath);
     const float thrustForce = glm::clamp(requiredThrust, 0.0f, m_maxThrust);
+    m_throttle = (m_maxThrust > 0.0f) ? (thrustForce / m_maxThrust) : 0.0f;
     const float alongAcceleration = ((thrustForce - dragForce) / vehicleMass) - gravityAlongPath;
 
     float newSpeed = currentSpeed + (alongAcceleration * deltaTime);

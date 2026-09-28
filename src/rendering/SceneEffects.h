@@ -16,9 +16,17 @@ public:
 
     void setViewportSize(int width, int height);
     void setCamera(const glm::vec3 &cameraPosition, const glm::mat4 &view, const glm::mat4 &projection);
+    void setSunLight(const glm::vec3 &direction, const glm::vec3 &radiance)
+    {
+        m_sunDirection = direction;
+        m_sunRadiance = radiance;
+    }
 
     void beginScene(const glm::vec3 &clearColor);
     void renderParticlesToScene();
+    void beginEngineFrame() { m_enginePlumes.clear(); }
+    void submitEnginePlume(const glm::vec3 &nozzle, const glm::vec3 &direction,
+                           float radius, float throttle, bool rocket);
     void presentScene();
 
     /// Screen-space heat distortion into the currently bound framebuffer.
@@ -76,7 +84,10 @@ private:
         GLOW = 3,
         SHOCKWAVE = 4,      // expanding blast ring (radius driven by age)
         DEBRIS = 5,         // hot fragment streak with glowing head
-        SHOCK_DIAMOND = 6   // compact Mach-diamond pulse in engine exhaust
+        SHOCK_DIAMOND = 6,  // compact Mach-diamond pulse in engine exhaust
+        FIREBALL = 7,      // optically thick, cooling blast lobe
+        JET_PLUME = 8,     // attached, ray-integrated exhaust volumes
+        ROCKET_PLUME = 9
     };
 
     enum class BlendMode
@@ -139,6 +150,9 @@ private:
         glm::vec4 params0;
     };
 
+    std::vector<ParticleInstance> m_enginePlumes;
+    float m_effectTime = 0.0f;
+
     void createShaders();
     void createBuffers();
     void destroyBuffers();
@@ -146,7 +160,7 @@ private:
     void ensureSceneFramebuffer();
     void ensureParticleInstanceCapacity(std::size_t instanceCount);
     void ensureHazeInstanceCapacity(std::size_t instanceCount);
-    void renderParticlePass(const std::vector<ParticleInstance> &instances, BlendMode blendMode);
+    void renderParticlePass(const std::vector<ParticleInstance> &instances);
 
     void addParticle(const EffectParticle &particle);
     void addHeatHaze(const HeatHazeSprite &sprite);
@@ -167,6 +181,8 @@ private:
     glm::vec3 m_cameraPosition{0.0f};
     glm::mat4 m_view{1.0f};
     glm::mat4 m_projection{1.0f};
+    glm::vec3 m_sunDirection{-0.72f, -0.55f, 0.42f};
+    glm::vec3 m_sunRadiance{2.5f, 2.4f, 2.2f};
 
     GLuint m_particleProgram = 0;
     GLuint m_hazeProgram = 0;
@@ -183,6 +199,7 @@ private:
     GLuint m_sceneFramebuffer = 0;
     GLuint m_sceneColorTexture = 0;
     GLuint m_sceneDepthTexture = 0;
+    GLuint m_sceneDepthSnapshot = 0;
     GLuint m_externalDepthTexture = 0;
     GLuint m_externalSceneColor = 0;
     bool m_sceneFramebufferValid = false;

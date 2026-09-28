@@ -228,19 +228,22 @@ void Application::emitFrameVisualEffects(float deltaTime)
 
     if (m_missile && m_missile->isThrustEnabled() && m_missile->getFuel() > 0.0f && m_missile->getThrottle() > 0.01f)
     {
-        const glm::vec3 missileForward = safeNormalize(m_missile->getVelocity(), m_missile->getThrustDirection());
-        const glm::vec3 currentEmitter = m_missile->getPosition() - (missileForward * 1.12f);
-        const glm::vec3 previousEmitter = m_missile->getPreviousPosition() - (missileForward * 1.12f);
+        const auto sockets = m_renderer->getExhaustSockets(*m_missile);
         const float fuelFraction = (m_missileFuel > 0.0f)
                                        ? glm::clamp(m_missile->getFuel() / m_missileFuel, 0.0f, 1.0f)
                                        : 1.0f;
         // The booster burns at elevated thrust; lay a noticeably thicker, brighter
         // plume for its duration so the climb-out reads as a hard rocket boost.
         const float boostPlume = (m_launchSequence.motorIgnited && !m_launchSequence.boostComplete) ? 0.34f : 0.0f;
-        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * m_missile->getThrottle(),
+        const float throttle = glm::clamp(m_missile->getThrottle(), 0.0f, 1.0f);
+        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle,
                                                 0.22f,
                                                 1.0f);
-        m_renderer->emitMissileExhaust(previousEmitter, currentEmitter, missileForward, m_missile->getVelocity(), plumeIntensity);
+        for (const auto &socket : sockets)
+        {
+            const glm::vec3 previous = socket.position + m_missile->getPreviousPosition() - m_missile->getPosition();
+            m_renderer->emitMissileExhaust(previous, socket.position, -socket.direction, m_missile->getVelocity(), plumeIntensity);
+        }
     }
 
     for (const auto &target : m_targets)
@@ -254,28 +257,17 @@ void Application::emitFrameVisualEffects(float deltaTime)
         const glm::vec3 right = safeNormalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(1.0f, 0.0f, 0.0f));
         const glm::vec3 up = safeNormalize(glm::cross(right, forward), glm::vec3(0.0f, 1.0f, 0.0f));
         const float radius = std::max(target->getRadius(), 1.0f);
-        const glm::vec3 engineOffset = (-forward * radius * 1.42f) - (up * radius * 0.05f);
-        const glm::vec3 lateralOffset = right * radius * 0.26f;
-        const glm::vec3 currentBase = target->getPosition() + engineOffset;
-        const glm::vec3 previousBase = target->getPreviousPosition() + engineOffset;
-
         const TargetAIConfig &config = target->getAIConfig();
         const float speed = glm::length(target->getVelocity());
         const float speedBand = std::max(config.maxSpeed - config.minSpeed, 1.0f);
         const float speedFraction = glm::clamp((speed - config.minSpeed) / speedBand, 0.0f, 1.0f);
-        const float afterburnerIntensity = glm::clamp(0.46f + (speedFraction * 0.26f) + (target->isMissileWarningActive() ? 0.08f : 0.0f),
-                                                      0.40f, 0.82f);
-
-        m_renderer->emitJetAfterburner(previousBase - lateralOffset,
-                                       currentBase - lateralOffset,
-                                       forward,
-                                       target->getVelocity(),
-                                       afterburnerIntensity);
-        m_renderer->emitJetAfterburner(previousBase + lateralOffset,
-                                       currentBase + lateralOffset,
-                                       forward,
-                                       target->getVelocity(),
-                                       afterburnerIntensity);
+        const float afterburnerIntensity = glm::clamp(target->getThrottle(), 0.0f, 1.0f);
+        for (const auto &socket : m_renderer->getExhaustSockets(*target))
+        {
+            const glm::vec3 previous = socket.position + target->getPreviousPosition() - target->getPosition();
+            m_renderer->emitJetAfterburner(previous, socket.position, -socket.direction,
+                                           target->getVelocity(), afterburnerIntensity);
+        }
 
         const float turnLoad = glm::length(target->getRenderAcceleration()) / 9.81f;
         const float maneuverVapor = glm::clamp((turnLoad - 1.2f) / 4.0f, 0.0f, 1.0f);

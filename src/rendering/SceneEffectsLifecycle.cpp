@@ -54,6 +54,7 @@ void SceneEffects::shutdown()
     m_particles.clear();
     m_heatHazeSprites.clear();
     m_initialized = false;
+    m_enginePlumes.clear();
 }
 
 void SceneEffects::setViewportSize(int width, int height)
@@ -138,4 +139,5 @@ void SceneEffects::clear()
 {
     m_particles.clear();
     m_heatHazeSprites.clear();
+    m_enginePlumes.clear();
 }

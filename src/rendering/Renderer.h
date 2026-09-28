@@ -20,6 +20,14 @@ namespace pbr { class PBRPipeline; }
 class Renderer
 {
 public:
+    struct ExhaustSocket
+    {
+        glm::vec3 position{0.0f};
+        glm::vec3 direction{0.0f, -1.0f, 0.0f};
+        float radius = 0.0f;
+    };
+    // World-space sockets use the very same matrix as the rendered mesh.
+    std::vector<ExhaustSocket> getExhaustSockets(const PhysicsObject &object) const;
     Renderer();
     ~Renderer();
 
@@ -188,9 +196,13 @@ private:
                       std::vector<unsigned int> &indices,
                       const glm::vec3 &baseColor,
                       const glm::mat4 &preTransform,
-                      float targetExtent);
+                      float targetExtent,
+                      std::vector<ExhaustSocket> *sockets = nullptr);
     std::filesystem::path resolveAssetPath(const std::string &relativePath) const;
-    void normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const;
+    void normalizeMesh(std::vector<Vertex> &vertices, float targetExtent,
+                       std::vector<ExhaustSocket> *sockets = nullptr) const;
+    glm::mat4 buildObjectModelMatrix(const PhysicsObject &object) const;
+    void submitEnginePlumes(const PhysicsObject &object);
     void ensureDebugBufferCapacity(std::size_t vertexCount);
     void flushDebugPrimitivesInternal();
     void flushAALinesInternal();
@@ -271,6 +283,8 @@ private:
     float m_sceneFarPlane = 20000.0f;
 
     std::unique_ptr<SceneEffects> m_sceneEffects;
+    std::vector<ExhaustSocket> m_missileExhaustSockets;
+    std::vector<ExhaustSocket> m_targetExhaustSockets;
     std::unique_ptr<pbr::PBRPipeline> m_pbrPipeline;
     bool m_usePBR = true;
 

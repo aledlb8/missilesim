@@ -138,6 +138,11 @@ void SceneEffects::destroyBuffers()
 
 void SceneEffects::destroySceneFramebuffer()
 {
+    if (m_sceneDepthSnapshot != 0)
+    {
+        glDeleteTextures(1, &m_sceneDepthSnapshot);
+        m_sceneDepthSnapshot = 0;
+    }
     if (m_sceneDepthTexture != 0)
     {
         glDeleteTextures(1, &m_sceneDepthTexture);
@@ -185,6 +190,14 @@ void SceneEffects::ensureSceneFramebuffer()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_sceneDepthTexture, 0);
+    // Detached depth for soft particles and ray-integrated engine volumes.
+    glGenTextures(1, &m_sceneDepthSnapshot);
+    glBindTexture(GL_TEXTURE_2D, m_sceneDepthSnapshot);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, m_viewportWidth, m_viewportHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     glReadBuffer(GL_COLOR_ATTACHMENT0);

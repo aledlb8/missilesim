@@ -123,7 +123,8 @@ std::filesystem::path Renderer::resolveAssetPath(const std::string &relativePath
     return {};
 }
 
-void Renderer::normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) const
+void Renderer::normalizeMesh(std::vector<Vertex> &vertices, float targetExtent,
+                             std::vector<ExhaustSocket> *sockets) const
 {
     if (vertices.empty() || targetExtent <= 0.0f)
     {
@@ -148,6 +149,14 @@ void Renderer::normalizeMesh(std::vector<Vertex> &vertices, float targetExtent) 
     }
 
     const float scale = targetExtent / maxExtent;
+    if (sockets)
+    {
+        for (auto &socket : *sockets)
+        {
+            socket.position = (socket.position - center) * scale;
+            socket.radius *= scale;
+        }
+    }
     for (Vertex &vertex : vertices)
     {
         vertex.position = (vertex.position - center) * scale;
@@ -167,10 +176,12 @@ bool Renderer::loadObjModel(const std::string &relativePath,
                             std::vector<unsigned int> &indices,
                             const glm::vec3 &baseColor,
                             const glm::mat4 &preTransform,
-                            float targetExtent)
+                            float targetExtent,
+                            std::vector<ExhaustSocket> *sockets)
 {
     vertices.clear();
     indices.clear();
+    if (sockets) sockets->clear();
 
     const std::filesystem::path assetPath = resolveAssetPath(relativePath);
     if (assetPath.empty())
@@ -195,6 +206,23 @@ bool Renderer::loadObjModel(const std::string &relativePath,
     std::string line;
     while (std::getline(input, line))
     {
+        if (sockets && line.rfind("# exhaust ", 0) == 0)
+        {
+            ExhaustSocket socket;
+            std::istringstream stream(line.substr(10));
+            if (stream >> socket.position.x >> socket.position.y >> socket.position.z >>
+                          socket.direction.x >> socket.direction.y >> socket.direction.z >> socket.radius &&
+                std::isfinite(glm::length(socket.position)) && std::isfinite(glm::length(socket.direction)) &&
+                std::isfinite(socket.radius) && socket.radius > 0.0f && glm::length2(socket.direction) > 1e-8f &&
+                sockets->size() < 8)
+            {
+                socket.position = glm::vec3(preTransform * glm::vec4(socket.position, 1.0f));
+                socket.direction = glm::normalize(glm::mat3(preTransform) * socket.direction);
+                socket.radius *= glm::length(glm::vec3(preTransform[0]));
+                sockets->push_back(socket);
+            }
+            continue;
+        }
         // Optional material metadata from our Blender exporter. Standard OBJ
         // readers ignore this comment; ordinary OBJ files retain defaults.
         if (line.rfind("# pbr ", 0) == 0)
@@ -322,11 +350,12 @@ bool Renderer::loadObjModel(const std::string &relativePath,
 
     if (vertices.empty())
     {
+        if (sockets) sockets->clear();
         std::cerr << "Loaded empty model asset: " << assetPath << std::endl;
         return false;
     }
 
-    normalizeMesh(vertices, targetExtent);
+    normalizeMesh(vertices, targetExtent, sockets);
     return true;
 }
 
@@ -407,7 +436,7 @@ void Renderer::createMissileModel()
                      m_indices,
                      glm::vec3(0.78f, 0.79f, 0.82f),
                      glm::mat4(1.0f),
-                     2.0f))
+                     2.0f, &m_missileExhaustSockets))
     {
         return;
     }
@@ -616,7 +645,7 @@ void Renderer::createTargetModel()
                      m_targetIndices,
                      glm::vec3(0.70f, 0.74f, 0.78f),
                      jetOrientation,
-                     2.0f))
+                     2.0f, &m_targetExhaustSockets))
     {
         return;
     }
