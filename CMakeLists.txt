@@ -1,5 +1,18 @@
-cmake_minimum_required(VERSION 3.10)
-project(MissileSimOpenGL)
+cmake_minimum_required(VERSION 3.21)
+project(MissileSimOpenGL VERSION 0.1.0)
+
+# PORTABLE builds are the ones handed to other people (see the `dist` preset):
+# statically linked (no DLLs, no VC++ redistributable), no console window,
+# relocatable (no absolute source paths baked in), with an install/CPack step
+# that zips the exe together with the assets it needs.
+option(MISSILESIM_PORTABLE "Build a self-contained, shareable executable" OFF)
+option(MISSILESIM_BUILD_TOOLS "Build developer tools (AudioAudition)" ON)
+
+if(MISSILESIM_PORTABLE AND MSVC)
+    # Must match the static vcpkg triplet (x64-windows-static) and be set
+    # before any target, including fetched dependencies, is created.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -76,7 +89,9 @@ target_link_libraries(imgui PUBLIC glfw3)
 add_subdirectory(src/audio)
 
 # Offline renderer: plays scripted scenarios through the audio engine into WAVs.
-add_subdirectory(tools/audition)
+if(MISSILESIM_BUILD_TOOLS)
+    add_subdirectory(tools/audition)
+endif()
 
 # Project source files
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
@@ -103,9 +118,23 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # Link libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui missilesim_audio assimp::assimp nlohmann_json::nlohmann_json)
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    MISSILESIM_SOURCE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
-)
+if(MISSILESIM_PORTABLE)
+    # MISSILESIM_SOURCE_ASSET_DIR is deliberately left undefined: a shared build
+    # must only ever load the assets shipped next to it.
+    target_compile_definitions(${PROJECT_NAME} PRIVATE MISSILESIM_PORTABLE=1)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        OUTPUT_NAME "MissileSim"
+        WIN32_EXECUTABLE ON
+    )
+    if(MSVC)
+        # GUI subsystem (no console window) while keeping the standard main().
+        target_link_options(${PROJECT_NAME} PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        MISSILESIM_SOURCE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    )
+endif()
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -127,9 +156,39 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/assets.md
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/assets.md
     COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/config
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/config
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/pbr
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/shaders/pbr
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/assets/skyboxes
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/skyboxes
 )
+
+# ---------------------------------------------------------------------------
+# Packaging: `cmake --install` / `cpack` produce a folder you can zip and send.
+# Everything goes into the "game" component so install rules from fetched
+# dependencies (miniaudio ships headers + libs) stay out of the package.
+# ---------------------------------------------------------------------------
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION . COMPONENT game)
+install(DIRECTORY assets/
+    DESTINATION assets
+    COMPONENT game
+    # Authoring sources and previews; the runtime only loads the .obj/.hdr files.
+    PATTERN "*.blend" EXCLUDE
+    PATTERN "*.glb" EXCLUDE
+    PATTERN "*.ibl" EXCLUDE
+    PATTERN "*preview*" EXCLUDE
+)
+install(FILES packaging/README.txt DESTINATION . COMPONENT game)
+
+set(CPACK_PACKAGE_NAME "MissileSim")
+set(CPACK_PACKAGE_VENDOR "MissileSim")
+set(CPACK_PACKAGE_FILE_NAME "MissileSim-${PROJECT_VERSION}-win64")
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+set(CPACK_COMPONENTS_ALL game)
+set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
+include(CPack)

@@ -1,8 +1,8 @@
 {
-  "version": 3,
+  "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 21,
+    "minor": 25,
     "patch": 0
   },
   "configurePresets": [
@@ -30,6 +30,19 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "dist",
+      "displayName": "Shareable release (static, zipped)",
+      "inherits": "ninja-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static",
+        "MISSILESIM_PORTABLE": "ON",
+        "MISSILESIM_BUILD_TOOLS": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -40,6 +53,27 @@
     {
       "name": "build-release",
       "configurePreset": "ninja-release"
+    },
+    {
+      "name": "dist",
+      "configurePreset": "dist"
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "dist",
+      "configurePreset": "dist",
+      "generators": ["ZIP"]
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "dist",
+      "steps": [
+        { "type": "configure", "name": "dist" },
+        { "type": "build", "name": "dist" },
+        { "type": "package", "name": "dist" }
+      ]
     }
   ]
 }
