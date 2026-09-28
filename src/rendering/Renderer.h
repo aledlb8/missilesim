@@ -129,6 +129,7 @@ private:
         glm::vec3 position;
         glm::vec3 normal;
         glm::vec3 color;
+        glm::vec2 metalRoughness{0.2f, 0.45f};
     };
 
     struct DebugVertex

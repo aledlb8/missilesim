@@ -310,9 +310,9 @@ void PBRPipeline::submitLegacyMesh(GLuint vao, GLsizei indexCount,
                                     const glm::mat4 &modelMatrix,
                                     const glm::vec3 &albedo,
                                     float metallic, float roughness,
-                                    bool useVertexColor)
+                                    bool useVertexColor, bool useVertexMaterial)
 {
-    m_legacyDrawCalls.push_back({vao, indexCount, modelMatrix, albedo, metallic, roughness, useVertexColor});
+    m_legacyDrawCalls.push_back({vao, indexCount, modelMatrix, albedo, metallic, roughness, useVertexColor, useVertexMaterial});
 }
 
 // ===========================================================================
@@ -550,6 +550,7 @@ void PBRPipeline::mainShadingPass()
             m_pbrSimpleShader.setFloat("u_metallic", dc.metallic);
             m_pbrSimpleShader.setFloat("u_roughness", dc.roughness);
             m_pbrSimpleShader.setBool("u_useVertexColor", dc.useVertexColor);
+            m_pbrSimpleShader.setBool("u_useVertexMaterial", dc.useVertexMaterial);
 
             glBindVertexArray(dc.vao);
             glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);

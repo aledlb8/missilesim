@@ -76,7 +76,8 @@ public:
                           const glm::mat4 &modelMatrix,
                           const glm::vec3 &albedo,
                           float metallic, float roughness,
-                          bool useVertexColor = false);
+                          bool useVertexColor = false,
+                          bool useVertexMaterial = false);
 
     /// Execute shadows, depth prepass, light culling, shading, skybox, MSAA resolve.
     void executeRenderPass();
@@ -116,6 +117,7 @@ private:
         float metallic;
         float roughness;
         bool useVertexColor;
+        bool useVertexMaterial;
     };
 
     // Initialization stages

@@ -131,6 +131,8 @@ void Renderer::initialize()
     // Color attribute
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, color));
     glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, metalRoughness));
+    glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
 
@@ -161,6 +163,8 @@ void Renderer::initialize()
     // Color attribute
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, color));
     glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, metalRoughness));
+    glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
 
@@ -191,6 +195,8 @@ void Renderer::initialize()
     // Color attribute
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, color));
     glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, metalRoughness));
+    glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
 
@@ -221,6 +227,8 @@ void Renderer::initialize()
     // Color attribute
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, color));
     glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, metalRoughness));
+    glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
 

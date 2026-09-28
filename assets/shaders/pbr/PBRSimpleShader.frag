@@ -7,6 +7,7 @@ in VS_OUT {
     vec4 fragPos_lS;
     vec3 N;
     vec3 vertexColor;
+    vec2 metalRoughness;
 } fs_in;
 
 // Directional light
@@ -21,6 +22,7 @@ uniform vec3  u_albedo;
 uniform float u_metallic;
 uniform float u_roughness;
 uniform bool  u_useVertexColor;
+uniform bool  u_useVertexMaterial;
 
 // Shadow map
 uniform sampler2D shadowMap;
@@ -173,18 +175,18 @@ float calcDirShadow(vec3 fragPos, vec3 normal) {
 
 void main() {
     vec3 albedo    = u_useVertexColor ? fs_in.vertexColor : u_albedo;
-    float metallic = u_metallic;
-    float roughness = u_roughness;
+    float metallic = u_useVertexMaterial ? clamp(fs_in.metalRoughness.x, 0.0, 1.0) : u_metallic;
+    float roughness = u_useVertexMaterial ? clamp(fs_in.metalRoughness.y, 0.04, 1.0) : u_roughness;
 
     vec3 norm = normalize(fs_in.N);
     vec3 viewDir = normalize(cameraPos_wS - fs_in.fragPos_wS);
     float viewDistance = length(cameraPos_wS - fs_in.fragPos_wS);
 
-    // Procedural terrain detail. Only the ground plane uses vertex colours,
-    // so gate on that to leave missiles/jets untouched: multi-octave albedo
+    // Procedural terrain detail. Authored vehicle materials bypass the ground
+    // treatment: multi-octave albedo
     // variation plus a distance-faded normal perturbation so the terrain
     // reads as scrubland at close range and stays calm at distance.
-    if (u_useVertexColor) {
+    if (u_useVertexColor && !u_useVertexMaterial) {
         vec2 groundUv = fs_in.fragPos_wS.xz;
         float detailNoise = valueNoise(groundUv * (1.0 / 7.0)) * 0.5 +
                             valueNoise(groundUv * (1.0 / 29.0)) * 0.3 +

@@ -187,11 +187,26 @@ bool Renderer::loadObjModel(const std::string &relativePath,
 
     std::vector<glm::vec3> positions;
     std::vector<glm::vec3> normals;
+    std::vector<glm::vec3> colors;
+    std::vector<glm::vec2> materials;
+    glm::vec2 currentMaterial(0.2f, 0.45f);
     const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(preTransform)));
 
     std::string line;
     while (std::getline(input, line))
     {
+        // Optional material metadata from our Blender exporter. Standard OBJ
+        // readers ignore this comment; ordinary OBJ files retain defaults.
+        if (line.rfind("# pbr ", 0) == 0)
+        {
+            std::istringstream materialStream(line.substr(6));
+            glm::vec2 value;
+            if (materialStream >> value.x >> value.y &&
+                std::isfinite(value.x) && std::isfinite(value.y))
+            {
+                currentMaterial = glm::clamp(value, glm::vec2(0.0f, 0.04f), glm::vec2(1.0f));
+            }
+        }
         if (line.empty() || line[0] == '#')
         {
             continue;
@@ -206,6 +221,15 @@ bool Renderer::loadObjModel(const std::string &relativePath,
             glm::vec3 position(0.0f);
             stream >> position.x >> position.y >> position.z;
             positions.push_back(position);
+            glm::vec3 color = baseColor;
+            glm::vec3 vertexColor;
+            if (stream >> vertexColor.r >> vertexColor.g >> vertexColor.b &&
+                std::isfinite(vertexColor.r) && std::isfinite(vertexColor.g) && std::isfinite(vertexColor.b))
+            {
+                color = glm::clamp(vertexColor, glm::vec3(0.0f), glm::vec3(1.0f));
+            }
+            colors.push_back(color);
+            materials.push_back(currentMaterial);
         }
         else if (prefix == "vn")
         {
@@ -287,7 +311,9 @@ bool Renderer::loadObjModel(const std::string &relativePath,
 
                 for (int j = 0; j < 3; ++j)
                 {
-                    vertices.push_back({transformedPositions[j], hasTriangleNormals ? transformedNormals[j] : faceNormal, baseColor});
+                    const auto index = static_cast<std::size_t>(resolveObjIndex(triangleRefs[j].position, positions.size()));
+                    vertices.push_back({transformedPositions[j], hasTriangleNormals ? transformedNormals[j] : faceNormal,
+                                        colors[index], materials[index]});
                     indices.push_back(static_cast<unsigned int>(vertices.size() - 1));
                 }
             }

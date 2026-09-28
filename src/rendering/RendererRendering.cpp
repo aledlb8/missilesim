@@ -223,7 +223,7 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             {
                 m_pbrPipeline->submitLegacyMesh(
                     m_vao, static_cast<GLsizei>(m_indices.size()), model,
-                    glm::vec3(0.2f, 0.2f, 0.22f), 0.9f, 0.3f);
+                    glm::vec3(0.78f, 0.79f, 0.82f), 0.2f, 0.4f, true, true);
             }
             else
             {
@@ -252,7 +252,7 @@ void Renderer::renderAll(const std::vector<PhysicsObject *> &objects)
             {
                 m_pbrPipeline->submitLegacyMesh(
                     m_targetVAO, static_cast<GLsizei>(m_targetIndices.size()), model,
-                    glm::vec3(0.7f, 0.72f, 0.74f), 0.8f, 0.4f);
+                    glm::vec3(0.7f, 0.72f, 0.74f), 0.2f, 0.4f, true, true);
             }
             else
             {
@@ -308,7 +308,7 @@ void Renderer::render(PhysicsObject *object)
         {
             m_pbrPipeline->submitLegacyMesh(
                 m_vao, static_cast<GLsizei>(m_indices.size()), model,
-                glm::vec3(0.2f, 0.2f, 0.22f), 0.9f, 0.3f);
+                glm::vec3(0.78f, 0.79f, 0.82f), 0.2f, 0.4f, true, true);
             return;
         }
 
@@ -337,7 +337,7 @@ void Renderer::render(PhysicsObject *object)
         {
             m_pbrPipeline->submitLegacyMesh(
                 m_targetVAO, static_cast<GLsizei>(m_targetIndices.size()), model,
-                glm::vec3(0.7f, 0.72f, 0.74f), 0.8f, 0.4f);
+                glm::vec3(0.7f, 0.72f, 0.74f), 0.2f, 0.4f, true, true);
             return;
         }
 
