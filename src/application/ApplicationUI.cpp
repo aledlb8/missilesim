@@ -14,8 +14,11 @@
 #include "physics/Atmosphere.h"
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
+#include "sim/Fox2Catalog.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
+
+#include <cstring>
 
 namespace ui = missilesim::ui;
 
@@ -58,6 +61,141 @@ namespace
         ImGui::PopStyleColor();
         ImGui::PopFont();
         ImGui::PopTextWrapPos();
+    }
+
+    void fox2Readout(const char *label, const char *value, bool published)
+    {
+        ui::readoutRow(label, value, published ? nullptr : &ui::color::textFaint);
+    }
+
+    void formatMeasure(char *buffer, size_t size, const char *format, float value)
+    {
+        std::snprintf(buffer, size, format, value);
+    }
+
+    void drawFox2Card(const missilesim::fox2::Spec &spec)
+    {
+        char line[96];
+        formatMeasure(line, sizeof(line), "%.1f kg", spec.massKg);
+        fox2Readout("Launch mass", line, true);
+        formatMeasure(line, sizeof(line), "%.2f m", spec.lengthM);
+        fox2Readout("Length", line, true);
+        formatMeasure(line, sizeof(line), "%.3f m", spec.diameterM);
+        fox2Readout("Diameter", line, !spec.diameterIsAssumption);
+        if (spec.spanM > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.2f m", spec.spanM);
+            fox2Readout("Span", line, true);
+        }
+
+        fox2Readout("Motor", missilesim::fox2::motorConfidenceLabel(spec.motor),
+                    spec.motor != missilesim::fox2::MotorConfidence::UnpublishedStandIn);
+        const bool motorPublished = spec.motor != missilesim::fox2::MotorConfidence::UnpublishedStandIn;
+        formatMeasure(line, sizeof(line), "%.0f N", spec.resolvedThrustN);
+        fox2Readout(motorPublished ? "Thrust" : "Thrust stand-in", line, motorPublished);
+        formatMeasure(line, sizeof(line), "%.2f s", spec.resolvedBurnS);
+        fox2Readout(motorPublished ? "Burn" : "Burn stand-in", line, motorPublished);
+        if (spec.propellantKg > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.1f kg", spec.propellantKg);
+            fox2Readout("Propellant in mass", line, true);
+        }
+
+        formatMeasure(line, sizeof(line), "%.1f g", spec.resolvedBurnG);
+        fox2Readout(spec.hasTvc ? "Burn load" : "Structural load", line, spec.structuralGPublished);
+        formatMeasure(line, sizeof(line), "%.1f g", spec.resolvedCoastG);
+        fox2Readout("Coast load", line, spec.structuralGPublished);
+        formatMeasure(line, sizeof(line), "%.2f", spec.resolvedCnMax);
+        fox2Readout(spec.aeroGIsShapeCoefficient ? "CN shape coeff." : "CN max", line, spec.cnOverride > 0.0f);
+
+        fox2Readout("Aspect", missilesim::fox2::aspectLabel(spec.aspect), true);
+        if (spec.gimbalDeg > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.0f°", spec.gimbalDeg);
+            fox2Readout("Gimbal", line, spec.gimbalPublished);
+        }
+        if (spec.ifovDeg > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.1f°", spec.ifovDeg);
+            fox2Readout("Instantaneous field", line, spec.ifovPublished);
+        }
+        else
+        {
+            fox2Readout("Instantaneous field", "Not published", false);
+        }
+        if (spec.cueDeg > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.0f°", spec.cueDeg);
+            fox2Readout("Cue", line, spec.cuePublished);
+        }
+        if (spec.trackRatePublished)
+        {
+            formatMeasure(line, sizeof(line), "%.1f°/s", spec.trackRateDegPerS);
+            fox2Readout("Track rate", line, true);
+        }
+        else
+        {
+            fox2Readout("Track rate", "Gimbal is the stop", false);
+        }
+
+        const bool irccmKnown = spec.irccm == missilesim::fox2::IrccmKind::None || spec.irccmCircuitPublished;
+        fox2Readout("IRCCM", missilesim::fox2::irccmLabel(spec.irccm), irccmKnown);
+        const char *homing = "Lock before launch";
+        if (spec.homing == missilesim::fox2::LaunchHoming::LockAfterLaunch)
+        {
+            homing = spec.rearHemisphereDesignation ? "After launch, full sphere" : "Lock after launch";
+        }
+        fox2Readout("Homing", homing, true);
+        if (spec.hasTvc)
+        {
+            std::snprintf(line, sizeof(line), "±%.0f°", spec.vaneDeg);
+            fox2Readout("Thrust vector", line, spec.vanePublished);
+        }
+        else
+        {
+            fox2Readout("Thrust vector", "None", true);
+        }
+        if (spec.armDistanceM > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.0f m", spec.armDistanceM);
+            fox2Readout("Arm distance", line, spec.armDistancePublished);
+        }
+        if (spec.armTimeS > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.1f s", spec.armTimeS);
+            fox2Readout("Arm time", line, spec.armTimePublished);
+        }
+        if (spec.armAfterBurnoutS > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.2f s", spec.armAfterBurnoutS);
+            fox2Readout("Arm after burnout", line, false);
+        }
+        if (spec.proximityM > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.1f m", spec.proximityM);
+            fox2Readout("Proximity", line, spec.proximityPublished);
+        }
+        if (spec.inhibitS > 0.0f)
+        {
+            formatMeasure(line, sizeof(line), "%.2f s", spec.inhibitS);
+            fox2Readout("Guidance inhibit", line, spec.inhibitPublished);
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, ui::px(8.0f)));
+        if (spec.motorNote != nullptr && spec.motorNote[0] != '\0')
+        {
+            note(spec.motorNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.irccmNote != nullptr && spec.irccmNote[0] != '\0')
+        {
+            note(spec.irccmNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.card != nullptr && spec.card[0] != '\0')
+        {
+            note(spec.card);
+        }
     }
 
     const char *aiStateName(TargetAIState state)
@@ -172,9 +310,14 @@ void Application::setupUI()
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const float buttonWidth = (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
         const bool missileBusy = m_missileInFlight || m_launchSequence.active || m_detonationHoldActive;
+        const bool railsEmpty = m_playerRole == PlayerRole::Fighter && m_fox2Rounds <= 0;
         if (missileBusy)
         {
             ui::button("IN FLIGHT", ui::ButtonStyle::Ghost, buttonWidth);
+        }
+        else if (railsEmpty)
+        {
+            ui::button("EMPTY", ui::ButtonStyle::Ghost, buttonWidth);
         }
         else if (ui::button("LAUNCH", ui::ButtonStyle::Primary, buttonWidth))
         {
@@ -183,7 +326,14 @@ void Application::setupUI()
         ImGui::SameLine();
         if (ui::button("REARM", ui::ButtonStyle::Secondary, buttonWidth))
         {
-            resetMissile();
+            if (m_playerRole == PlayerRole::Fighter)
+            {
+                rearmFighter();
+            }
+            else
+            {
+                resetMissile();
+            }
         }
         ImGui::SameLine();
         if (ui::button(m_isPaused ? "RESUME" : "PAUSE", ui::ButtonStyle::Secondary, buttonWidth))
@@ -240,6 +390,93 @@ void Application::setupUI()
     {
     case 0: // Missile
     {
+        ui::sectionLabel("ROLE");
+        int roleIndex = m_playerRole == PlayerRole::Fighter ? 1 : 0;
+        const char *const roles[] = {"SAM", "FIGHTER"};
+        if (ui::segmentedRow("Player", &roleIndex, roles, 2,
+                             "SAM fires the custom cold-launch round. Fighter carries a catalog Fox 2 on the wingtip rails."))
+        {
+            setPlayerRole(roleIndex == 1 ? PlayerRole::Fighter : PlayerRole::Sam);
+        }
+
+        if (m_playerRole == PlayerRole::Fighter)
+        {
+            note("Two wingtip rounds. The missile leaves at the fighter's speed: no vertical hop, no booster multiplier, no terrain avoidance. W and S pitch, A and D roll, Q and E rudder, Shift and Ctrl throttle, X afterburner, G rearm, F launch, R uncage.");
+            if (m_missileInFlight || m_detonationHoldActive)
+            {
+                ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+                note("The round already in the air keeps its seeker. This choice loads the next rail.");
+            }
+
+            ui::sectionLabel("FOX 2");
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 0.03f));
+            ImGui::BeginChild("##fox2-catalog", ImVec2(0.0f, ui::px(280.0f)), ImGuiChildFlags_Borders);
+            const char *const families[] = {
+                "Sidewinder", "Russia", "France", "Germany", "United Kingdom",
+                "Israel", "China", "Japan", "South Africa"};
+            const int roundCount = missilesim::fox2::catalogCount();
+            const missilesim::fox2::Spec *rounds = missilesim::fox2::catalog();
+            auto drawRound = [&](const missilesim::fox2::Spec &round)
+            {
+                ImGui::PushID(round.id);
+                const bool selected = m_fox2Id == round.id;
+                if (ImGui::Selectable(round.displayName, selected, ImGuiSelectableFlags_None, ImVec2(0.0f, ui::px(26.0f))))
+                {
+                    selectFox2(round.id);
+                }
+                ImGui::PopID();
+            };
+            for (const char *family : families)
+            {
+                bool any = false;
+                for (int roundIndex = 0; roundIndex < roundCount; ++roundIndex)
+                {
+                    if (rounds[roundIndex].family != nullptr && std::strcmp(rounds[roundIndex].family, family) == 0)
+                    {
+                        if (!any)
+                        {
+                            ui::sectionLabel(family);
+                            any = true;
+                        }
+                        drawRound(rounds[roundIndex]);
+                    }
+                }
+            }
+            for (int roundIndex = 0; roundIndex < roundCount; ++roundIndex)
+            {
+                bool listed = false;
+                for (const char *family : families)
+                {
+                    if (rounds[roundIndex].family != nullptr && std::strcmp(rounds[roundIndex].family, family) == 0)
+                    {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (!listed)
+                {
+                    if (rounds[roundIndex].family != nullptr)
+                    {
+                        ui::sectionLabel(rounds[roundIndex].family);
+                    }
+                    drawRound(rounds[roundIndex]);
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+
+            const missilesim::fox2::Spec *selected = missilesim::fox2::find(m_fox2Id.c_str());
+            if (selected != nullptr)
+            {
+                ui::sectionLabel(selected->displayName);
+                drawFox2Card(*selected);
+            }
+            break;
+        }
+
+        note("Custom cold-launch round. A vertical hop, a four-times boost, and terrain avoidance stay on this missile. The catalog rounds are the fighter's.");
+        ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+
         ui::sectionLabel("LAUNCHER");
         vectorRow("Launch position", m_initialPosition, "Where the round sits before launch (x, y, z metres).");
         vectorRow("Launch velocity", m_initialVelocity, "Initial velocity given at launch (x, y, z m/s).");
