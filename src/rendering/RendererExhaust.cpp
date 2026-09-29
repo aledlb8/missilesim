@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "SceneEffects.h"
+#include "../objects/Fighter.h"
 #include "../objects/Missile.h"
 #include "../objects/Target.h"
 
@@ -8,8 +9,9 @@
 
 std::vector<Renderer::ExhaustSocket> Renderer::getExhaustSockets(const PhysicsObject &object) const
 {
+    const bool jet = object.getType() == "Target" || object.getType() == "Fighter";
     const auto *local = object.getType() == "Missile" ? &m_missileExhaustSockets :
-                        object.getType() == "Target" ? &m_targetExhaustSockets : nullptr;
+                        jet ? &m_targetExhaustSockets : nullptr;
     if (!local) return {};
     const glm::mat4 model = buildObjectModelMatrix(object);
     std::vector<ExhaustSocket> sockets = *local;
@@ -38,6 +40,11 @@ void Renderer::submitEnginePlumes(const PhysicsObject &object)
         const auto &target = static_cast<const Target &>(object);
         if (!target.isActive()) return;
         throttle = target.getThrottle();
+    }
+    else if (object.getType() == "Fighter")
+    {
+        const auto &fighter = static_cast<const Fighter &>(object);
+        throttle = fighter.isAfterburner() ? std::max(fighter.getThrottle(), 0.85f) : fighter.getThrottle() * 0.45f;
     }
     else return;
     if (!std::isfinite(throttle) || throttle <= 0.01f) return;
