@@ -28,23 +28,8 @@ namespace ui = missilesim::ui;
 
 namespace
 {
-    constexpr float kToastLifetime = 3.0f;
-    constexpr size_t kMaxToasts = 4;
-    constexpr float kResultDuration = 4.8f;
     constexpr float kHintsVisibleSeconds = 12.0f;
     constexpr float kGravity = 9.80665f;
-
-    ImVec4 mix(const ImVec4 &a, const ImVec4 &b, float t)
-    {
-        return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
-    }
-
-    float fadeWindow(float age, float lifetime, float fadeIn, float fadeOut)
-    {
-        const float in = fadeIn > 0.0f ? std::clamp(age / fadeIn, 0.0f, 1.0f) : 1.0f;
-        const float out = fadeOut > 0.0f ? std::clamp((lifetime - age) / fadeOut, 0.0f, 1.0f) : 1.0f;
-        return std::min(in, out);
-    }
 
     // Translucent HUD panel: glass fill plus a hairline edge.
     void drawGlass(ImDrawList *drawList, ImVec2 min, ImVec2 max, float alpha, float rounding)
@@ -144,135 +129,12 @@ float Application::hudRightInset() const
     return m_showUI ? ui::px(kControlPanelWidth) + ui::px(16.0f) : 0.0f;
 }
 
-void Application::pushHudToast(std::string text, HudTone tone)
-{
-    m_hud.toasts.push_front(HudToast{std::move(text), tone, 0.0f});
-    while (m_hud.toasts.size() > kMaxToasts)
-    {
-        m_hud.toasts.pop_back();
-    }
-}
-
 void Application::updateHudTracker(float deltaTime)
 {
-    HudTracker &hud = m_hud;
-    deltaTime = std::max(deltaTime, 0.0f);
     if (!m_isPaused)
     {
-        hud.engagementTime += deltaTime;
+        m_hud.engagementTime += std::max(deltaTime, 0.0f);
     }
-
-    for (HudToast &toast : hud.toasts)
-    {
-        toast.age += deltaTime;
-    }
-    while (!hud.toasts.empty() && hud.toasts.back().age > kToastLifetime)
-    {
-        hud.toasts.pop_back();
-    }
-    if (hud.resultVisible)
-    {
-        hud.resultAge += deltaTime;
-        hud.resultVisible = hud.resultAge < kResultDuration;
-    }
-
-    auto targetIndex = [this](const Target *target) -> int
-    {
-        for (size_t i = 0; i < m_targets.size(); ++i)
-        {
-            if (m_targets[i].get() == target)
-            {
-                return static_cast<int>(i) + 1;
-            }
-        }
-        return 0;
-    };
-
-    // resetTargets() rebuilds the roster; resync silently rather than report it.
-    bool rosterChanged = !hud.initialized || hud.targets.size() != m_targets.size();
-    for (size_t i = 0; !rosterChanged && i < m_targets.size(); ++i)
-    {
-        rosterChanged = hud.targets[i] != m_targets[i].get();
-    }
-    if (rosterChanged)
-    {
-        hud.targets.assign(m_targets.size(), nullptr);
-        hud.targetActive.assign(m_targets.size(), false);
-        hud.targetFlares.assign(m_targets.size(), 0);
-        hud.flareToastCooldown.assign(m_targets.size(), 0.0f);
-        for (size_t i = 0; i < m_targets.size(); ++i)
-        {
-            hud.targets[i] = m_targets[i].get();
-            hud.targetActive[i] = m_targets[i] && m_targets[i]->isActive();
-            hud.targetFlares[i] = m_targets[i] ? m_targets[i]->getRemainingFlares() : 0;
-        }
-        hud.initialized = true;
-    }
-    else
-    {
-        for (size_t i = 0; i < m_targets.size(); ++i)
-        {
-            const Target *target = m_targets[i].get();
-            const bool active = target != nullptr && target->isActive();
-            const int flares = target != nullptr ? target->getRemainingFlares() : 0;
-            hud.flareToastCooldown[i] -= deltaTime;
-            if (active && flares < hud.targetFlares[i] && hud.flareToastCooldown[i] <= 0.0f)
-            {
-                pushHudToast("T" + std::to_string(i + 1) + "  Flares", HudTone::Accent);
-                hud.flareToastCooldown[i] = 2.5f;
-            }
-            hud.targetActive[i] = active;
-            hud.targetFlares[i] = flares;
-        }
-    }
-
-    const bool launchActive = m_launchSequence.active || m_missileInFlight;
-    if (launchActive && !hud.launchWasActive)
-    {
-        pushHudToast("Missile away", HudTone::Accent);
-        hud.hitsAtLaunch = m_targetHits;
-        hud.peakSpeed = 0.0f;
-        hud.peakMach = 0.0f;
-        hud.lastLock = nullptr;
-        hud.wasDecoyed = false;
-        hud.resultVisible = false;
-    }
-    hud.launchWasActive = launchActive;
-
-    if (m_missileInFlight && m_missile && m_physicsEngine)
-    {
-        const float speed = glm::length(m_missile->getVelocity());
-        const Atmosphere::State air = m_physicsEngine->getAtmosphereState(std::max(m_missile->getPosition().y, 0.0f));
-        hud.peakSpeed = std::max(hud.peakSpeed, speed);
-        if (air.speedOfSoundMetersPerSecond > 0.0f)
-        {
-            hud.peakMach = std::max(hud.peakMach, speed / air.speedOfSoundMetersPerSecond);
-        }
-
-        const Target *lock = getTrackedMissileTarget();
-        const bool decoyed = m_missile->hasTarget() && m_missile->isTrackingDecoy();
-        if (lock != nullptr && lock != hud.lastLock && !decoyed)
-        {
-            pushHudToast("Seeker lock  T" + std::to_string(targetIndex(lock)), HudTone::Accent);
-        }
-        if (decoyed && !hud.wasDecoyed)
-        {
-            pushHudToast("Seeker decoyed", HudTone::Danger);
-        }
-        hud.lastLock = lock;
-        hud.wasDecoyed = decoyed;
-    }
-
-    if (m_detonationHoldActive && !hud.holdWasActive)
-    {
-        hud.resultVisible = true;
-        hud.resultAge = 0.0f;
-        hud.resultHit = m_targetHits > hud.hitsAtLaunch;
-        hud.resultFlightTime = m_missileFlightTime;
-        hud.resultClosestPass = m_closestTargetDistance;
-        hud.resultPeakMach = hud.peakMach;
-    }
-    hud.holdWasActive = m_detonationHoldActive;
 }
 
 void Application::renderHud()
@@ -290,22 +152,6 @@ void Application::renderHud()
     const float margin = ui::px(26.0f);
     const float time = static_cast<float>(ImGui::GetTime());
     const ui::Fonts &font = ui::fonts();
-
-    auto toneColour = [](HudTone tone)
-    {
-        switch (tone)
-        {
-        case HudTone::Accent:
-            return ui::color::accent;
-        case HudTone::Positive:
-            return ui::color::positive;
-        case HudTone::Danger:
-            return ui::color::danger;
-        case HudTone::Neutral:
-            break;
-        }
-        return ui::color::text;
-    };
 
     Target *trackedTarget = getTrackedMissileTarget();
     auto targetIndex = [this](const Target *target) -> int
@@ -560,35 +406,6 @@ void Application::renderHud()
             cx += labelWidth + ui::px(18.0f);
             cx += ui::drawKeycap(drawList, ImVec2(cx, chipMin.y + ui::px(7.0f)), "Enter") + ui::px(8.0f);
             drawList->AddText(font.body, ui::px(14.0f), ImVec2(cx, chipMin.y + ui::px(10.0f)), ui::toU32(ui::color::textMuted), hint);
-            belowSelectorY = chipMax.y + ui::px(10.0f);
-        }
-    }
-
-    // ---- Event feed (under the selector) ----------------------------------------
-    {
-        float y = belowSelectorY;
-        const float usableWidth = width - hudRightInset();
-        for (const HudToast &toast : m_hud.toasts)
-        {
-            const float alpha = fadeWindow(toast.age, kToastLifetime, 0.16f, 0.5f);
-            const float slide = (1.0f - std::clamp(toast.age / 0.16f, 0.0f, 1.0f)) * ui::px(-8.0f);
-            std::string upper = toast.text;
-            std::transform(upper.begin(), upper.end(), upper.begin(),
-                           [](unsigned char c)
-                           { return static_cast<char>(std::toupper(c)); });
-            const float size = ui::px(16.0f);
-            const float labelWidth = ui::measureTracked(font.display, size, upper.c_str(), 0.12f).x;
-            const float pillWidth = labelWidth + ui::px(44.0f);
-            const float pillHeight = ui::px(34.0f);
-            const ImVec2 min(std::round(origin.x + (usableWidth - pillWidth) * 0.5f), y + slide);
-            const ImVec2 max(min.x + pillWidth, min.y + pillHeight);
-            const ImVec4 tone = toneColour(toast.tone);
-            drawGlass(drawList, min, max, alpha, ui::px(6.0f));
-            drawList->AddRectFilled(ImVec2(min.x + ui::px(10.0f), min.y + ui::px(10.0f)), ImVec2(min.x + ui::px(13.0f), max.y - ui::px(10.0f)),
-                                    ui::toU32(tone, alpha), ui::px(1.5f));
-            ui::drawTracked(drawList, font.display, size, ImVec2(min.x + ui::px(26.0f), min.y + (pillHeight - size) * 0.5f),
-                            ui::toU32(mix(tone, ui::color::text, 0.35f), alpha), upper.c_str(), 0.12f);
-            y += (pillHeight + ui::px(8.0f)) * alpha;
         }
     }
 
@@ -820,56 +637,6 @@ void Application::renderHud()
             const float lineWidth = textWidth(font.mono, ui::px(12.5f), line);
             drawList->AddText(font.mono, ui::px(12.5f), ImVec2(centre.x - lineWidth * 0.5f, textY + ui::px(20.0f)),
                               ui::toU32(ui::color::textMuted), line);
-        }
-    }
-
-    // ---- Engagement result card -------------------------------------------------------
-    if (m_hud.resultVisible)
-    {
-        const float alpha = fadeWindow(m_hud.resultAge, kResultDuration, 0.25f, 0.8f);
-        const float rise = (1.0f - std::clamp(m_hud.resultAge / 0.35f, 0.0f, 1.0f)) * ui::px(10.0f);
-        const char *title = m_hud.resultHit ? "TARGET DESTROYED" : "MISSED";
-        const ImVec4 tone = m_hud.resultHit ? ui::color::positive : ui::color::danger;
-        const float titleSize = ui::px(40.0f);
-        const float titleWidth = ui::measureTracked(font.display, titleSize, title, 0.1f).x;
-
-        char flight[32], pass[32], mach[32];
-        std::snprintf(flight, sizeof(flight), "%.1f s", m_hud.resultFlightTime);
-        if (m_hud.resultClosestPass < 999999.0f)
-        {
-            std::snprintf(pass, sizeof(pass), "%s", formatRange(m_hud.resultClosestPass).c_str());
-        }
-        else
-        {
-            std::snprintf(pass, sizeof(pass), "\xE2\x80\x94");
-        }
-        std::snprintf(mach, sizeof(mach), "%.2f", m_hud.resultPeakMach);
-        const char *const labels[] = {"FLIGHT TIME", "CLOSEST PASS", "PEAK MACH"};
-        const char *const values[] = {flight, pass, mach};
-        const float columnWidth = ui::px(150.0f);
-        const float statsWidth = columnWidth * 3.0f;
-        const float cardWidth = std::max(titleWidth, statsWidth) + ui::px(80.0f);
-        const float cardHeight = ui::px(156.0f);
-        const float usableWidth = width - hudRightInset();
-        const ImVec2 min(std::round(origin.x + (usableWidth - cardWidth) * 0.5f), std::round(origin.y + height * 0.2f + rise));
-        const ImVec2 max(min.x + cardWidth, min.y + cardHeight);
-        drawList->AddRectFilled(min, max, ui::toU32(ImVec4(0.035f, 0.043f, 0.059f, 0.80f), alpha), ui::px(10.0f));
-        drawList->AddRect(min, max, ui::toU32(ImVec4(1.0f, 1.0f, 1.0f, 0.08f), alpha), ui::px(10.0f));
-        drawList->AddRectFilled(ImVec2(min.x + cardWidth * 0.5f - ui::px(18.0f), min.y), ImVec2(min.x + cardWidth * 0.5f + ui::px(18.0f), min.y + ui::px(3.0f)),
-                                ui::toU32(tone, alpha));
-        ui::drawTracked(drawList, font.display, titleSize, ImVec2(min.x + (cardWidth - titleWidth) * 0.5f, min.y + ui::px(24.0f)),
-                        ui::toU32(mix(tone, ui::color::text, 0.25f), alpha), title, 0.1f);
-
-        const float statsX = min.x + (cardWidth - statsWidth) * 0.5f;
-        for (int i = 0; i < 3; ++i)
-        {
-            const float columnX = statsX + columnWidth * static_cast<float>(i);
-            const float labelWidth = ui::measureTracked(font.display, ui::px(11.5f), labels[i], 0.16f).x;
-            ui::drawTracked(drawList, font.display, ui::px(11.5f), ImVec2(columnX + (columnWidth - labelWidth) * 0.5f, min.y + ui::px(88.0f)),
-                            ui::toU32(ui::color::textMuted, alpha), labels[i], 0.16f);
-            const float valueWidth = textWidth(font.monoMedium, ui::px(19.0f), values[i]);
-            drawList->AddText(font.monoMedium, ui::px(19.0f), ImVec2(columnX + (columnWidth - valueWidth) * 0.5f, min.y + ui::px(108.0f)),
-                              ui::toU32(ui::color::text, alpha), values[i]);
         }
     }
 }

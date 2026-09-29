@@ -83,47 +83,10 @@ private:
         Controls
     };
 
-    // HUD event feed and engagement bookkeeping (ApplicationHUD.cpp). Events are
-    // derived from state changes each frame so the simulation code stays unaware
-    // of the HUD.
-    enum class HudTone
-    {
-        Neutral,
-        Accent,
-        Positive,
-        Danger
-    };
-
-    struct HudToast
-    {
-        std::string text;
-        HudTone tone = HudTone::Neutral;
-        float age = 0.0f;
-    };
-
+    // HUD bookkeeping (ApplicationHUD.cpp).
     struct HudTracker
     {
-        bool initialized = false;
-        bool launchWasActive = false;
-        bool holdWasActive = false;
-        bool wasDecoyed = false;
-        const Target *lastLock = nullptr;
-        std::vector<const Target *> targets; // identity of each slot last frame
-        std::vector<bool> targetActive;
-        std::vector<int> targetFlares;
-        std::vector<float> flareToastCooldown;
-        int hitsAtLaunch = 0;
-        float peakSpeed = 0.0f;
-        float peakMach = 0.0f;
         float engagementTime = 0.0f;
-        std::deque<HudToast> toasts;
-
-        bool resultVisible = false;
-        bool resultHit = false;
-        float resultAge = 0.0f;
-        float resultFlightTime = 0.0f;
-        float resultClosestPass = 0.0f;
-        float resultPeakMach = 0.0f;
     };
 
     // Last windowed client rect, restored when leaving borderless/fullscreen.
@@ -241,7 +204,6 @@ private:
     // In-engagement HUD (ApplicationHUD.cpp)
     void renderHud();
     void updateHudTracker(float deltaTime);
-    void pushHudToast(std::string text, HudTone tone);
     const char *missionStateLabel() const;
     float hudRightInset() const;
 
