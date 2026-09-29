@@ -52,6 +52,11 @@ float Application::computeEngagementRadius() const
         engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(m_missile->getPosition().x, m_missile->getPosition().z)) + 150.0f);
     }
 
+    if (m_playerRole == PlayerRole::Fighter && m_fighter)
+    {
+        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(m_fighter->getPosition().x, m_fighter->getPosition().z)) + 150.0f);
+    }
+
     for (const auto &target : m_targets)
     {
         if (!target || !target->isActive())
@@ -78,6 +83,11 @@ void Application::updateEnvironmentScale()
     if (m_missile)
     {
         maxAltitude = std::max(maxAltitude, m_missile->getPosition().y + 150.0f);
+    }
+
+    if (m_playerRole == PlayerRole::Fighter && m_fighter)
+    {
+        maxAltitude = std::max(maxAltitude, m_fighter->getPosition().y + 150.0f);
     }
 
     for (const auto &target : m_targets)
@@ -205,8 +215,10 @@ void Application::setCameraMode(CameraMode mode, bool frameFreeCamera)
 void Application::updateActiveCameraMode()
 {
     // While holding on a detonation, keep onboard cameras pointed at the blast
-    // rather than chasing the (now inert) missile or target.
-    if (m_detonationHoldActive && m_cameraMode != CameraMode::FREE)
+    // rather than chasing the (now inert) missile or target. The player's own
+    // fighter keeps flying, so its camera stays with it.
+    const bool flyingOwnJet = m_cameraMode == CameraMode::FIGHTER_JET && m_playerRole == PlayerRole::Fighter;
+    if (m_detonationHoldActive && m_cameraMode != CameraMode::FREE && !flyingOwnJet)
     {
         frameDetonationCamera();
         return;

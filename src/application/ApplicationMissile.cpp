@@ -27,6 +27,7 @@
 #include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
+#include "sim/Fox2Catalog.h"
 #include "physics/Atmosphere.h"
 #include "physics/PhysicsEngine.h"
 #include "physics/forces/Drag.h"
@@ -105,6 +106,12 @@ void Application::launchMissile()
         if (!m_missile)
         {
             std::cerr << "ERROR: Missile is null in launchMissile()" << std::endl;
+            return;
+        }
+
+        if (m_playerRole == PlayerRole::Fighter)
+        {
+            launchFox2FromRail();
             return;
         }
 
@@ -597,6 +604,23 @@ void Application::resetMissile()
 
         // Keep the staged missile inert until launch; it is added to physics
         // by launchMissile() after the eject and arming sequence are set.
+
+        // Catalog numbers replace the round that was just built from the sliders.
+        // The slider fields themselves stay as the custom SAM.
+        if (m_playerRole == PlayerRole::Fighter)
+        {
+            const missilesim::fox2::Spec *spec = missilesim::fox2::find(m_fox2Id.c_str());
+            if (spec == nullptr)
+            {
+                m_fox2Id = "aim-9x-blk2";
+                spec = missilesim::fox2::find(m_fox2Id.c_str());
+            }
+            if (spec != nullptr)
+            {
+                m_missile->configureFox2(*spec);
+            }
+            stageFox2OnRail();
+        }
     }
     catch (const std::exception &e)
     {
@@ -757,6 +781,39 @@ Target *Application::getTrackedMissileTarget() const
 
 const char *Application::getMissileSeekerStateLabel() const
 {
+    if (m_missile && m_missile->isFox2())
+    {
+        if (!m_missileInFlight && !m_seekerCueEnabled)
+        {
+            return "Caged";
+        }
+        if (m_missile->isTrackingDecoy())
+        {
+            return "Tracking flare";
+        }
+        if (m_missile->hasFox2InfraredLock())
+        {
+            return "Infrared lock";
+        }
+        if (m_missileInFlight && m_missile->fox2OnTrackMemory())
+        {
+            return "Memory";
+        }
+        if (m_missileInFlight && (m_missile->fox2GuidanceExpired() || m_missile->fox2HadLock()))
+        {
+            return "Ballistic";
+        }
+        if (m_missileInFlight && m_missile->hasTarget())
+        {
+            return "Inertial";
+        }
+        if (m_missile->hasTarget())
+        {
+            return "Designated";
+        }
+        return "Searching";
+    }
+
     if (!m_missile || !m_missile->isGuidanceEnabled())
     {
         return "Disabled";
@@ -802,6 +859,12 @@ void Application::updatePreLaunchSeekerLock()
         return;
     }
 
+    if (m_missile->isFox2())
+    {
+        refreshFox2Prelaunch();
+        return;
+    }
+
     if (!m_seekerCueEnabled || !m_guidanceEnabled)
     {
         m_missile->clearTarget();
@@ -840,13 +903,25 @@ void Application::renderPreLaunchSeekerCue() const
     const ImU32 ringColor = hasLock ? ui::toU32(ui::color::danger) : ui::toU32(ui::color::text, 0.85f);
     ImDrawList *drawList = ImGui::GetBackgroundDrawList();
     const float tick = ui::px(6.0f);
-    drawList->AddCircle(cueCenter, m_seekerCueRadiusPixels, ringColor, 64, ui::px(1.8f));
+    const float cueRadius = (m_missile && m_missile->isFox2()) ? fox2SeekerCueRadiusPixels() : m_seekerCueRadiusPixels;
+    drawList->AddCircle(cueCenter, cueRadius, ringColor, 64, ui::px(1.8f));
     drawList->AddLine(ImVec2(cueCenter.x - tick, cueCenter.y), ImVec2(cueCenter.x + tick, cueCenter.y), ringColor, ui::px(1.2f));
     drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - tick), ImVec2(cueCenter.x, cueCenter.y + tick), ringColor, ui::px(1.2f));
     const char *label = hasLock ? "SEEKER LOCK" : "SEEKER SEARCH";
+    if (m_missile->isFox2())
+    {
+        if (m_missile->hasFox2InfraredLock())
+        {
+            label = "IR LOCK";
+        }
+        else if (m_missile->hasTarget())
+        {
+            label = "DESIGNATED";
+        }
+    }
     const float labelWidth = ui::measureTracked(ui::fonts().display, ui::px(12.5f), label, 0.16f).x;
     ui::drawTracked(drawList, ui::fonts().display, ui::px(12.5f),
-                    ImVec2(cueCenter.x - labelWidth * 0.5f, cueCenter.y + m_seekerCueRadiusPixels + ui::px(8.0f)),
+                    ImVec2(cueCenter.x - labelWidth * 0.5f, cueCenter.y + cueRadius + ui::px(8.0f)),
                     ringColor, label, 0.16f);
 }
 

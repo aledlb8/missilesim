@@ -185,7 +185,20 @@ void Application::startEngagement()
     // engagement from a fresh, framed setup.
     resetTargets();
     resetMissile();
-    setCameraMode(CameraMode::FREE, true);
+    if (m_playerRole == PlayerRole::Fighter)
+    {
+        // Straight into the cockpit view: mouse aim from the first frame.
+        m_fox2Rounds = 2;
+        m_railSign = 1;
+        placeFighterAtEngagement();
+        setCameraMode(CameraMode::FIGHTER_JET);
+        resetAimCamera();
+        resetMissile();
+    }
+    else
+    {
+        setCameraMode(CameraMode::FREE, true);
+    }
     if (m_renderer)
     {
         m_renderer->setCameraFOV(m_savedCameraFOV);

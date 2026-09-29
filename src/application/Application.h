@@ -290,6 +290,19 @@ private:
     // Missile functions
     void launchMissile();
     void resetMissile();
+    void setPlayerRole(PlayerRole role);
+    void selectFox2(const char *id);
+    void launchFox2FromRail();
+    void stageFox2OnRail();
+    void rearmFighter();
+    void updateFighter(float deltaTime);
+    void placeFighterAtEngagement();
+    void sampleFighterControls(float deltaTime);
+    void handleFighterCrash();
+    void refreshFox2Prelaunch();
+    void renderFighter();
+    void emitFighterVisuals();
+    float fox2SeekerCueRadiusPixels() const;
     glm::vec3 computeMissileLaunchDirection(Target *lockedTarget,
                                             const glm::vec3 &cameraForward,
                                             const glm::vec3 &stagedVelocity) const;

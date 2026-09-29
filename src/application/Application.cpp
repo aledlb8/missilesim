@@ -24,6 +24,7 @@
 #include <glm/gtx/norm.hpp>
 
 #include "audio/AudioSystem.h"
+#include "objects/Fighter.h"
 #include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"

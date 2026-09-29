@@ -207,6 +207,15 @@ void Application::initialize()
         // Create targets first, before setting up missile guidance
         resetTargets();
 
+        if (m_playerRole == PlayerRole::Fighter)
+        {
+            placeFighterAtEngagement();
+            setCameraMode(CameraMode::FIGHTER_JET);
+            resetAimCamera();
+            stageFox2OnRail();
+            refreshFox2Prelaunch();
+        }
+
         // Run a small update so the autonomous target controller starts from a live state.
         if (m_physicsEngine && !m_targets.empty())
         {
@@ -495,6 +504,14 @@ void Application::update(float deltaTime)
                 // Store previous position of missile for hit detection
                 glm::vec3 prevMissilePos = m_missile->getPosition();
 
+                beginFixedStepForAll();
+                updateFighter(m_timeStep);
+                if (!m_missileInFlight && !m_detonationHoldActive)
+                {
+                    stageFox2OnRail();
+                    refreshFox2Prelaunch();
+                }
+
                 updateMissileLaunchSequence(m_timeStep);
 
                 // Update physics
@@ -546,8 +563,9 @@ void Application::update(float deltaTime)
 
                     // Kill bad flights that leave the playable space.
                     const float engagementRadius = computeEngagementRadius();
-                    const float maxFlightRadius = std::max(5000.0f, engagementRadius * 5.0f);
-                    const float maxFlightAltitude = std::max(3000.0f, engagementRadius * 1.8f);
+                    const bool fox2Flight = m_missile->isFox2();
+                    const float maxFlightRadius = fox2Flight ? 150000.0f : std::max(5000.0f, engagementRadius * 5.0f);
+                    const float maxFlightAltitude = fox2Flight ? 30000.0f : std::max(3000.0f, engagementRadius * 1.8f);
                     const float missileHorizontalDistance = glm::length(glm::vec2(missilePos.x, missilePos.z));
                     if (!terminateFlight &&
                         (missileHorizontalDistance > maxFlightRadius || missilePos.y > maxFlightAltitude))
@@ -573,7 +591,8 @@ void Application::update(float deltaTime)
                             const float aspect = glm::dot(glm::normalize(missileVel), lineOfSight);
 
                             // If the target is behind the missile and range is opening, the shot is spent.
-                            if (rangeRate > 15.0f && aspect < -0.15f)
+                            // Fox 2 shots are allowed to lose the target aft and keep flying.
+                            if (!fox2Flight && rangeRate > 15.0f && aspect < -0.15f)
                             {
                                 terminateFlight = true;
                             }
@@ -708,14 +727,15 @@ void Application::render()
 
         // Render missile (hidden during a detonation hold: it has been consumed
         // by the explosion, so it should vanish rather than linger as debris).
-        if (m_missile && !m_detonationHoldActive)
+        const bool hideEmptyRail = m_playerRole == PlayerRole::Fighter && m_fox2Rounds <= 0 && !m_missileInFlight;
+        if (m_missile && !m_detonationHoldActive && !hideEmptyRail)
         {
             try
             {
                 m_renderer->render(m_missile.get());
 
                 // Render predicted trajectory if enabled (tactical overlay: not behind the title)
-                if (m_showTrajectory && inEngagement)
+                if (m_showTrajectory && inEngagement && !m_missile->isFox2())
                 {
                     renderPredictedTrajectory();
                 }
@@ -729,6 +749,8 @@ void Application::render()
                 std::cerr << "ERROR: Unknown exception rendering missile" << std::endl;
             }
         }
+
+        renderFighter();
 
         // Render targets (their screen markers are drawn by the HUD)
         for (const auto &target : m_targets)

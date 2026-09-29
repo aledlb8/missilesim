@@ -171,7 +171,7 @@ void Application::updateAudioFrame(float deltaTime)
     }
 
     Target *cockpitTarget = nullptr;
-    if (m_cameraMode == CameraMode::FIGHTER_JET)
+    if (m_cameraMode == CameraMode::FIGHTER_JET && m_playerRole != PlayerRole::Fighter)
     {
         cockpitTarget = getTrackedMissileTarget();
         if (cockpitTarget == nullptr)
@@ -233,22 +233,26 @@ void Application::emitFrameVisualEffects(float deltaTime)
     if (m_missile && m_missile->isThrustEnabled() && m_missile->getFuel() > 0.0f && m_missile->getThrottle() > 0.01f)
     {
         const auto sockets = m_renderer->getExhaustSockets(*m_missile);
-        const float fuelFraction = (m_missileFuel > 0.0f)
-                                       ? glm::clamp(m_missile->getFuel() / m_missileFuel, 0.0f, 1.0f)
+        const float fuelCapacity = m_missile->isFox2() ? m_missile->getFuelCapacity() : m_missileFuel;
+        const float fuelFraction = (fuelCapacity > 0.0f)
+                                       ? glm::clamp(m_missile->getFuel() / fuelCapacity, 0.0f, 1.0f)
                                        : 1.0f;
         // The booster burns at elevated thrust; lay a noticeably thicker, brighter
         // plume for its duration so the climb-out reads as a hard rocket boost.
         const float boostPlume = (m_launchSequence.motorIgnited && !m_launchSequence.boostComplete) ? 0.34f : 0.0f;
         const float throttle = glm::clamp(m_missile->getThrottle(), 0.0f, 1.0f);
-        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle,
-                                                0.22f,
+        const float smokeScale = m_missile->isReducedSmoke() ? 0.35f : 1.0f;
+        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle * smokeScale,
+                                                0.08f,
                                                 1.0f);
         for (const auto &socket : sockets)
         {
-            const glm::vec3 previous = socket.position + m_missile->getPreviousPosition() - m_missile->getPosition();
+            const glm::vec3 previous = socket.position + m_missile->getPreviousRenderPosition() - m_missile->getRenderPosition();
             m_renderer->emitMissileExhaust(previous, socket.position, -socket.direction, m_missile->getVelocity(), plumeIntensity);
         }
     }
+
+    emitFighterVisuals();
 
     for (const auto &target : m_targets)
     {
