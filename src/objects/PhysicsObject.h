@@ -63,7 +63,21 @@ public:
     // Object type for rendering and other systems
     virtual std::string getType() const { return "PhysicsObject"; }
 
+    // Render interpolation ("Fix Your Timestep", Glenn Fiedler). Physics runs
+    // in fixed steps that do not line up with frames; drawing the raw state
+    // makes motion judder (a frame may see zero, one or two steps). The
+    // application marks the start of every fixed step, then before drawing
+    // blends the last two step states by the leftover step fraction.
+    virtual void beginFixedStep() { m_stepStartPosition = m_position; }
+    virtual void setRenderBlend(float alpha);
+    const glm::vec3 &getRenderPosition() const { return m_renderPosition; }
+    // Render position one frame ago, for emitting trails between frames.
+    const glm::vec3 &getPreviousRenderPosition() const { return m_previousRenderPosition; }
+
 protected:
+    glm::vec3 m_stepStartPosition; // position at the start of the current fixed step
+    glm::vec3 m_renderPosition;
+    glm::vec3 m_previousRenderPosition;
     glm::vec3 m_previousPosition; // Position at the start of the last integration step
     glm::vec3 m_position;         // Position in 3D space (meters)
     glm::vec3 m_velocity;         // Velocity (meters/second)

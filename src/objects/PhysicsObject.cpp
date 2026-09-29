@@ -14,8 +14,28 @@ namespace
 } // namespace
 
 PhysicsObject::PhysicsObject(const glm::vec3 &position, const glm::vec3 &velocity, float mass)
-    : m_previousPosition(position), m_position(position), m_velocity(velocity), m_acceleration(0.0f), m_forces(0.0f), m_mass(mass)
+    : m_stepStartPosition(position), m_renderPosition(position), m_previousRenderPosition(position),
+      m_previousPosition(position), m_position(position), m_velocity(velocity), m_acceleration(0.0f), m_forces(0.0f), m_mass(mass)
 {
+}
+
+void PhysicsObject::setRenderBlend(float alpha)
+{
+    m_previousRenderPosition = m_renderPosition;
+    // A jump far beyond one step of motion is a teleport (reset, respawn,
+    // re-staging): draw the new state rather than sliding to it.
+    const float stepTravel = glm::length(m_position - m_stepStartPosition);
+    if (stepTravel > 250.0f)
+    {
+        m_renderPosition = m_position;
+        m_previousRenderPosition = m_position;
+        return;
+    }
+    m_renderPosition = m_stepStartPosition + (m_position - m_stepStartPosition) * std::clamp(alpha, 0.0f, 1.0f);
+    if (glm::length(m_renderPosition - m_previousRenderPosition) > 250.0f)
+    {
+        m_previousRenderPosition = m_renderPosition;
+    }
 }
 
 void PhysicsObject::update(float deltaTime)
