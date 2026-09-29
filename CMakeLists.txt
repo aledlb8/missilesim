@@ -118,6 +118,8 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # Link libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui missilesim_audio assimp::assimp nlohmann_json::nlohmann_json)
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE MISSILESIM_VERSION="${PROJECT_VERSION}")
+
 if(MISSILESIM_PORTABLE)
     # MISSILESIM_SOURCE_ASSET_DIR is deliberately left undefined: a shared build
     # must only ever load the assets shipped next to it.
@@ -187,7 +189,8 @@ set(CPACK_PACKAGE_NAME "MissileSim")
 set(CPACK_PACKAGE_VENDOR "MissileSim")
 set(CPACK_PACKAGE_FILE_NAME "MissileSim-${PROJECT_VERSION}-win64")
 set(CPACK_GENERATOR "ZIP")
-set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+# Wrap everything in one MissileSim-<version>-win64/ folder inside the zip.
+set(CPACK_COMPONENT_INCLUDE_TOPLEVEL_DIRECTORY ON)
 set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
 set(CPACK_COMPONENTS_ALL game)
 set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
