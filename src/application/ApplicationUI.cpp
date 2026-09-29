@@ -1,219 +1,66 @@
+// Control panel (Tab): one docked panel with the engagement actions and every
+// simulation parameter, grouped into tabs. Uses the ui:: widgets throughout.
 #include "Application.h"
-#include "ApplicationDetail.h"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 
-#include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
 #include "physics/Atmosphere.h"
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
+#include "ui/Theme.h"
+#include "ui/Widgets.h"
 
-using missilesim::application::detail::safeNormalize;
+namespace ui = missilesim::ui;
 
-void Application::renderMinimalHUD()
+namespace
 {
-    if (!m_missile || !m_renderer)
+    // Three-component input laid out like the other rows.
+    bool vectorRow(const char *label, float values[3], const char *hint)
     {
-        return;
+        ImGui::PushID(label);
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        const float rowHeight = ui::px(32.0f);
+        const float controlWidth = std::floor(width * 0.54f);
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const float size = ui::px(ui::type::body);
+        drawList->AddText(ui::fonts().medium, size, ImVec2(origin.x, origin.y + (rowHeight - size) * 0.5f),
+                          ui::toU32(ui::color::text, 0.9f), label);
+        if (hint != nullptr && ImGui::IsMouseHoveringRect(origin, ImVec2(origin.x + width - controlWidth, origin.y + rowHeight)))
+        {
+            ImGui::SetTooltip("%s", hint);
+        }
+
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + width - controlWidth, origin.y + (rowHeight - ImGui::GetFrameHeight()) * 0.5f));
+        ImGui::SetNextItemWidth(controlWidth);
+        ImGui::PushFont(ui::fonts().mono, ui::type::body - 1.5f);
+        const bool changed = ImGui::InputFloat3("##value", values, "%.0f");
+        ImGui::PopFont();
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + rowHeight));
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        ImGui::PopID();
+        return changed;
     }
 
-    const float fuel = m_missile->getFuel();
-    const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
-    int activeFlares = 0;
-    for (const auto &flare : m_flares)
+    void note(const char *text)
     {
-        if (flare && flare->isActive())
-        {
-            ++activeFlares;
-        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::PushFont(ui::fonts().body, ui::type::body - 1.5f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::color::textFaint);
+        ImGui::TextUnformatted(text);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ImGui::PopTextWrapPos();
     }
 
-    Target *trackedTarget = getTrackedMissileTarget();
-    const bool validTrackedTarget = (trackedTarget != nullptr);
-    const bool missileWarning = validTrackedTarget && trackedTarget->isMissileWarningActive();
-    const char *seekerTrack = getMissileSeekerTrackLabel();
-
-    ImGui::SetNextWindowSize(ImVec2(320.0f, 270.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Flight HUD"))
-    {
-        ImGui::Text("Fuel: %.1f kg", fuel);
-        ImGui::ProgressBar(fuelPercent, ImVec2(-1.0f, 8.0f), "");
-        ImGui::Spacing();
-        ImGui::Text("Seeker: %s", seekerTrack);
-        ImGui::Text("Flares: %d active", activeFlares);
-        if (validTrackedTarget)
-        {
-            ImGui::Text("Defense: %s", missileWarning ? "MAWS active" : "No cue");
-            ImGui::Text("Target flares: %d", trackedTarget->getRemainingFlares());
-        }
-
-        ImGui::Spacing();
-        ImGui::Checkbox("Show target labels", &m_showTargetInfo);
-        ImGui::Checkbox("Seeker x-ray", &m_seekerXrayEnabled);
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("See-through-terrain overlay marking what the\nautonomous seeker is tracking once in flight.");
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text("Camera: %s", getCameraModeLabel());
-        if (ImGui::Button("Free"))
-        {
-            setCameraMode(CameraMode::FREE);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Missile"))
-        {
-            setCameraMode(CameraMode::MISSILE);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Fighter Jet"))
-        {
-            setCameraMode(CameraMode::FIGHTER_JET);
-        }
-        ImGui::Spacing();
-        ImGui::Separator();
-        if (ImGui::Button("Reset Missile", ImVec2(-1.0f, 0.0f)))
-        {
-            resetMissile();
-        }
-        if (ImGui::Button("Reset Target", ImVec2(-1.0f, 0.0f)))
-        {
-            resetTargets();
-        }
-        ImGui::TextDisabled(m_cameraMode == CameraMode::FREE
-                                ? "Free cam: RMB look, WASD move, C frame."
-                                : "Chase cam: hold RMB to orbit, release to recenter.");
-    }
-    ImGui::End();
-
-    if (m_cameraMode == CameraMode::FIGHTER_JET)
-    {
-        constexpr float rwrWindowWidth = 268.0f;
-        constexpr float rwrWindowHeight = 340.0f;
-        const ImGuiViewport *viewport = ImGui::GetMainViewport();
-        ImVec2 windowPos(20.0f, 20.0f);
-        if (viewport != nullptr)
-        {
-            windowPos.x = viewport->WorkPos.x + viewport->WorkSize.x - rwrWindowWidth - 20.0f;
-            windowPos.y = viewport->WorkPos.y + ((viewport->WorkSize.y - rwrWindowHeight) * 0.5f);
-        }
-
-        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(rwrWindowWidth, rwrWindowHeight), ImGuiCond_Always);
-        const ImGuiWindowFlags rwrFlags = ImGuiWindowFlags_NoMove |
-                                          ImGuiWindowFlags_NoResize |
-                                          ImGuiWindowFlags_NoCollapse |
-                                          ImGuiWindowFlags_NoSavedSettings;
-        if (ImGui::Begin("RWR", nullptr, rwrFlags))
-        {
-            const float availableWidth = std::max(ImGui::GetContentRegionAvail().x, 220.0f);
-            const float scopeSize = std::min(availableWidth, 220.0f);
-            const float scopeOffsetX = std::max(0.0f, (availableWidth - scopeSize) * 0.5f);
-            if (scopeOffsetX > 0.0f)
-            {
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + scopeOffsetX);
-            }
-
-            const ImVec2 scopeOrigin = ImGui::GetCursorScreenPos();
-            const ImVec2 scopeDimensions(scopeSize, scopeSize);
-            ImGui::InvisibleButton("FighterJetRwrScope", scopeDimensions);
-
-            ImDrawList *drawList = ImGui::GetWindowDrawList();
-            const ImVec2 center(scopeOrigin.x + (scopeDimensions.x * 0.5f),
-                                scopeOrigin.y + (scopeDimensions.y * 0.5f));
-            const float radius = scopeSize * 0.40f;
-            const ImU32 scopeBackground = IM_COL32(8, 16, 24, 210);
-            const ImU32 ringColor = IM_COL32(84, 132, 156, 235);
-            const ImU32 axisColor = IM_COL32(66, 96, 116, 220);
-            const ImU32 labelColor = IM_COL32(166, 212, 232, 255);
-            const ImU32 cueColor = missileWarning ? IM_COL32(255, 92, 92, 255) : IM_COL32(110, 224, 154, 255);
-
-            drawList->AddCircleFilled(center, radius + 12.0f, scopeBackground, 64);
-            drawList->AddCircle(center, radius, ringColor, 64, 2.0f);
-            drawList->AddCircle(center, radius * 0.58f, axisColor, 64, 1.0f);
-            drawList->AddLine(ImVec2(center.x - radius, center.y), ImVec2(center.x + radius, center.y), axisColor, 1.0f);
-            drawList->AddLine(ImVec2(center.x, center.y - radius), ImVec2(center.x, center.y + radius), axisColor, 1.0f);
-            drawList->AddTriangleFilled(ImVec2(center.x, center.y - radius - 10.0f),
-                                        ImVec2(center.x - 6.0f, center.y - radius + 2.0f),
-                                        ImVec2(center.x + 6.0f, center.y - radius + 2.0f),
-                                        labelColor);
-            drawList->AddText(ImVec2(center.x - 4.0f, center.y - radius - 26.0f), labelColor, "F");
-            drawList->AddText(ImVec2(center.x - 4.0f, center.y + radius + 8.0f), labelColor, "B");
-            drawList->AddText(ImVec2(center.x - radius - 16.0f, center.y - 6.0f), labelColor, "L");
-            drawList->AddText(ImVec2(center.x + radius + 8.0f, center.y - 6.0f), labelColor, "R");
-
-            float bearingDegrees = 0.0f;
-            bool hasRwrThreat = validTrackedTarget && trackedTarget->hasThreatAssessment();
-            if (hasRwrThreat)
-            {
-                const glm::vec3 targetForward = safeNormalize(trackedTarget->getVelocity(), glm::vec3(0.0f, 0.0f, 1.0f));
-                const glm::vec3 flatForward = safeNormalize(glm::vec3(targetForward.x, 0.0f, targetForward.z), glm::vec3(0.0f, 0.0f, 1.0f));
-                const glm::vec3 targetRight = safeNormalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), flatForward), glm::vec3(1.0f, 0.0f, 0.0f));
-                const glm::vec3 incomingOffset = trackedTarget->getThreatMissilePosition() - trackedTarget->getPosition();
-                glm::vec2 planarCue(-glm::dot(incomingOffset, targetRight), glm::dot(incomingOffset, flatForward));
-                const float planarCueLength = glm::length(planarCue);
-                if (planarCueLength > 0.001f)
-                {
-                    planarCue /= planarCueLength;
-                }
-                else
-                {
-                    planarCue = glm::vec2(0.0f, 1.0f);
-                }
-
-                bearingDegrees = std::fmod(glm::degrees(std::atan2(planarCue.x, planarCue.y)) + 360.0f, 360.0f);
-                const float cueRadius = radius * 0.78f;
-                const ImVec2 cuePosition(center.x + (planarCue.x * cueRadius),
-                                         center.y - (planarCue.y * cueRadius));
-                drawList->AddLine(center, cuePosition, IM_COL32(255, 118, 118, 180), 1.5f);
-                drawList->AddCircleFilled(cuePosition, 6.0f, cueColor, 18);
-                drawList->AddCircle(cuePosition, 12.0f, IM_COL32(255, 160, 160, 160), 24, 1.5f);
-            }
-
-            ImGui::Spacing();
-            if (hasRwrThreat)
-            {
-                char buffer[96];
-                ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.42f, 1.0f), "MAWS: INBOUND");
-                std::snprintf(buffer, sizeof(buffer), "Bearing: %.0f deg", bearingDegrees);
-                ImGui::TextUnformatted(buffer);
-                std::snprintf(buffer, sizeof(buffer), "Range: %.0f m", trackedTarget->getThreatDistance());
-                ImGui::TextUnformatted(buffer);
-                std::snprintf(buffer, sizeof(buffer), "TCA: %.1f s  CPA: %.0f m",
-                              trackedTarget->getThreatTimeToClosestApproach(),
-                              trackedTarget->getThreatClosestApproachDistance());
-                ImGui::TextUnformatted(buffer);
-            }
-            else
-            {
-                ImGui::TextColored(ImVec4(0.48f, 0.92f, 0.68f, 1.0f), "MAWS: CLEAR");
-                ImGui::TextDisabled("No inbound missile inside the MAWS cue window.");
-            }
-        }
-        ImGui::End();
-    }
-}
-
-void Application::setupUI()
-{
-    if (!m_missile || !m_renderer || !m_physicsEngine)
-    {
-        return;
-    }
-
-    const ImGuiTableFlags readoutTableFlags = ImGuiTableFlags_SizingStretchProp |
-                                              ImGuiTableFlags_BordersInnerV |
-                                              ImGuiTableFlags_RowBg;
-
-    auto aiStateName = [](TargetAIState state) -> const char *
+    const char *aiStateName(TargetAIState state)
     {
         switch (state)
         {
@@ -228,7 +75,15 @@ void Application::setupUI()
         default:
             return "Unknown";
         }
-    };
+    }
+}
+
+void Application::setupUI()
+{
+    if (!m_missile || !m_renderer || !m_physicsEngine)
+    {
+        return;
+    }
 
     auto applyLiveMissileConfig = [&]()
     {
@@ -265,515 +120,378 @@ void Application::setupUI()
         }
     };
 
-    auto countActiveTargets = [&]() -> int
+    // ---- Panel frame ------------------------------------------------------------
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    const float edge = ui::px(12.0f);
+    const float panelWidth = ui::px(kControlPanelWidth);
+    // Slide in each time the panel opens (it is not drawn while hidden, so a
+    // gap in frames means it was just reopened).
+    const int frame = ImGui::GetFrameCount();
+    if (frame - m_controlPanelLastFrame > 1)
     {
-        int count = 0;
-        for (const auto &target : m_targets)
+        m_controlPanelAppear = 0.0f;
+    }
+    m_controlPanelLastFrame = frame;
+    m_controlPanelAppear += (1.0f - m_controlPanelAppear) * (1.0f - std::exp(-14.0f * ImGui::GetIO().DeltaTime));
+    const float appear = m_controlPanelAppear;
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - edge - panelWidth + (1.0f - appear) * ui::px(28.0f),
+                                   viewport->Pos.y + edge));
+    ImGui::SetNextWindowSize(ImVec2(panelWidth, viewport->Size.y - edge * 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, appear);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ui::px(10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ui::px(22.0f), ui::px(20.0f)));
+    const bool open = ImGui::Begin("##control-panel", nullptr,
+                                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar(2);
+    if (!open)
+    {
+        ImGui::End();
+        ImGui::PopStyleVar();
+        return;
+    }
+
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+
+    // Header: title + hide hint.
+    {
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        ui::drawTracked(drawList, ui::fonts().display, ui::px(21.0f), origin, ui::toU32(ui::color::text), "CONTROLS", 0.12f);
+        const char *hide = "Hide";
+        const float hideWidth = ui::fonts().body->CalcTextSizeA(ui::px(14.0f), FLT_MAX, 0.0f, hide).x;
+        const float hideX = origin.x + width - hideWidth;
+        drawList->AddText(ui::fonts().body, ui::px(14.0f), ImVec2(hideX, origin.y + ui::px(3.0f)), ui::toU32(ui::color::textMuted), hide);
+        const float capWidth = ui::fonts().monoMedium->CalcTextSizeA(ui::px(12.5f), FLT_MAX, 0.0f, "Tab").x + ui::px(14.0f);
+        ui::drawKeycap(drawList, ImVec2(hideX - capWidth - ui::px(8.0f), origin.y), "Tab");
+        ImGui::Dummy(ImVec2(width, ui::px(34.0f)));
+    }
+
+    // Primary actions.
+    {
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float buttonWidth = (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
+        const bool missileBusy = m_missileInFlight || m_launchSequence.active || m_detonationHoldActive;
+        if (missileBusy)
         {
-            if (target && target->isActive())
-            {
-                ++count;
-            }
+            ui::button("IN FLIGHT", ui::ButtonStyle::Ghost, buttonWidth);
         }
-        return count;
-    };
-
-    const int activeTargets = countActiveTargets();
-    const glm::vec3 missilePosition = m_missile->getPosition();
-    const glm::vec3 missileVelocity = m_missile->getVelocity();
-    const glm::vec3 missileAcceleration = m_missile->getAcceleration();
-    const glm::vec3 cameraPosition = m_renderer->getCameraPosition();
-    const float missileSpeed = glm::length(missileVelocity);
-    const float missileAltitude = std::max(missilePosition.y, 0.0f);
-    const float terrainClearance = missilePosition.y - m_physicsEngine->getGroundLevel();
-    const float missileMass = m_missile->getMass();
-    const float missileDryMass = m_missile->getDryMass();
-    const float fuel = m_missile->getFuel();
-    const float fuelPercent = (m_missileFuel > 0.0f) ? glm::clamp(fuel / m_missileFuel, 0.0f, 1.0f) : 0.0f;
-    const bool thrustEnabled = m_missile->isThrustEnabled();
-    const bool guidanceEnabled = m_missile->isGuidanceEnabled();
-    const bool boosterBurnedOut = !thrustEnabled && fuel <= 0.0f;
-    const char *seekerState = getMissileSeekerStateLabel();
-    const Atmosphere::State missileAtmosphere = m_physicsEngine->getAtmosphereState(missileAltitude);
-    const float missileMach = (missileAtmosphere.speedOfSoundMetersPerSecond > 0.0f)
-                                  ? (missileSpeed / missileAtmosphere.speedOfSoundMetersPerSecond)
-                                  : 0.0f;
-
-    Target *trackedTarget = getTrackedMissileTarget();
-
-    int trackedTargetIndex = -1;
-    if (trackedTarget != nullptr)
-    {
-        for (size_t i = 0; i < m_targets.size(); ++i)
-        {
-            if (m_targets[i].get() == trackedTarget)
-            {
-                trackedTargetIndex = static_cast<int>(i) + 1;
-                break;
-            }
-        }
-    }
-
-    const bool guidanceLocked = guidanceEnabled && trackedTarget != nullptr;
-    const bool missileWarning = guidanceLocked && trackedTarget->isMissileWarningActive();
-    const float trackedTargetRange = guidanceLocked ? glm::distance(missilePosition, trackedTarget->getPosition()) : 0.0f;
-
-    const char *missionState = "Standby";
-    if (m_isPaused)
-    {
-        missionState = "Paused";
-    }
-    else if (m_launchSequence.active && !m_launchSequence.motorIgnited)
-    {
-        missionState = "Rail clear";
-    }
-    else if (m_launchSequence.active)
-    {
-        missionState = "Ignition";
-    }
-    else if (m_missileInFlight && guidanceLocked && thrustEnabled)
-    {
-        missionState = "Intercept";
-    }
-    else if (m_missileInFlight && guidanceLocked)
-    {
-        missionState = "Glide Track";
-    }
-    else if (m_missileInFlight && thrustEnabled)
-    {
-        missionState = "Boost";
-    }
-    else if (m_missileInFlight)
-    {
-        missionState = "Ballistic";
-    }
-
-    auto drawReadoutRow = [](const char *label, const char *value)
-    {
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(label);
-        ImGui::TableSetColumnIndex(1);
-        ImGui::TextUnformatted(value);
-    };
-
-    ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(360.0f, 250.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Simulation"))
-    {
-        if (ImGui::Button(m_isPaused ? "Resume" : "Pause"))
-        {
-            m_isPaused = !m_isPaused;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Launch"))
+        else if (ui::button("LAUNCH", ui::ButtonStyle::Primary, buttonWidth))
         {
             launchMissile();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Reset Missile"))
+        if (ui::button("REARM", ui::ButtonStyle::Secondary, buttonWidth))
         {
             resetMissile();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Reset Targets"))
+        if (ui::button(m_isPaused ? "RESUME" : "PAUSE", ui::ButtonStyle::Secondary, buttonWidth))
         {
-            resetTargets();
-        }
-        if (ImGui::Button("Frame Camera"))
-        {
-            setCameraMode(CameraMode::FREE, true);
-        }
-
-        ImGui::Separator();
-        ImGui::SliderFloat("Simulation speed", &m_simulationSpeed, 0.1f, 10.0f, "%.1fx");
-        ImGui::SliderFloat("Audio volume", &m_audioVolume, 0.0f, 1.0f, "%.2f");
-
-        float gravity = m_physicsEngine->getGravity();
-        if (ImGui::SliderFloat("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s^2"))
-        {
-            m_physicsEngine->setGravity(gravity);
-        }
-
-        float airDensity = m_physicsEngine->getAirDensity();
-        if (ImGui::SliderFloat("Sea-level density", &airDensity, 0.0f, 2.0f, "%.3f kg/m^3"))
-        {
-            m_physicsEngine->setAirDensity(airDensity);
-        }
-
-        if (ImGui::Checkbox("Ground collision enabled", &m_groundEnabled))
-        {
-            m_physicsEngine->setGroundEnabled(m_groundEnabled);
-        }
-
-        if (m_groundEnabled)
-        {
-            if (ImGui::SliderFloat("Ground restitution", &m_groundRestitution, 0.0f, 1.0f, "%.2f"))
-            {
-                m_physicsEngine->setGroundRestitution(m_groundRestitution);
-            }
+            m_isPaused = !m_isPaused;
         }
     }
-    ImGui::End();
 
-    ImGui::SetNextWindowPos(ImVec2(20.0f, 290.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(420.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Missile Config"))
+    // Tab bar.
     {
-        ImGui::InputFloat3("Spawn position", m_initialPosition);
-        ImGui::InputFloat3("Launch velocity", m_initialVelocity);
-        ImGui::Separator();
-        ImGui::SliderFloat("Dry mass", &m_mass, 10.0f, 1000.0f, "%.1f kg");
-        ImGui::SliderFloat("Drag coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
-        ImGui::SliderFloat("Cross-sectional area", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m^2");
-        ImGui::SliderFloat("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
-        ImGui::SliderFloat("Thrust output", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N");
-        ImGui::SliderFloat("Fuel load", &m_missileFuel, 10.0f, 1000.0f, "%.1f kg");
-        ImGui::SliderFloat("Fuel burn rate", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.2f kg/s");
-        ImGui::Checkbox("Guidance enabled", &m_guidanceEnabled);
-        ImGui::SliderFloat("Lead aggressiveness", &m_navigationGain, 1.0f, 4.0f, "%.2f");
-        ImGui::SliderFloat("Max steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N");
-        ImGui::SliderFloat("Tracking angle", &m_trackingAngle, 5.0f, 180.0f, "%.0f deg");
-        ImGui::SliderFloat("Proximity fuse", &m_proximityFuseRadius, 0.0f, 75.0f, "%.1f m");
-        ImGui::SliderFloat("IRCCM resistance", &m_countermeasureResistance, 0.0f, 1.0f, "%.2f");
-        ImGui::Checkbox("Terrain avoidance", &m_terrainAvoidanceEnabled);
-        ImGui::SliderFloat("Terrain clearance", &m_terrainClearance, 0.0f, 400.0f, "%.1f m");
-        ImGui::SliderFloat("Terrain look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
+        ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        const char *const tabs[] = {"MISSILE", "TARGETS", "WORLD", "TELEMETRY"};
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+        const float tabHeight = ui::px(38.0f);
+        const float size = ui::px(14.0f);
+        const float tracking = 0.14f;
+        float x = origin.x;
+        for (int i = 0; i < static_cast<int>(std::size(tabs)); ++i)
+        {
+            const float labelWidth = ui::measureTracked(ui::fonts().display, size, tabs[i], tracking).x;
+            ImGui::SetCursorScreenPos(ImVec2(x, origin.y));
+            ImGui::PushID(i);
+            if (ImGui::InvisibleButton("##tab", ImVec2(labelWidth + ui::px(4.0f), tabHeight)))
+            {
+                m_controlPanelTab = i;
+            }
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (hovered)
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            const bool selected = m_controlPanelTab == i;
+            const ImVec4 colour = selected ? ui::color::text : (hovered ? ui::withAlpha(ui::color::text, 0.8f) : ui::color::textFaint);
+            ui::drawTracked(drawList, ui::fonts().display, size, ImVec2(x, origin.y + (tabHeight - size) * 0.5f), ui::toU32(colour), tabs[i], tracking);
+            if (selected)
+            {
+                drawList->AddRectFilled(ImVec2(x, origin.y + tabHeight - ui::px(2.0f)), ImVec2(x + labelWidth - size * tracking, origin.y + tabHeight),
+                                        ui::toU32(ui::color::accent));
+            }
+            x += labelWidth + ui::px(22.0f);
+        }
+        drawList->AddLine(ImVec2(origin.x, origin.y + tabHeight), ImVec2(origin.x + width, origin.y + tabHeight), ui::toU32(ui::color::hairline));
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + tabHeight + ui::px(4.0f)));
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    }
 
-        if (ImGui::Button("Apply To Live Missile"))
+    // Scrolling body; rows sit tighter than the default item spacing.
+    ImGui::BeginChild("##control-panel-body", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, ui::px(2.0f)));
+
+    switch (m_controlPanelTab)
+    {
+    case 0: // Missile
+    {
+        ui::sectionLabel("LAUNCHER");
+        vectorRow("Launch position", m_initialPosition, "Where the round sits before launch (x, y, z metres).");
+        vectorRow("Launch velocity", m_initialVelocity, "Initial velocity given at launch (x, y, z m/s).");
+
+        ui::sectionLabel("AIRFRAME");
+        ui::sliderRow("Dry mass", &m_mass, 10.0f, 1000.0f, "%.0f kg", "Mass without propellant.");
+        ui::sliderRow("Drag coefficient", &m_dragCoefficient, 0.01f, 1.0f, "%.3f");
+        ui::sliderRow("Cross-section", &m_crossSectionalArea, 0.01f, 1.0f, "%.3f m\xC2\xB2", "Frontal area used for drag.");
+        ui::sliderRow("Lift coefficient", &m_liftCoefficient, 0.0f, 1.0f, "%.3f");
+
+        ui::sectionLabel("PROPULSION");
+        ui::sliderRow("Thrust", &m_missileThrust, 1000.0f, 50000.0f, "%.0f N", "Sustainer thrust after the boost phase.");
+        ui::sliderRow("Propellant", &m_missileFuel, 10.0f, 1000.0f, "%.0f kg");
+        ui::sliderRow("Burn rate", &m_missileFuelConsumptionRate, 0.1f, 10.0f, "%.2f kg/s");
+
+        ui::sectionLabel("GUIDANCE");
+        ui::toggleRow("Guidance", &m_guidanceEnabled, "Proportional navigation toward the seeker's target.");
+        ui::sliderRow("Lead aggressiveness", &m_navigationGain, 1.0f, 4.0f, "%.2f",
+                      "Navigation gain: how hard the missile leads a crossing target.");
+        ui::sliderRow("Steering force", &m_maxSteeringForce, 1000.0f, 50000.0f, "%.0f N", "Maximum lateral force guidance may command.");
+        ui::sliderRow("Seeker field of view", &m_trackingAngle, 5.0f, 180.0f, "%.0f\xC2\xB0", "Half-angle the seeker can see off the nose.");
+        ui::sliderRow("Proximity fuse", &m_proximityFuseRadius, 0.0f, 75.0f, "%.0f m", "Detonation distance from the target.");
+        ui::sliderRow("Flare rejection", &m_countermeasureResistance, 0.0f, 1.0f, "%.2f",
+                      "IRCCM: how well the seeker ignores flares (1 = immune).");
+
+        ui::sectionLabel("TERRAIN");
+        ui::toggleRow("Terrain avoidance", &m_terrainAvoidanceEnabled);
+        ui::sliderRow("Minimum clearance", &m_terrainClearance, 0.0f, 400.0f, "%.0f m");
+        ui::sliderRow("Look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
+
+        ImGui::Dummy(ImVec2(0.0f, ui::px(12.0f)));
+        note("Changes apply to the next missile. Apply now to update the one on the rail or in flight.");
+        ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        if (ui::button("APPLY NOW", ui::ButtonStyle::Secondary, -1.0f))
         {
             applyLiveMissileConfig();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Rearm Missile"))
-        {
-            resetMissile();
-        }
+        break;
     }
-    ImGui::End();
-
-    ImGui::SetNextWindowPos(ImVec2(460.0f, 20.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Targets"))
+    case 1: // Targets
     {
-        ImGui::Text("Active targets: %d / %zu", activeTargets, m_targets.size());
-        ImGui::SliderInt("Target count", &m_targetCount, 1, 20);
+        ui::sectionLabel("FORMATION");
+        ui::sliderRowInt("Aircraft", &m_targetCount, 1, 20, "%d", "Number of fighters. Respawns on release.");
         if (ImGui::IsItemDeactivatedAfterEdit())
         {
             resetTargets();
         }
-
-        ImGui::SliderFloat("Average distance", &m_targetAIConfig.preferredDistance, 300.0f, 20000.0f, "%.0f m");
+        ui::sliderRow("Stand-off distance", &m_targetAIConfig.preferredDistance, 300.0f, 20000.0f, "%.0f m",
+                      "Average distance the fighters keep from the launcher. Respawns on release.");
         if (ImGui::IsItemDeactivatedAfterEdit())
         {
             resetTargets();
         }
-
-        ImGui::SliderFloat("Minimum speed", &m_targetAIConfig.minSpeed, 60.0f, 450.0f, "%.0f m/s");
+        ui::sliderRow("Minimum speed", &m_targetAIConfig.minSpeed, 60.0f, 450.0f, "%.0f m/s");
         m_targetAIConfig.maxSpeed = std::max(m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f);
-        ImGui::SliderFloat("Maximum speed", &m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f, 600.0f, "%.0f m/s");
+        ui::sliderRow("Maximum speed", &m_targetAIConfig.maxSpeed, m_targetAIConfig.minSpeed + 10.0f, 600.0f, "%.0f m/s");
 
-        if (ImGui::Button("Apply Target AI"))
+        ImGui::Dummy(ImVec2(0.0f, ui::px(10.0f)));
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float halfWidth = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
+        if (ui::button("APPLY SPEEDS", ui::ButtonStyle::Secondary, halfWidth))
         {
             applyLiveTargetAIConfig();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Rebuild Targets"))
+        if (ui::button("RESPAWN", ui::ButtonStyle::Secondary, halfWidth))
         {
             resetTargets();
         }
 
-        if (!m_targets.empty() && ImGui::BeginTable("TargetRosterWindowTable", 7, readoutTableFlags))
+        ui::sectionLabel("ROSTER");
+        const glm::vec3 missilePosition = m_missile->getPosition();
+        if (ImGui::BeginTable("##roster", 5, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX))
         {
-            ImGui::TableSetupColumn("ID");
+            ImGui::PushFont(ui::fonts().medium, ui::type::body - 2.0f);
+            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, ui::px(30.0f));
             ImGui::TableSetupColumn("State");
-            ImGui::TableSetupColumn("AI");
-            ImGui::TableSetupColumn("Altitude");
-            ImGui::TableSetupColumn("Speed");
+            ImGui::TableSetupColumn("Alt");
             ImGui::TableSetupColumn("Range");
-            ImGui::TableSetupColumn("Flares");
+            ImGui::TableSetupColumn("Flares", ImGuiTableColumnFlags_WidthFixed, ui::px(44.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::color::textMuted);
             ImGui::TableHeadersRow();
+            ImGui::PopStyleColor();
+            ImGui::PopFont();
 
+            ImGui::PushFont(ui::fonts().mono, ui::type::body - 2.5f);
             for (size_t i = 0; i < m_targets.size(); ++i)
             {
-                const auto &target = m_targets[i];
-                if (!target)
+                const Target *target = m_targets[i].get();
+                if (target == nullptr)
                 {
                     continue;
                 }
-
-                const bool isActive = target->isActive();
-                const float targetAltitude = std::max(target->getPosition().y, 0.0f);
-                const float targetSpeed = glm::length(target->getVelocity());
-                const float targetRange = glm::distance(missilePosition, target->getPosition());
-
+                const bool active = target->isActive();
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Text("%zu", i + 1);
+                ImGui::Text("T%zu", i + 1);
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(isActive ? "Active" : "Destroyed");
+                ImGui::PushFont(ui::fonts().medium, ui::type::body - 2.0f);
+                if (active)
+                {
+                    const bool defensive = target->getAIState() == TargetAIState::DEFENSIVE;
+                    ImGui::TextColored(defensive ? ui::color::danger : ui::color::text, "%s", aiStateName(target->getAIState()));
+                }
+                else
+                {
+                    ImGui::TextColored(ui::color::textFaint, "Down");
+                }
+                ImGui::PopFont();
                 ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(aiStateName(target->getAIState()));
+                active ? ImGui::Text("%.0f m", std::max(target->getPosition().y, 0.0f)) : ImGui::TextDisabled("\xE2\x80\x94");
                 ImGui::TableSetColumnIndex(3);
-                if (isActive)
-                {
-                    ImGui::Text("%.0f m", targetAltitude);
-                }
-                else
-                {
-                    ImGui::TextDisabled("--");
-                }
+                const float range = glm::distance(missilePosition, target->getPosition());
+                active ? ImGui::Text(range < 1000.0f ? "%.0f m" : "%.2f km", range < 1000.0f ? range : range / 1000.0f)
+                       : ImGui::TextDisabled("\xE2\x80\x94");
                 ImGui::TableSetColumnIndex(4);
-                if (isActive)
-                {
-                    ImGui::Text("%.0f m/s", targetSpeed);
-                }
-                else
-                {
-                    ImGui::TextDisabled("--");
-                }
-                ImGui::TableSetColumnIndex(5);
-                if (isActive)
-                {
-                    ImGui::Text("%.1f m", targetRange);
-                }
-                else
-                {
-                    ImGui::TextDisabled("--");
-                }
-                ImGui::TableSetColumnIndex(6);
-                if (isActive)
-                {
-                    ImGui::Text("%d", target->getRemainingFlares());
-                }
-                else
-                {
-                    ImGui::TextDisabled("--");
-                }
+                active ? ImGui::Text("%d", target->getRemainingFlares()) : ImGui::TextDisabled("\xE2\x80\x94");
             }
-
+            ImGui::PopFont();
             ImGui::EndTable();
         }
+        break;
     }
-    ImGui::End();
-
-    ImGui::SetNextWindowPos(ImVec2(460.0f, 460.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(360.0f, 260.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("View"))
+    case 2: // World
     {
-        float fov = m_renderer->getCameraFOV();
-        if (ImGui::SliderFloat("Field of view", &fov, 10.0f, 120.0f, "%.1f deg"))
+        ui::sectionLabel("SIMULATION");
+        ui::sliderRow("Time scale", &m_simulationSpeed, 0.1f, 10.0f, "%.1f\xC3\x97", "Simulation speed relative to real time.");
+        float gravity = m_physicsEngine->getGravity();
+        if (ui::sliderRow("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s\xC2\xB2"))
         {
-            m_renderer->setCameraFOV(fov);
+            m_physicsEngine->setGravity(gravity);
+        }
+        float airDensity = m_physicsEngine->getAirDensity();
+        if (ui::sliderRow("Sea-level air density", &airDensity, 0.0f, 2.0f, "%.3f kg/m\xC2\xB3"))
+        {
+            m_physicsEngine->setAirDensity(airDensity);
+        }
+        if (ui::toggleRow("Ground collision", &m_groundEnabled))
+        {
+            m_physicsEngine->setGroundEnabled(m_groundEnabled);
+        }
+        if (m_groundEnabled && ui::sliderRow("Ground bounce", &m_groundRestitution, 0.0f, 1.0f, "%.2f", "Restitution of ground impacts."))
+        {
+            m_physicsEngine->setGroundRestitution(m_groundRestitution);
         }
 
+        ui::sectionLabel("OVERLAYS");
+        ui::toggleRow("Predicted trajectory", &m_showTrajectory);
+        ui::sliderRowInt("Trajectory detail", &m_trajectoryPoints, 10, 600, "%d");
+        ui::sliderRow("Prediction horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
+        ui::toggleRow("Target flight path", &m_showPredictedTargetPath);
+        ui::toggleRow("Intercept point", &m_showInterceptPoint);
+        ui::toggleRow("Target labels", &m_showTargetInfo);
+        ui::toggleRow("Seeker x-ray", &m_seekerXrayEnabled, "Marks what the seeker is tracking, through terrain, once in flight.");
+        bool guides = m_renderer->getWorldGuidesEnabled();
+        if (ui::toggleRow("Airspace guides", &guides, "Range rings, the airspace boundary and corner beacons."))
+        {
+            m_renderer->setWorldGuidesEnabled(guides);
+        }
+
+        ui::sectionLabel("CAMERA");
         float cameraSpeed = m_renderer->getCameraSpeed();
-        if (ImGui::SliderFloat("Camera speed", &cameraSpeed, 1.0f, 800.0f, "%.0f"))
+        if (ui::sliderRow("Free camera speed", &cameraSpeed, 1.0f, 800.0f, "%.0f m/s"))
         {
             m_renderer->setCameraSpeed(cameraSpeed);
         }
-
-        ImGui::Checkbox("Show predicted trajectory", &m_showTrajectory);
-        ImGui::Checkbox("Show target labels", &m_showTargetInfo);
-        ImGui::Checkbox("Seeker x-ray", &m_seekerXrayEnabled);
-        if (ImGui::IsItemHovered())
+        ImGui::Dummy(ImVec2(0.0f, ui::px(8.0f)));
+        if (ui::button("FRAME ENGAGEMENT", ui::ButtonStyle::Secondary, -1.0f))
         {
-            ImGui::SetTooltip("See-through-terrain overlay marking what the\nautonomous seeker is tracking once in flight.");
+            setCameraMode(CameraMode::FREE, true);
         }
-        ImGui::Checkbox("Show target prediction path", &m_showPredictedTargetPath);
-        ImGui::Checkbox("Show intercept point", &m_showInterceptPoint);
-        bool worldGuides = m_renderer->getWorldGuidesEnabled();
-        if (ImGui::Checkbox("Show airspace guides", &worldGuides))
-        {
-            m_renderer->setWorldGuidesEnabled(worldGuides);
-            scheduleSettingsSave();
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Range rings, airspace boundary box and\ncorner beacons.");
-        }
-        ImGui::SliderInt("Trajectory detail", &m_trajectoryPoints, 10, 600);
-        ImGui::SliderFloat("Trajectory horizon", &m_trajectoryTime, 0.5f, 60.0f, "%.1f s");
-
-        if (m_renderer->hasPBR())
-        {
-            ImGui::Separator();
-            ImGui::TextUnformatted("Graphics");
-
-            float exposure = m_renderer->getPBRExposure();
-            if (ImGui::SliderFloat("Exposure", &exposure, 0.1f, 5.0f, "%.2f"))
-            {
-                m_renderer->setPBRExposure(exposure);
-                scheduleSettingsSave();
-            }
-
-            float bloomStrength = m_renderer->getPBRBloomStrength();
-            if (ImGui::SliderFloat("Bloom strength", &bloomStrength, 0.0f, 0.2f, "%.3f"))
-            {
-                m_renderer->setPBRBloomStrength(bloomStrength);
-                scheduleSettingsSave();
-            }
-
-            int bloomPasses = m_renderer->getPBRBloomPasses();
-            if (ImGui::SliderInt("Bloom reach", &bloomPasses, 0, 10))
-            {
-                m_renderer->setPBRBloomPasses(bloomPasses);
-                scheduleSettingsSave();
-            }
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Number of bloom mip levels (0 disables bloom;\nhigher reaches wider).");
-            }
-
-            float sunAzimuth = 0.0f;
-            float sunElevation = 0.0f;
-            float sunIntensity = 0.0f;
-            m_renderer->getSunOrientation(sunAzimuth, sunElevation, sunIntensity);
-            bool sunChanged = false;
-            sunChanged |= ImGui::SliderFloat("Sun azimuth", &sunAzimuth, -180.0f, 180.0f, "%.0f deg");
-            sunChanged |= ImGui::SliderFloat("Sun elevation", &sunElevation, 5.0f, 89.0f, "%.0f deg");
-            sunChanged |= ImGui::SliderFloat("Sun intensity", &sunIntensity, 0.5f, 8.0f, "%.2f");
-            if (sunChanged)
-            {
-                m_renderer->setSunOrientation(sunAzimuth, sunElevation, sunIntensity);
-                scheduleSettingsSave();
-            }
-
-            float fogScale = m_renderer->getPBRFogDensityScale();
-            if (ImGui::SliderFloat("Fog density", &fogScale, 0.0f, 3.0f, "%.2f"))
-            {
-                m_renderer->setPBRFogDensityScale(fogScale);
-                scheduleSettingsSave();
-            }
-
-            bool shadowsEnabled = m_renderer->getPBRShadowsEnabled();
-            if (ImGui::Checkbox("Shadows", &shadowsEnabled))
-            {
-                m_renderer->setPBRShadowsEnabled(shadowsEnabled);
-                scheduleSettingsSave();
-            }
-            ImGui::SameLine();
-            bool effectLights = m_renderer->getEffectLightsEnabled();
-            if (ImGui::Checkbox("Effect lights", &effectLights))
-            {
-                m_renderer->setEffectLightsEnabled(effectLights);
-                scheduleSettingsSave();
-            }
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Explosions, launches and engine plumes cast\nreal light on the scene.");
-            }
-        }
+        break;
     }
-    ImGui::End();
-
-    ImGui::SetNextWindowPos(ImVec2(840.0f, 460.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Telemetry"))
+    default: // Telemetry
     {
-        char buffer[128];
+        char buffer[96];
+        const glm::vec3 position = m_missile->getPosition();
+        const glm::vec3 velocity = m_missile->getVelocity();
+        const glm::vec3 acceleration = m_missile->getAcceleration();
+        const float speed = glm::length(velocity);
+        const float altitude = std::max(position.y, 0.0f);
+        const Atmosphere::State air = m_physicsEngine->getAtmosphereState(altitude);
+        const Target *tracked = getTrackedMissileTarget();
 
-        if (ImGui::BeginTable("MissionTelemetryWindowTable", 2, readoutTableFlags))
+        ui::sectionLabel("MISSION");
+        ui::readoutRow("State", missionStateLabel());
+        ui::readoutRow("Seeker", getMissileSeekerStateLabel());
+        if (tracked != nullptr)
         {
-            drawReadoutRow("Mission state", missionState);
-            std::snprintf(buffer, sizeof(buffer), "%d / %zu", activeTargets, m_targets.size());
-            drawReadoutRow("Targets active", buffer);
-            if (trackedTargetIndex > 0)
-            {
-                std::snprintf(buffer, sizeof(buffer), "Target %d", trackedTargetIndex);
-                drawReadoutRow("Tracked target", buffer);
-            }
-            else
-            {
-                drawReadoutRow("Tracked target", "None");
-            }
-            if (guidanceLocked)
-            {
-                std::snprintf(buffer, sizeof(buffer), "%.1f m", trackedTargetRange);
-                drawReadoutRow("Target range", buffer);
-            }
-            else
-            {
-                drawReadoutRow("Target range", "No lock");
-            }
-            if (m_closestTargetDistance < 999999.0f)
-            {
-                std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance);
-                drawReadoutRow("Closest pass", buffer);
-            }
-            else
-            {
-                drawReadoutRow("Closest pass", "Not available");
-            }
-            std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
-            drawReadoutRow("Flight time", buffer);
-            ImGui::EndTable();
+            std::snprintf(buffer, sizeof(buffer), "%.0f m", glm::distance(position, tracked->getPosition()));
+            ui::readoutRow("Target range", buffer);
         }
+        else
+        {
+            ui::readoutRow("Target range", "No lock");
+        }
+        if (m_closestTargetDistance < 999999.0f)
+        {
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance);
+            ui::readoutRow("Closest pass", buffer);
+        }
+        else
+        {
+            ui::readoutRow("Closest pass", "\xE2\x80\x94");
+        }
+        std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
+        ui::readoutRow("Flight time", buffer);
 
-        if (ImGui::BeginTable("MissileTelemetryWindowTable", 2, readoutTableFlags))
-        {
-            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m", missilePosition.x, missilePosition.y, missilePosition.z);
-            drawReadoutRow("Position", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s", missileVelocity.x, missileVelocity.y, missileVelocity.z);
-            drawReadoutRow("Velocity", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f m/s^2", missileAcceleration.x, missileAcceleration.y, missileAcceleration.z);
-            drawReadoutRow("Acceleration", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f m/s", missileSpeed);
-            drawReadoutRow("Speed", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.2f", missileMach);
-            drawReadoutRow("Mach", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f m", missileAltitude);
-            drawReadoutRow("Altitude", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f m", terrainClearance);
-            drawReadoutRow("Terrain clearance", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileMass);
-            drawReadoutRow("Current mass", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f kg", missileDryMass);
-            drawReadoutRow("Dry mass", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f kg", fuel);
-            drawReadoutRow("Fuel remaining", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.0f%%", fuelPercent * 100.0f);
-            drawReadoutRow("Fuel percent", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", missileAtmosphere.densityKgPerCubicMeter);
-            drawReadoutRow("Ambient density", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.2f kPa", missileAtmosphere.pressurePascals * 0.001f);
-            drawReadoutRow("Ambient pressure", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.2f K", missileAtmosphere.temperatureKelvin);
-            drawReadoutRow("Air temperature", buffer);
-            ImGui::EndTable();
-        }
+        ui::sectionLabel("MISSILE");
+        std::snprintf(buffer, sizeof(buffer), "%.0f, %.0f, %.0f", position.x, position.y, position.z);
+        ui::readoutRow("Position (m)", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.0f, %.0f, %.0f", velocity.x, velocity.y, velocity.z);
+        ui::readoutRow("Velocity (m/s)", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f m/s\xC2\xB2", glm::length(acceleration));
+        ui::readoutRow("Acceleration", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.0f m/s", speed);
+        ui::readoutRow("Speed", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.2f", air.speedOfSoundMetersPerSecond > 0.0f ? speed / air.speedOfSoundMetersPerSecond : 0.0f);
+        ui::readoutRow("Mach", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.0f m", position.y - m_physicsEngine->getGroundLevel());
+        ui::readoutRow("Terrain clearance", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f kg", m_missile->getMass());
+        ui::readoutRow("Mass", buffer);
 
-        if (ImGui::BeginTable("SystemTelemetryWindowTable", 2, readoutTableFlags))
-        {
-            drawReadoutRow("Booster", thrustEnabled ? "Active" : (boosterBurnedOut ? "Burned out" : "Off"));
-            drawReadoutRow("Guidance", guidanceLocked ? "Locked" : (guidanceEnabled ? "Searching" : "Disabled"));
-            drawReadoutRow("Seeker", seekerState);
-            drawReadoutRow("Target defense", missileWarning ? "MAWS active" : "No cue");
-            std::snprintf(buffer, sizeof(buffer), "%.0f N", m_missile->getThrust());
-            drawReadoutRow("Thrust command", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.0f%%", m_missile->getThrottle() * 100.0f);
-            drawReadoutRow("Motor throttle", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
-            drawReadoutRow("Burn rate", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f, %.1f, %.1f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
-            drawReadoutRow("Camera position", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f deg", m_renderer->getCameraFOV());
-            drawReadoutRow("Camera FOV", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.1f", m_renderer->getCameraSpeed());
-            drawReadoutRow("Camera speed", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.2f m/s^2", m_physicsEngine->getGravity());
-            drawReadoutRow("Gravity", buffer);
-            std::snprintf(buffer, sizeof(buffer), "%.3f kg/m^3", m_physicsEngine->getAirDensity());
-            drawReadoutRow("Sea-level density", buffer);
-            ImGui::EndTable();
-        }
+        ui::sectionLabel("PROPULSION");
+        const bool thrusting = m_missile->isThrustEnabled();
+        const bool burnedOut = !thrusting && m_missile->getFuel() <= 0.0f;
+        const ImVec4 motorColour = thrusting ? ui::color::accent : ui::color::textMuted;
+        ui::readoutRow("Motor", thrusting ? "Burning" : (burnedOut ? "Burned out" : "Off"), &motorColour);
+        std::snprintf(buffer, sizeof(buffer), "%.0f N  \xC2\xB7  %.0f%%", m_missile->getThrust(), m_missile->getThrottle() * 100.0f);
+        ui::readoutRow("Thrust", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f kg", m_missile->getFuel());
+        ui::readoutRow("Propellant", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
+        ui::readoutRow("Burn rate", buffer);
+
+        ui::sectionLabel("ATMOSPHERE");
+        std::snprintf(buffer, sizeof(buffer), "%.3f kg/m\xC2\xB3", air.densityKgPerCubicMeter);
+        ui::readoutRow("Density", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f kPa", air.pressurePascals * 0.001f);
+        ui::readoutRow("Pressure", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f \xC2\xB0""C", air.temperatureKelvin - 273.15f);
+        ui::readoutRow("Temperature", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.0f m/s", air.speedOfSoundMetersPerSecond);
+        ui::readoutRow("Speed of sound", buffer);
+        break;
     }
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, ui::px(16.0f)));
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
     ImGui::End();
-
-    const std::string currentSettingsSnapshot = buildSettingsSnapshot();
-    if (currentSettingsSnapshot != m_lastSettingsSnapshot)
-    {
-        scheduleSettingsSave();
-        m_lastSettingsSnapshot = currentSettingsSnapshot;
-    }
+    ImGui::PopStyleVar();
 }

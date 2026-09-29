@@ -42,6 +42,20 @@ using missilesim::application::detail::parseVec3Value;
 using missilesim::application::detail::safeNormalize;
 using missilesim::application::detail::trimWhitespace;
 
+const char *Application::displayModeName(DisplayMode mode)
+{
+    switch (mode)
+    {
+    case DisplayMode::Borderless:
+        return "borderless";
+    case DisplayMode::Fullscreen:
+        return "fullscreen";
+    case DisplayMode::Windowed:
+        break;
+    }
+    return "windowed";
+}
+
 bool Application::loadSettings()
 {
     std::ifstream input(m_settingsPath);
@@ -196,6 +210,21 @@ bool Application::loadSettings()
         m_renderer->setCameraSpeed(m_savedCameraSpeed);
     }
 
+    // Display and interface.
+    m_uiScale = std::clamp(readFloat("ui_scale", m_uiScale), 0.8f, 1.5f);
+    m_hudVisible = readBool("hud_visible", m_hudVisible);
+    m_showUI = readBool("control_panel_visible", m_showUI);
+    setVsyncEnabled(readBool("vsync", m_vsyncEnabled));
+    const std::string displayMode = readString("display_mode", displayModeName(m_displayMode));
+    if (displayMode == displayModeName(DisplayMode::Borderless))
+    {
+        setDisplayMode(DisplayMode::Borderless);
+    }
+    else if (displayMode == displayModeName(DisplayMode::Fullscreen))
+    {
+        setDisplayMode(DisplayMode::Fullscreen);
+    }
+
     m_settingsDirty = false;
     m_settingsAutosaveDelay = 0.0f;
     m_lastSettingsSnapshot = buildSettingsSnapshot();
@@ -249,6 +278,11 @@ std::string Application::buildSettingsSnapshot() const
     output << "camera_speed=" << cameraSpeed << "\n";
     output << "world_guides_enabled="
            << formatBoolValue(m_renderer ? m_renderer->getWorldGuidesEnabled() : false) << "\n";
+    output << "display_mode=" << displayModeName(m_displayMode) << "\n";
+    output << "vsync=" << formatBoolValue(m_vsyncEnabled) << "\n";
+    output << "ui_scale=" << m_uiScale << "\n";
+    output << "hud_visible=" << formatBoolValue(m_hudVisible) << "\n";
+    output << "control_panel_visible=" << formatBoolValue(m_showUI) << "\n";
 
     if (m_renderer && m_renderer->hasPBR())
     {

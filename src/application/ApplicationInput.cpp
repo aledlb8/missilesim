@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <random>
 #include <sstream>
@@ -54,57 +55,63 @@ void Application::processInput(float deltaTime)
         deltaTime = 0.016f;
     }
 
-    static bool tabPressed = false;
-    if (glfwGetKey(m_window, GLFW_KEY_TAB) == GLFW_PRESS)
+    // Edge-triggered keys. The latches keep tracking while menus own the
+    // keyboard, so a key still held as a menu closes (Enter on "Resume") does
+    // not also fire its gameplay action on the next frame.
+    static constexpr int kLatchedKeys[] = {GLFW_KEY_TAB, GLFW_KEY_H, GLFW_KEY_V, GLFW_KEY_ENTER,
+                                           GLFW_KEY_KP_ENTER, GLFW_KEY_C, GLFW_KEY_R, GLFW_KEY_F};
+    static bool keyHeld[std::size(kLatchedKeys)] = {};
+    bool keyPressed[std::size(kLatchedKeys)] = {};
+    for (size_t i = 0; i < std::size(kLatchedKeys); ++i)
     {
-        if (!tabPressed)
+        const bool down = glfwGetKey(m_window, kLatchedKeys[i]) == GLFW_PRESS;
+        keyPressed[i] = down && !keyHeld[i];
+        keyHeld[i] = down;
+    }
+    auto pressed = [&](int key)
+    {
+        for (size_t i = 0; i < std::size(kLatchedKeys); ++i)
         {
-            m_showUI = !m_showUI;
-            tabPressed = true;
+            if (kLatchedKeys[i] == key)
+            {
+                return keyPressed[i];
+            }
         }
-    }
-    else
+        return false;
+    };
+
+    // Title screen and menus own the keyboard (handled in ApplicationMenus.cpp).
+    if (!gameplayInputEnabled())
     {
-        tabPressed = false;
+        return;
     }
 
-    const bool uiCapturesKeyboard = m_showUI &&
-                                    ImGui::GetCurrentContext() != nullptr &&
-                                    ImGui::GetIO().WantCaptureKeyboard;
-
-    if (uiCapturesKeyboard)
+    // Typing into a field (e.g. an exact slider value) must not fly the camera.
+    if (ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantTextInput)
     {
         updatePreLaunchSeekerLock();
         return;
     }
 
-    static bool enterPressed = false;
-    if (glfwGetKey(m_window, GLFW_KEY_ENTER) == GLFW_PRESS ||
-        glfwGetKey(m_window, GLFW_KEY_KP_ENTER) == GLFW_PRESS)
+    if (pressed(GLFW_KEY_TAB))
     {
-        if (!enterPressed)
-        {
-            m_isPaused = !m_isPaused;
-            enterPressed = true;
-        }
+        m_showUI = !m_showUI;
     }
-    else
+    if (pressed(GLFW_KEY_H))
     {
-        enterPressed = false;
+        m_hudVisible = !m_hudVisible;
     }
-
-    static bool focusPressed = false;
-    if (glfwGetKey(m_window, GLFW_KEY_C) == GLFW_PRESS)
+    if (pressed(GLFW_KEY_V))
     {
-        if (!focusPressed)
-        {
-            setCameraMode(CameraMode::FREE, true);
-            focusPressed = true;
-        }
+        cycleCameraMode();
     }
-    else
+    if (pressed(GLFW_KEY_ENTER) || pressed(GLFW_KEY_KP_ENTER))
     {
-        focusPressed = false;
+        m_isPaused = !m_isPaused;
+    }
+    if (pressed(GLFW_KEY_C))
+    {
+        setCameraMode(CameraMode::FREE, true);
     }
 
     if (m_cameraMode == CameraMode::FREE)
@@ -140,62 +147,61 @@ void Application::processInput(float deltaTime)
         }
     }
 
-    static bool seekerCuePressed = false;
-    if (glfwGetKey(m_window, GLFW_KEY_R) == GLFW_PRESS)
+    if (pressed(GLFW_KEY_R))
     {
-        if (!seekerCuePressed)
+        m_seekerCueEnabled = !m_seekerCueEnabled;
+        if (!m_seekerCueEnabled && !m_missileInFlight && m_missile)
         {
-            m_seekerCueEnabled = !m_seekerCueEnabled;
-            if (!m_seekerCueEnabled && !m_missileInFlight && m_missile)
-            {
-                m_missile->clearTarget();
-            }
-            seekerCuePressed = true;
+            m_missile->clearTarget();
         }
-    }
-    else
-    {
-        seekerCuePressed = false;
     }
 
     updatePreLaunchSeekerLock();
 
-    static bool launchKeyPressed = false;
-    if (glfwGetKey(m_window, GLFW_KEY_F) == GLFW_PRESS)
+    if (pressed(GLFW_KEY_F))
     {
-        if (!launchKeyPressed)
-        {
-            launchMissile();
-            launchKeyPressed = true;
-        }
+        launchMissile();
     }
-    else
+}
+
+void Application::cycleCameraMode()
+{
+    switch (m_cameraMode)
     {
-        launchKeyPressed = false;
+    case CameraMode::FREE:
+        setCameraMode(CameraMode::MISSILE);
+        break;
+    case CameraMode::MISSILE:
+        setCameraMode(CameraMode::FIGHTER_JET);
+        break;
+    case CameraMode::FIGHTER_JET:
+        setCameraMode(CameraMode::FREE);
+        break;
     }
 }
 
 void Application::mouseCallback(double xpos, double ypos)
 {
     // Skip if camera rotation is disabled or imgui has focus
-    if (!m_enableMouseCamera ||
-        (m_showUI && ImGui::GetIO().WantCaptureMouse))
+    if (!m_enableMouseCamera || !gameplayInputEnabled() || ImGui::GetIO().WantCaptureMouse)
         return;
 
+    const float mouseX = static_cast<float>(xpos);
+    const float mouseY = static_cast<float>(ypos);
     if (m_firstMouse)
     {
-        m_lastMouseX = xpos;
-        m_lastMouseY = ypos;
+        m_lastMouseX = mouseX;
+        m_lastMouseY = mouseY;
         m_firstMouse = false;
         return;
     }
 
     // Calculate mouse movement
-    float xoffset = xpos - m_lastMouseX;
-    float yoffset = m_lastMouseY - ypos; // Reversed since y-coordinates go from bottom to top
+    float xoffset = mouseX - m_lastMouseX;
+    float yoffset = m_lastMouseY - mouseY; // Reversed since y-coordinates go from bottom to top
 
-    m_lastMouseX = xpos;
-    m_lastMouseY = ypos;
+    m_lastMouseX = mouseX;
+    m_lastMouseY = mouseY;
 
     // Apply sensitivity factor
     const float sensitivity = 0.1f;
@@ -217,7 +223,7 @@ void Application::mouseButtonCallback(int button, int action)
     // Check if the right mouse button is pressed or released
     if (button == GLFW_MOUSE_BUTTON_RIGHT)
     {
-        if (action == GLFW_PRESS)
+        if (action == GLFW_PRESS && gameplayInputEnabled() && !ImGui::GetIO().WantCaptureMouse)
         {
             // Enable camera rotation and hide cursor
             m_enableMouseCamera = true;

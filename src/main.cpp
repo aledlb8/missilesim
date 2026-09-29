@@ -96,7 +96,9 @@ int main()
 
     try
     {
-        Application app(1280, 720, "Missile Physics Simulator");
+        // The window is sized and centred from the monitor at startup; these are
+        // only the pre-window defaults.
+        Application app(1280, 720, "MissileSim");
         app.run();
     }
     catch (const std::exception &e)
@@ -104,6 +106,14 @@ int main()
         std::cerr << "Error: " << e.what() << std::endl;
 #ifdef MISSILESIM_PORTABLE
         reportFatalError(e.what());
+#endif
+        return -1;
+    }
+    catch (...)
+    {
+        std::cerr << "Error: unknown exception" << std::endl;
+#ifdef MISSILESIM_PORTABLE
+        reportFatalError("An unknown error occurred.");
 #endif
         return -1;
     }

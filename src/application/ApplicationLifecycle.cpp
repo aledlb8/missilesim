@@ -17,6 +17,8 @@
 #include <limits>
 #include <random>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 
 #include <glm/gtc/constants.hpp>
@@ -31,6 +33,7 @@
 #include "physics/PhysicsEngine.h"
 #include "physics/forces/Drag.h"
 #include "physics/forces/Lift.h"
+#include "ui/Theme.h"
 #include "rendering/Renderer.h"
 
 using missilesim::application::detail::formatBoolValue;
@@ -98,6 +101,8 @@ void Application::applySimulationConfigDefaults()
     m_targetAIConfig.preferredDistance = config.targets.preferredDistance;
 }
 
+// Startup failures throw (after cleaning up) so they reach main(), which shows
+// them to the player; the messages are written for someone without the source.
 void Application::initialize()
 {
     try
@@ -105,25 +110,11 @@ void Application::initialize()
         // Initialize GLFW
         if (!glfwInit())
         {
-            std::cerr << "Failed to initialize GLFW" << std::endl;
-            return;
+            throw std::runtime_error("Could not initialize the windowing system (GLFW).");
         }
 
-        // Configure GLFW
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-        // Create window
-        m_window = glfwCreateWindow(m_width, m_height, m_title.c_str(), nullptr, nullptr);
-        if (!m_window)
-        {
-            std::cerr << "Failed to create GLFW window" << std::endl;
-            glfwTerminate();
-            return;
-        }
-
-        glfwMakeContextCurrent(m_window);
+        // Hidden, centred, context current; throws if OpenGL 4.5 is unavailable.
+        createMainWindow();
 
         // Set up window resize callback
         glfwSetFramebufferSizeCallback(m_window, [](GLFWwindow *window, int width, int height)
@@ -157,8 +148,7 @@ void Application::initialize()
         // Initialize GLAD
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
         {
-            std::cerr << "Failed to initialize GLAD" << std::endl;
-            return;
+            throw std::runtime_error("Could not load the OpenGL functions from the graphics driver (GLAD).");
         }
 
         // Check OpenGL version
@@ -171,41 +161,21 @@ void Application::initialize()
         // Enable core OpenGL features for PBR pipeline
         glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
-        // Setup ImGui with error handling
-        try
-        {
-            IMGUI_CHECKVERSION();
-            ImGui::CreateContext();
-            ImGuiIO &io = ImGui::GetIO();
-            (void)io;
+        // Setup ImGui (a failed backend is torn down by shutdown() via the catch below)
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
 
-            // Initialize ImGui GLFW integration
-            if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
-            {
-                std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
-                ImGui::DestroyContext();
-                return;
-            }
+        if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
+        {
+            throw std::runtime_error("Could not initialize the user interface (ImGui GLFW backend).");
+        }
 
-            // Initialize ImGui OpenGL3 renderer
-            if (!ImGui_ImplOpenGL3_Init("#version 450"))
-            {
-                std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
-                ImGui_ImplGlfw_Shutdown();
-                ImGui::DestroyContext();
-                return;
-            }
-        }
-        catch (const std::exception &e)
+        if (!ImGui_ImplOpenGL3_Init("#version 450"))
         {
-            std::cerr << "Exception during ImGui initialization: " << e.what() << std::endl;
-            return;
+            throw std::runtime_error("Could not initialize the user interface (ImGui OpenGL backend).");
         }
-        catch (...)
-        {
-            std::cerr << "Unknown exception during ImGui initialization" << std::endl;
-            return;
-        }
+
+        missilesim::ui::initializeTheme(windowContentScale());
 
         // Create simulation components
         m_physicsEngine = std::make_unique<PhysicsEngine>();
@@ -260,16 +230,19 @@ void Application::initialize()
 
         updateEnvironmentScale();
         m_lastSettingsSnapshot = buildSettingsSnapshot();
+        m_initialized = true;
     }
     catch (const std::exception &e)
     {
         std::cerr << "Exception during initialization: " << e.what() << std::endl;
-        shutdown(); // Attempt to clean up if initialization fails
+        shutdown();
+        throw;
     }
     catch (...)
     {
         std::cerr << "Unknown exception during initialization" << std::endl;
-        shutdown(); // Attempt to clean up if initialization fails
+        shutdown();
+        throw;
     }
 }
 
@@ -282,8 +255,11 @@ void Application::shutdown()
             return;
         }
 
-        saveSettings();
-        m_settingsDirty = false;
+        if (m_initialized)
+        {
+            saveSettings();
+            m_settingsDirty = false;
+        }
 
         // First clear objects that might be using the renderer or physics
         m_missile.reset(); // Release missile before targets to avoid invalid target references
@@ -351,17 +327,12 @@ void Application::shutdown()
 
 void Application::run()
 {
+    // Outside the try below on purpose: startup errors propagate to the caller
+    // (initialize() has already cleaned up) instead of being logged and swallowed.
+    initialize();
+
     try
     {
-        initialize();
-
-        // If initialization failed, exit
-        if (!m_window)
-        {
-            std::cerr << "ERROR: Failed to initialize window, cannot run application" << std::endl;
-            return;
-        }
-
         // Set initial viewport size to match window
         int width, height;
         glfwGetFramebufferSize(m_window, &width, &height);
@@ -376,6 +347,16 @@ void Application::run()
         {
             try
             {
+                if (isWindowMinimized())
+                {
+                    // Nothing to draw into: sleep until the window is restored.
+                    glfwWaitEvents();
+                    lastTime = std::chrono::high_resolution_clock::now();
+                    continue;
+                }
+
+                updateWindowFrame();
+
                 // Calculate delta time
                 auto currentTime = std::chrono::high_resolution_clock::now();
                 float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
@@ -418,6 +399,7 @@ void Application::run()
                 {
                     glfwPollEvents();
                     glfwSwapBuffers(m_window);
+                    revealWindowAfterFirstFrame();
                 }
                 catch (const std::exception &e)
                 {
@@ -703,7 +685,15 @@ void Application::render()
             return;
         }
 
-        updateActiveCameraMode();
+        const bool inEngagement = m_screen == Screen::Playing;
+        if (inEngagement)
+        {
+            updateActiveCameraMode();
+        }
+        else
+        {
+            updateTitleCamera(m_lastFrameDeltaTime);
+        }
         updateAudioFrame(m_lastFrameDeltaTime);
         m_renderer->beginSceneFrame(glm::vec3(0.58f, 0.69f, 0.82f));
         m_renderer->clearDebugPrimitives();
@@ -724,8 +714,8 @@ void Application::render()
             {
                 m_renderer->render(m_missile.get());
 
-                // Render predicted trajectory if enabled
-                if (m_showTrajectory)
+                // Render predicted trajectory if enabled (tactical overlay: not behind the title)
+                if (m_showTrajectory && inEngagement)
                 {
                     renderPredictedTrajectory();
                 }
@@ -740,24 +730,7 @@ void Application::render()
             }
         }
 
-        struct WorldLabelLine
-        {
-            std::string text;
-            ImU32 color;
-            float screenYOffset;
-        };
-
-        struct WorldLabel
-        {
-            glm::vec3 position;
-            std::vector<WorldLabelLine> lines;
-        };
-
-        // Collect target positions for UI display
-        std::vector<WorldLabel> targetLabels;
-        targetLabels.reserve(m_targets.size());
-
-        // Render targets
+        // Render targets (their screen markers are drawn by the HUD)
         for (const auto &target : m_targets)
         {
             try
@@ -765,33 +738,6 @@ void Application::render()
                 if (target && target->isActive())
                 {
                     m_renderer->render(target.get());
-
-                    // Render target labels when enabled (toggle lives in both
-                    // the full UI and the minimal Flight HUD).
-                    if (m_missile && m_showTargetInfo)
-                    {
-                        const float distance = glm::length(target->getPosition() - m_missile->getPosition());
-                        const float targetAltitude = std::max(target->getPosition().y, 0.0f);
-                        const float targetSpeed = glm::length(target->getVelocity());
-                        WorldLabel label;
-                        label.position = target->getPosition();
-                        label.lines.push_back({"Target: " + std::to_string(static_cast<int>(distance)) + "m",
-                                               IM_COL32(255, 234, 120, 255), 0.0f});
-
-                        char buffer[96];
-                        std::snprintf(buffer, sizeof(buffer), "ALT %.0f m", targetAltitude);
-                        label.lines.push_back({buffer, IM_COL32(255, 214, 132, 255), 16.0f});
-
-                        std::snprintf(buffer, sizeof(buffer), "SPD %.0f m/s", targetSpeed);
-                        label.lines.push_back({buffer, IM_COL32(255, 196, 142, 255), 32.0f});
-
-                        if (target->isMissileWarningActive())
-                        {
-                            label.lines.push_back({"MAWS | Flares " + std::to_string(target->getRemainingFlares()),
-                                                   IM_COL32(255, 164, 124, 255), 48.0f});
-                        }
-                        targetLabels.push_back(std::move(label));
-                    }
                 }
             }
             catch (const std::exception &e)
@@ -818,72 +764,38 @@ void Application::render()
                 ImGui_ImplGlfw_NewFrame();
                 ImGui::NewFrame();
 
-                if (m_showUI)
+                if (!inEngagement)
                 {
-                    setupUI();
+                    renderTitleScreen();
                 }
                 else
                 {
-                    renderMinimalHUD();
+                    // The tracker runs even with the HUD hidden so events and
+                    // the result card stay consistent when it is shown again.
+                    updateHudTracker(ImGui::GetIO().DeltaTime);
+                    if (m_hudVisible && m_overlay == Overlay::None)
+                    {
+                        renderHud();
+                        renderPreLaunchSeekerCue();
+                        renderSeekerXrayOverlay();
+                    }
+                    if (m_showUI && m_overlay == Overlay::None)
+                    {
+                        setupUI();
+                    }
                 }
 
-                // Draw world labels (target labels + the minimal-HUD missile
-                // readout) in screen space projected from the scene. The whole
-                // set follows the "Show target labels" toggle.
-                if (m_window && m_missile && m_showTargetInfo)
+                renderMenuOverlays();
+                renderScreenFade();
+                advanceMenuClocks(ImGui::GetIO().DeltaTime);
+
+                // Persist any setting changed by any screen this frame.
+                const std::string settingsSnapshot = buildSettingsSnapshot();
+                if (settingsSnapshot != m_lastSettingsSnapshot)
                 {
-                    glm::mat4 view = glm::lookAt(m_renderer->getCameraPosition(),
-                                                 m_renderer->getCameraPosition() + m_renderer->getCameraFront(),
-                                                 m_renderer->getCameraUp());
-                    glm::mat4 projection = glm::perspective(glm::radians(m_renderer->getCameraFOV()),
-                                                            (float)m_width / (float)m_height,
-                                                            0.1f, m_renderer->getSceneFarPlane());
-                    ImDrawList *drawList = ImGui::GetBackgroundDrawList();
-
-                    auto drawWorldText = [&](const glm::vec3 &worldPosition, const std::string &text, ImU32 color, float screenYOffset = 0.0f)
-                    {
-                        glm::vec4 clipSpace = projection * view * glm::vec4(worldPosition, 1.0f);
-
-                        if (clipSpace.w <= 0.0f)
-                        {
-                            return;
-                        }
-
-                        glm::vec3 ndcSpace = glm::vec3(clipSpace) / clipSpace.w;
-                        ImVec2 screenPos;
-                        screenPos.x = (ndcSpace.x + 1.0f) * 0.5f * m_width;
-                        screenPos.y = (1.0f - (ndcSpace.y + 1.0f) * 0.5f) * m_height + screenYOffset;
-
-                        if (screenPos.x >= 0.0f && screenPos.x < m_width &&
-                            screenPos.y >= 0.0f && screenPos.y < m_height)
-                        {
-                            drawList->AddText(screenPos, color, text.c_str());
-                        }
-                    };
-
-                    for (const auto &targetLabel : targetLabels)
-                    {
-                        const glm::vec3 labelAnchor = targetLabel.position + glm::vec3(0.0f, 3.0f, 0.0f);
-                        for (const auto &line : targetLabel.lines)
-                        {
-                            drawWorldText(labelAnchor, line.text, line.color, line.screenYOffset);
-                        }
-                    }
-
-                    if (!m_showUI)
-                    {
-                        const glm::vec3 missileLabelAnchor = m_missile->getPosition() + glm::vec3(0.0f, 3.6f, 0.0f);
-                        char buffer[96];
-                        std::snprintf(buffer, sizeof(buffer), "ALT %.0f m", std::max(m_missile->getPosition().y, 0.0f));
-                        drawWorldText(missileLabelAnchor, buffer, IM_COL32(152, 220, 255, 255), 0.0f);
-
-                        std::snprintf(buffer, sizeof(buffer), "SPD %.0f m/s", glm::length(m_missile->getVelocity()));
-                        drawWorldText(missileLabelAnchor, buffer, IM_COL32(200, 245, 255, 255), 16.0f);
-                    }
+                    scheduleSettingsSave();
+                    m_lastSettingsSnapshot = settingsSnapshot;
                 }
-
-                renderPreLaunchSeekerCue();
-                renderSeekerXrayOverlay();
 
                 ImGui::Render();
                 ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

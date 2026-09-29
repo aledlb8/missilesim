@@ -194,7 +194,11 @@ void Application::updateAudioFrame(float deltaTime)
     world.seaLevelAirDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : world.seaLevelAirDensity;
     world.groundPresent = m_groundEnabled;
     world.groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
-    world.masterVolume = m_audioVolume;
+    // Duck the mix behind the title screen so the flyby is atmosphere, not a
+    // roar; ease back in when the engagement starts.
+    const float menuGainTarget = (m_screen == Screen::Title) ? 0.45f : 1.0f;
+    m_menuAudioGain += (menuGainTarget - m_menuAudioGain) * (1.0f - std::exp(-2.5f * std::max(deltaTime, 0.0f)));
+    world.masterVolume = m_audioVolume * m_menuAudioGain;
 
     CockpitCueState cues;
     cues.seekerPowered = seekerPowered;

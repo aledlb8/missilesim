@@ -45,6 +45,89 @@ private:
         FIGHTER_JET
     };
 
+    enum class DisplayMode
+    {
+        Windowed,   // decorated window, centred on first launch
+        Borderless, // undecorated window covering the monitor (F11)
+        Fullscreen  // exclusive fullscreen at the monitor's current video mode
+    };
+
+    // Front-end flow: the title screen runs over the live scene; overlays sit
+    // on top of whichever screen is active.
+    enum class Screen
+    {
+        Title,
+        Playing
+    };
+
+    enum class Overlay
+    {
+        None,
+        Pause,
+        Settings
+    };
+
+    enum class SettingsPage
+    {
+        Display,
+        Graphics,
+        Audio,
+        Controls
+    };
+
+    // HUD event feed and engagement bookkeeping (ApplicationHUD.cpp). Events are
+    // derived from state changes each frame so the simulation code stays unaware
+    // of the HUD.
+    enum class HudTone
+    {
+        Neutral,
+        Accent,
+        Positive,
+        Danger
+    };
+
+    struct HudToast
+    {
+        std::string text;
+        HudTone tone = HudTone::Neutral;
+        float age = 0.0f;
+    };
+
+    struct HudTracker
+    {
+        bool initialized = false;
+        bool launchWasActive = false;
+        bool holdWasActive = false;
+        bool wasDecoyed = false;
+        const Target *lastLock = nullptr;
+        std::vector<const Target *> targets; // identity of each slot last frame
+        std::vector<bool> targetActive;
+        std::vector<int> targetFlares;
+        std::vector<float> flareToastCooldown;
+        int hitsAtLaunch = 0;
+        float peakSpeed = 0.0f;
+        float peakMach = 0.0f;
+        float engagementTime = 0.0f;
+        std::deque<HudToast> toasts;
+
+        bool resultVisible = false;
+        bool resultHit = false;
+        float resultAge = 0.0f;
+        float resultFlightTime = 0.0f;
+        float resultClosestPass = 0.0f;
+        float resultPeakMach = 0.0f;
+    };
+
+    // Last windowed client rect, restored when leaving borderless/fullscreen.
+    struct WindowedPlacement
+    {
+        int x = 0;
+        int y = 0;
+        int width = 0;
+        int height = 0;
+        bool valid = false;
+    };
+
     struct FreeCameraState
     {
         glm::vec3 position{0.0f};
@@ -126,11 +209,47 @@ private:
         glm::vec3 aimDirection{0.0f, 1.0f, 0.0f};    // live pitch-over aim, rate-limited
     };
 
+    // Window management (ApplicationWindow.cpp)
+    void createMainWindow();
+    void setDisplayMode(DisplayMode mode);
+    void toggleFullscreen();
+    void updateWindowFrame();
+    void revealWindowAfterFirstFrame();
+    bool isWindowMinimized() const;
+    float windowContentScale() const;
+    void setVsyncEnabled(bool enabled);
+    static const char *displayModeName(DisplayMode mode);
+
+    // Menus and screen flow (ApplicationMenus.cpp)
+    bool gameplayInputEnabled() const;
+    void renderTitleScreen();
+    void renderMenuOverlays();
+    void renderPauseMenu();
+    void renderSettingsScreen();
+    void renderSettingsPage(SettingsPage page);
+    void renderScreenFade();
+    void advanceMenuClocks(float deltaTime);
+    void updateTitleCamera(float deltaTime);
+    void startEngagement();
+    void returnToTitle();
+    void openPauseMenu();
+    void closePauseMenu();
+    void openSettings(SettingsPage page);
+    void closeSettings();
+    void beginScreenFade(float duration);
+    void cycleCameraMode();
+
+    // In-engagement HUD (ApplicationHUD.cpp)
+    void renderHud();
+    void updateHudTracker(float deltaTime);
+    void pushHudToast(std::string text, HudTone tone);
+    const char *missionStateLabel() const;
+    float hudRightInset() const;
+
     void processInput(float deltaTime);
     void update(float deltaTime);
     void render();
     void setupUI();
-    void renderMinimalHUD();
     void frameEngagementCamera();
     void setCameraMode(CameraMode mode, bool frameFreeCamera = false);
     void updateActiveCameraMode();
@@ -216,6 +335,35 @@ private:
     int m_height;
     std::string m_title;
     GLFWwindow *m_window;
+    DisplayMode m_displayMode = DisplayMode::Windowed;
+    WindowedPlacement m_windowedPlacement;
+    bool m_vsyncEnabled = true;
+    bool m_windowRevealed = false;
+    bool m_fullscreenKeyHeld = false;
+
+    // Screen flow and menu state
+    Screen m_screen = Screen::Title;
+    Overlay m_overlay = Overlay::None;
+    Overlay m_overlayReturn = Overlay::None; // where Settings goes back to
+    SettingsPage m_settingsPage = SettingsPage::Display;
+    int m_menuSelection = 0;
+    float m_screenTime = 0.0f;  // seconds since the current screen was entered
+    float m_overlayTime = 0.0f; // seconds since the current overlay opened
+    float m_fadeAlpha = 1.0f;   // full-screen fade; starts black for the intro
+    float m_fadeDuration = 1.4f;
+    bool m_pausedBeforeMenu = false;
+    float m_titleOrbitAngle = 2.2f;
+    glm::vec3 m_titleCameraForward{0.0f, 0.0f, 1.0f};
+    float m_uiScale = 1.0f; // user interface size on top of the monitor DPI
+    float m_pendingUiScalePercent = 100.0f;
+    bool m_uiScaleSliderHeld = false;
+    bool m_hudVisible = true;
+    float m_menuAudioGain = 0.45f; // smoothed title-screen duck applied to the master volume
+    HudTracker m_hud;
+    int m_controlPanelTab = 0;
+    float m_controlPanelAppear = 0.0f; // 0..1 slide-in, restarts whenever the panel reopens
+    int m_controlPanelLastFrame = -2;
+    static constexpr float kControlPanelWidth = 392.0f; // at 100% scale; the HUD keeps clear of it
 
     // Mouse camera control properties
     float m_lastMouseX;
@@ -271,7 +419,7 @@ private:
     float m_groundRestitution = 0.5f;
 
     // UI properties
-    bool m_showUI = true;
+    bool m_showUI = false; // control panel (Tab)
     float m_initialVelocity[3] = {0.0f, 0.0f, 50.0f}; // Initial velocity in m/s
     float m_initialPosition[3] = {0.0f, 0.0f, 0.0f};  // Initial position in m
     float m_mass = 100.0f;                            // Dry mass in kg
@@ -314,6 +462,8 @@ private:
 
     // Autosaved user settings
     std::string m_settingsPath = "config/user_settings.ini";
+    // Set once initialize() completes; a failed startup must not overwrite saved settings.
+    bool m_initialized = false;
     bool m_settingsDirty = false;
     float m_settingsAutosaveDelay = 0.0f;
     std::string m_lastSettingsSnapshot;

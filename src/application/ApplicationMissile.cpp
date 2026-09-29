@@ -32,6 +32,8 @@
 #include "physics/forces/Drag.h"
 #include "physics/forces/Lift.h"
 #include "rendering/Renderer.h"
+#include "ui/Theme.h"
+#include "ui/Widgets.h"
 
 using missilesim::application::detail::formatBoolValue;
 using missilesim::application::detail::formatVec3Value;
@@ -834,11 +836,18 @@ void Application::renderPreLaunchSeekerCue() const
         hasLock = projectTargetToSeekerScreen(trackedTarget, cueCenter, nullptr);
     }
 
-    const ImU32 ringColor = hasLock ? IM_COL32(255, 76, 76, 255) : IM_COL32(255, 255, 255, 240);
-    ImDrawList *drawList = ImGui::GetForegroundDrawList();
-    drawList->AddCircle(cueCenter, m_seekerCueRadiusPixels, ringColor, 64, 2.2f);
-    drawList->AddLine(ImVec2(cueCenter.x - 7.0f, cueCenter.y), ImVec2(cueCenter.x + 7.0f, cueCenter.y), ringColor, 1.2f);
-    drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - 7.0f), ImVec2(cueCenter.x, cueCenter.y + 7.0f), ringColor, 1.2f);
+    namespace ui = missilesim::ui;
+    const ImU32 ringColor = hasLock ? ui::toU32(ui::color::danger) : ui::toU32(ui::color::text, 0.85f);
+    ImDrawList *drawList = ImGui::GetBackgroundDrawList();
+    const float tick = ui::px(6.0f);
+    drawList->AddCircle(cueCenter, m_seekerCueRadiusPixels, ringColor, 64, ui::px(1.8f));
+    drawList->AddLine(ImVec2(cueCenter.x - tick, cueCenter.y), ImVec2(cueCenter.x + tick, cueCenter.y), ringColor, ui::px(1.2f));
+    drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - tick), ImVec2(cueCenter.x, cueCenter.y + tick), ringColor, ui::px(1.2f));
+    const char *label = hasLock ? "SEEKER LOCK" : "SEEKER SEARCH";
+    const float labelWidth = ui::measureTracked(ui::fonts().display, ui::px(12.5f), label, 0.16f).x;
+    ui::drawTracked(drawList, ui::fonts().display, ui::px(12.5f),
+                    ImVec2(cueCenter.x - labelWidth * 0.5f, cueCenter.y + m_seekerCueRadiusPixels + ui::px(8.0f)),
+                    ringColor, label, 0.16f);
 }
 
 void Application::renderSeekerXrayOverlay() const
@@ -879,7 +888,8 @@ void Application::renderSeekerXrayOverlay() const
         drawList->AddLine(ImVec2(right, bottom), ImVec2(right, bottom - leg), color, thickness);
     };
 
-    ImDrawList *drawList = ImGui::GetForegroundDrawList();
+    namespace ui = missilesim::ui;
+    ImDrawList *drawList = ImGui::GetBackgroundDrawList();
 
     // The bold marker tracks the missile's actual aimpoint - the airframe while
     // locked, or the flare position the moment the seeker is decoyed. Only the
@@ -892,7 +902,7 @@ void Application::renderSeekerXrayOverlay() const
 
     // Faint cue on every other resolvable target so the whole picture is visible
     // through obstacles, with the bold marker reserved for the live aimpoint.
-    const ImU32 ambientColor = IM_COL32(120, 200, 255, 140);
+    const ImU32 ambientColor = ui::toU32(ui::color::info, 0.55f);
     for (const auto &target : m_targets)
     {
         if (!target || !target->isActive() || target.get() == boldAirframe)
@@ -903,7 +913,7 @@ void Application::renderSeekerXrayOverlay() const
         ImVec2 screenPosition(0.0f, 0.0f);
         if (projectTargetToSeekerScreen(target.get(), screenPosition, nullptr))
         {
-            drawBracket(drawList, screenPosition, 12.0f, ambientColor, 1.4f);
+            drawBracket(drawList, screenPosition, ui::px(12.0f), ambientColor, ui::px(1.4f));
         }
     }
 
@@ -919,21 +929,25 @@ void Application::renderSeekerXrayOverlay() const
         return; // Current aimpoint is off-screen or behind the camera.
     }
 
-    const ImU32 lockColor = trackingDecoy ? IM_COL32(255, 196, 64, 255) : IM_COL32(255, 60, 60, 255);
-    const ImU32 leadColor = trackingDecoy ? IM_COL32(255, 196, 64, 110) : IM_COL32(255, 60, 60, 110);
+    const ImVec4 &lockTone = trackingDecoy ? ui::color::accent : ui::color::danger;
+    const ImU32 lockColor = ui::toU32(lockTone);
+    const ImU32 leadColor = ui::toU32(lockTone, 0.4f);
 
-    const float lockHalf = 24.0f;
-    drawBracket(drawList, lockScreen, lockHalf, lockColor, 2.4f);
-    drawList->AddCircleFilled(lockScreen, 2.4f, lockColor, 8);
+    const float lockHalf = ui::px(24.0f);
+    drawBracket(drawList, lockScreen, lockHalf, lockColor, ui::px(2.2f));
+    drawList->AddCircleFilled(lockScreen, ui::px(2.4f), lockColor, 8);
 
     // Seeker line of sight, drawn from the boresight (screen centre) to the aimpoint.
     const ImVec2 boresight(m_width * 0.5f, m_height * 0.5f);
-    drawList->AddLine(boresight, lockScreen, leadColor, 1.4f);
+    drawList->AddLine(boresight, lockScreen, leadColor, ui::px(1.4f));
 
     const float range = glm::distance(m_missile->getPosition(), aimWorld);
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%s  %.0f m", trackingDecoy ? "FLARE" : "LOCK", range);
-    drawList->AddText(ImVec2(lockScreen.x + lockHalf + 5.0f, lockScreen.y - 7.0f), lockColor, buffer);
+    std::snprintf(buffer, sizeof(buffer), "%.0f m", range);
+    const float textX = lockScreen.x + lockHalf + ui::px(8.0f);
+    ui::drawTracked(drawList, ui::fonts().display, ui::px(13.0f), ImVec2(textX, lockScreen.y - ui::px(15.0f)), lockColor,
+                    trackingDecoy ? "FLARE" : "LOCK", 0.14f);
+    drawList->AddText(ui::fonts().mono, ui::px(12.5f), ImVec2(textX, lockScreen.y + ui::px(1.0f)), lockColor, buffer);
 }
 
 void Application::beginDetonationHold(const glm::vec3 &position)
