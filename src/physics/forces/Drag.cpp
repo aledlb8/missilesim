@@ -35,14 +35,27 @@ void Drag::applyTo(PhysicsObject *object)
     // Resolve the drag coefficient and reference area. Bodies with a Mach-aware
     // aerodynamic profile use a compressibility-corrected Cd0 evaluated at the
     // local Mach number (so drag rises through the transonic regime); bodies
-    // without a profile keep the constant-coefficient model.
+    // without a profile keep the constant-coefficient model. A catalog Fox 2
+    // supplies its own Cd0 and still pays induced drag.
+    const float speedOfSound = state.speedOfSoundMetersPerSecond;
+    const float mach = (speedOfSound > 1e-3f) ? (speed / speedOfSound) : 0.0f;
+    const float dynamicPressure = 0.5f * density * speed * speed;
     float dragCoefficient;
     float area;
     const missilesim::physics::AeroProfile *profile = object->getAeroProfile();
-    if (profile != nullptr && !profile->machDragMultiplier.empty())
+    float catalogCd0 = 0.0f;
+    if (object->sampleZeroLiftDrag(mach, dynamicPressure, catalogCd0))
     {
-        const float speedOfSound = state.speedOfSoundMetersPerSecond;
-        const float mach = (speedOfSound > 1e-3f) ? (speed / speedOfSound) : 0.0f;
+        dragCoefficient = catalogCd0;
+        area = object->getCrossSectionalArea();
+        const float operatingLiftCoefficient = object->getCommandedLiftCoefficient();
+        if (profile != nullptr && operatingLiftCoefficient != 0.0f)
+        {
+            dragCoefficient += missilesim::physics::inducedDragCoefficient(*profile, operatingLiftCoefficient);
+        }
+    }
+    else if (profile != nullptr && !profile->machDragMultiplier.empty())
+    {
         dragCoefficient = missilesim::physics::zeroLiftDragCoefficient(*profile, mach);
         area = profile->referenceArea;
 
@@ -62,7 +75,6 @@ void Drag::applyTo(PhysicsObject *object)
     }
 
     // Calculate drag force magnitude: F_drag = q * Cd * A, where q = 0.5 * rho * v^2.
-    const float dynamicPressure = 0.5f * density * speed * speed;
     float dragMagnitude = dynamicPressure * dragCoefficient * area;
 
     // Apply drag force in the opposite direction of velocity

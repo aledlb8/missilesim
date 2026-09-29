@@ -60,6 +60,16 @@ public:
     // Defaults to 0 (non-maneuvering bodies incur no induced drag).
     virtual float getCommandedLiftCoefficient() const { return 0.0f; }
 
+    // Catalog rounds supply a Mach-and-dynamic-pressure Cd0 (Fleeman body
+    // build-up). The default keeps the Mach-curve or constant-Cd path.
+    virtual bool sampleZeroLiftDrag(float mach, float dynamicPressurePa, float &cd0) const
+    {
+        (void)mach;
+        (void)dynamicPressurePa;
+        (void)cd0;
+        return false;
+    }
+
     // Object type for rendering and other systems
     virtual std::string getType() const { return "PhysicsObject"; }
 
