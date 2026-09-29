@@ -1,0 +1,94 @@
+#include "Fighter.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include <glm/gtx/norm.hpp>
+
+namespace
+{
+    glm::vec3 unitOr(const glm::vec3 &vector, const glm::vec3 &fallback)
+    {
+        return glm::length2(vector) > 1.0e-8f ? glm::normalize(vector) : fallback;
+    }
+}
+
+Fighter::Fighter()
+    : PhysicsObject(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 250.0f), missilesim::flight::Jet::kCombatMassKg)
+{
+    setMaxLoadFactorG(0.0f);
+    place(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 250.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+}
+
+void Fighter::place(const glm::vec3 &position, const glm::vec3 &velocity, const glm::vec3 &nose)
+{
+    const glm::vec3 forward = unitOr(nose, glm::vec3(0.0f, 0.0f, 1.0f));
+    m_jet.reset(position, velocity, forward, glm::vec3(0.0f, 1.0f, 0.0f));
+    m_lever = 0.85f;
+    m_input = {};
+    m_input.aimDirection = forward;
+    syncFromJet();
+    m_previousPosition = position;
+    m_stepStartPosition = position;
+    m_renderPosition = position;
+    m_previousRenderPosition = position;
+    m_stepStartAttitude = m_jet.airframe().attitude();
+    m_renderAttitude = m_stepStartAttitude;
+}
+
+void Fighter::adjustThrottle(float delta)
+{
+    m_lever = std::clamp(m_lever + delta, 0.0f, kMaxLever);
+}
+
+void Fighter::toggleAfterburner()
+{
+    if (isAfterburner())
+    {
+        m_lever = std::min(m_leverBeforeAfterburner, kAfterburnerDetent);
+    }
+    else
+    {
+        m_leverBeforeAfterburner = m_lever;
+        m_lever = kMaxLever;
+    }
+}
+
+void Fighter::syncFromJet()
+{
+    const auto &airframe = m_jet.airframe();
+    m_position = airframe.position();
+    m_velocity = airframe.velocity();
+    // Felt acceleration direction for anything that banks visuals off it.
+    const glm::vec3 &body = airframe.telemetry().bodyAcceleration;
+    m_acceleration = airframe.attitude() * body;
+}
+
+void Fighter::updateFlight(float deltaTime, float density, float speedOfSound, float gravity)
+{
+    if (!(deltaTime > 0.0f) || !std::isfinite(deltaTime))
+    {
+        return;
+    }
+
+    m_previousPosition = m_position;
+    missilesim::flight::JetControls controls;
+    controls.instructor = m_input;
+    controls.throttle = std::min(m_lever, 1.0f);
+    controls.afterburner = isAfterburner();
+    m_jet.setControls(controls);
+    m_jet.step(deltaTime, {density, speedOfSound}, gravity);
+    syncFromJet();
+}
+
+void Fighter::beginFixedStep()
+{
+    PhysicsObject::beginFixedStep();
+    m_stepStartAttitude = m_jet.airframe().attitude();
+}
+
+void Fighter::setRenderBlend(float alpha)
+{
+    PhysicsObject::setRenderBlend(alpha);
+    m_renderAttitude = glm::normalize(glm::slerp(m_stepStartAttitude, m_jet.airframe().attitude(), std::clamp(alpha, 0.0f, 1.0f)));
+}
