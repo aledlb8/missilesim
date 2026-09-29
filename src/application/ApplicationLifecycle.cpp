@@ -145,6 +145,12 @@ void Application::initialize()
             Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
             app->mouseButtonCallback(button, action); });
 
+        glfwSetScrollCallback(m_window, [](GLFWwindow *window, double xoffset, double yoffset)
+                              {
+            (void)xoffset;
+            Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
+            app->scrollCallback(yoffset); });
+
         // Initialize GLAD
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
         {

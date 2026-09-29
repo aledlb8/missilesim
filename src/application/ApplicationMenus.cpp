@@ -37,22 +37,31 @@ namespace
     };
 
     constexpr KeyBinding kFlightBindings[] = {
+        {"Mouse", "Fighter: point where to fly; the instructor flies there"},
+        {"W|S", "Fighter: pitch down / up assist (overrides the instructor)"},
+        {"A|D", "Fighter: roll assist"},
+        {"Q|E", "Fighter: rudder assist"},
+        {"Shift|Ctrl", "Fighter: throttle up / down (past 100% is afterburner)"},
+        {"X", "Fighter: afterburner on / off"},
         {"F", "Launch the missile"},
         {"R", "Toggle the seeker cue before launch"},
+        {"G", "Rearm the wingtip rails"},
         {"Enter", "Pause or resume the simulation"},
     };
     constexpr KeyBinding kCameraBindings[] = {
         {"V", "Cycle camera: free, missile, fighter"},
-        {"C", "Frame the whole engagement"},
+        {"C", "Frame the engagement; hold for free look while flying"},
+        {"RMB", "Hold and drag to look around (the fighter keeps its course)"},
+        {"Wheel", "Fighter: camera distance"},
         {"W|A|S|D", "Move the free camera"},
         {"Space|Ctrl", "Free camera up / down"},
         {"Shift", "Move the camera faster"},
-        {"RMB", "Hold and drag to look around"},
     };
     constexpr KeyBinding kInterfaceBindings[] = {
         {"Tab", "Show or hide the control panel"},
         {"H", "Show or hide the HUD"},
         {"F11", "Toggle fullscreen"},
+        {"F12", "Save a screenshot to the screenshots folder"},
         {"Esc", "Open the menu"},
     };
 
@@ -668,7 +677,7 @@ void Application::renderSettingsPage(SettingsPage page)
         ui::sectionLabel("CAMERA");
         if (m_renderer)
         {
-            float fov = m_renderer->getCameraFOV();
+            float fov = m_savedCameraFOV;
             if (ui::sliderRow("Field of view", &fov, 30.0f, 100.0f, "%.0f\xC2\xB0"))
             {
                 m_renderer->setCameraFOV(fov);
@@ -755,10 +764,31 @@ void Application::renderSettingsPage(SettingsPage page)
         break;
     }
     case SettingsPage::Controls:
+    {
+        ui::sectionLabel("MOUSE AIM");
+        float sensitivityPercent = m_mouseAimSensitivity / 0.06f * 100.0f;
+        if (ui::sliderRow("Aim sensitivity", &sensitivityPercent, 25.0f, 300.0f, "%.0f%%",
+                          "How far the aim moves per mouse movement. 100% is 0.06 degrees per count."))
+        {
+            m_mouseAimSensitivity = sensitivityPercent / 100.0f * 0.06f;
+            scheduleSettingsSave();
+        }
+        if (ui::toggleRow("Invert vertical aim", &m_invertMouseY))
+        {
+            scheduleSettingsSave();
+        }
+        float lagMs = 1000.0f / m_cameraSmoothing;
+        if (ui::sliderRow("Camera lag", &lagMs, 25.0f, 300.0f, "%.0f ms",
+                          "How long the view takes to catch up with the aim. Lower is tighter."))
+        {
+            m_cameraSmoothing = 1000.0f / std::max(lagMs, 1.0f);
+            scheduleSettingsSave();
+        }
         drawBindings("FLIGHT", kFlightBindings, std::size(kFlightBindings));
         drawBindings("CAMERA", kCameraBindings, std::size(kCameraBindings));
         drawBindings("INTERFACE", kInterfaceBindings, std::size(kInterfaceBindings));
         break;
+    }
     }
 }
 

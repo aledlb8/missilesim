@@ -25,6 +25,7 @@
 #include <glm/gtx/norm.hpp>
 
 #include "audio/AudioSystem.h"
+#include "objects/Fighter.h"
 #include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
@@ -59,7 +60,8 @@ void Application::processInput(float deltaTime)
     // keyboard, so a key still held as a menu closes (Enter on "Resume") does
     // not also fire its gameplay action on the next frame.
     static constexpr int kLatchedKeys[] = {GLFW_KEY_TAB, GLFW_KEY_H, GLFW_KEY_V, GLFW_KEY_ENTER,
-                                           GLFW_KEY_KP_ENTER, GLFW_KEY_C, GLFW_KEY_R, GLFW_KEY_F};
+                                           GLFW_KEY_KP_ENTER, GLFW_KEY_C, GLFW_KEY_R, GLFW_KEY_F,
+                                           GLFW_KEY_G, GLFW_KEY_X};
     static bool keyHeld[std::size(kLatchedKeys)] = {};
     bool keyPressed[std::size(kLatchedKeys)] = {};
     for (size_t i = 0; i < std::size(kLatchedKeys); ++i)
@@ -83,12 +85,16 @@ void Application::processInput(float deltaTime)
     // Title screen and menus own the keyboard (handled in ApplicationMenus.cpp).
     if (!gameplayInputEnabled())
     {
+        updateCursorCapture();
+        sampleFighterControls(deltaTime);
         return;
     }
 
     // Typing into a field (e.g. an exact slider value) must not fly the camera.
     if (ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantTextInput)
     {
+        updateCursorCapture();
+        sampleFighterControls(deltaTime);
         updatePreLaunchSeekerLock();
         return;
     }
@@ -109,10 +115,30 @@ void Application::processInput(float deltaTime)
     {
         m_isPaused = !m_isPaused;
     }
-    if (pressed(GLFW_KEY_C))
+    // C frames the engagement, except in mouse aim where holding it is free look.
+    if (pressed(GLFW_KEY_C) && !mouseAimActive())
     {
         setCameraMode(CameraMode::FREE, true);
     }
+
+    updateCursorCapture();
+    if (mouseAimActive())
+    {
+        m_freeLookHeld = m_freeLookMouseHeld || glfwGetKey(m_window, GLFW_KEY_C) == GLFW_PRESS;
+        m_aimCamera.setFreeLook(m_freeLookHeld);
+        const float radiansPerPixel = glm::radians(m_mouseAimSensitivity);
+        const float pitchSign = m_invertMouseY ? 1.0f : -1.0f; // screen y grows downward
+        m_aimCamera.turn(m_pendingMouseDelta.x * radiansPerPixel, pitchSign * m_pendingMouseDelta.y * radiansPerPixel);
+    }
+    else
+    {
+        m_freeLookHeld = false;
+        m_freeLookMouseHeld = false;
+        m_aimCamera.setFreeLook(false);
+    }
+    m_pendingMouseDelta = glm::vec2(0.0f);
+
+    sampleFighterControls(deltaTime);
 
     if (m_cameraMode == CameraMode::FREE)
     {
@@ -150,7 +176,7 @@ void Application::processInput(float deltaTime)
     if (pressed(GLFW_KEY_R))
     {
         m_seekerCueEnabled = !m_seekerCueEnabled;
-        if (!m_seekerCueEnabled && !m_missileInFlight && m_missile)
+        if (!m_seekerCueEnabled && !m_missileInFlight && m_missile && !m_missile->isFox2())
         {
             m_missile->clearTarget();
         }
@@ -158,9 +184,22 @@ void Application::processInput(float deltaTime)
 
     updatePreLaunchSeekerLock();
 
+    const bool flyingFighter = m_playerRole == PlayerRole::Fighter && m_cameraMode == CameraMode::FIGHTER_JET;
+    if (pressed(GLFW_KEY_X) && flyingFighter && m_fighter)
+    {
+        m_fighter->toggleAfterburner();
+    }
+    if (pressed(GLFW_KEY_G) && flyingFighter)
+    {
+        rearmFighter();
+    }
+
     if (pressed(GLFW_KEY_F))
     {
-        launchMissile();
+        if (m_playerRole != PlayerRole::Fighter || flyingFighter)
+        {
+            launchMissile();
+        }
     }
 }
 
@@ -182,12 +221,15 @@ void Application::cycleCameraMode()
 
 void Application::mouseCallback(double xpos, double ypos)
 {
-    // Skip if camera rotation is disabled or imgui has focus
-    if (!m_enableMouseCamera || !gameplayInputEnabled() || ImGui::GetIO().WantCaptureMouse)
-        return;
-
     const float mouseX = static_cast<float>(xpos);
     const float mouseY = static_cast<float>(ypos);
+    // Only a captured (hidden) cursor steers anything; a visible one belongs
+    // to the interface.
+    if (!m_cursorCaptured || !gameplayInputEnabled())
+    {
+        m_firstMouse = true;
+        return;
+    }
     if (m_firstMouse)
     {
         m_lastMouseX = mouseX;
@@ -196,48 +238,72 @@ void Application::mouseCallback(double xpos, double ypos)
         return;
     }
 
-    // Calculate mouse movement
-    float xoffset = mouseX - m_lastMouseX;
-    float yoffset = m_lastMouseY - mouseY; // Reversed since y-coordinates go from bottom to top
-
+    const float dx = mouseX - m_lastMouseX;
+    const float dy = mouseY - m_lastMouseY;
     m_lastMouseX = mouseX;
     m_lastMouseY = mouseY;
 
-    // Apply sensitivity factor
-    const float sensitivity = 0.1f;
-    xoffset *= sensitivity;
-    yoffset *= sensitivity;
-
-    if (m_cameraMode == CameraMode::FREE)
+    if (mouseAimActive())
     {
-        m_renderer->rotateCameraYaw(xoffset);
-        m_renderer->rotateCameraPitch(yoffset);
+        // Consumed once per frame by processInput.
+        m_pendingMouseDelta += glm::vec2(dx, dy);
+        return;
+    }
+    if (!m_enableMouseCamera)
+    {
         return;
     }
 
-    updateChaseOrbit(xoffset, -yoffset);
+    constexpr float kLookDegreesPerPixel = 0.1f;
+    if (m_cameraMode == CameraMode::FREE)
+    {
+        m_renderer->rotateCameraYaw(dx * kLookDegreesPerPixel);
+        m_renderer->rotateCameraPitch(-dy * kLookDegreesPerPixel);
+        return;
+    }
+    m_chaseCamera.orbit(glm::radians(dx * kLookDegreesPerPixel), glm::radians(-dy * kLookDegreesPerPixel));
 }
 
 void Application::mouseButtonCallback(int button, int action)
 {
-    // Check if the right mouse button is pressed or released
-    if (button == GLFW_MOUSE_BUTTON_RIGHT)
+    if (button != GLFW_MOUSE_BUTTON_RIGHT)
     {
-        if (action == GLFW_PRESS && gameplayInputEnabled() && !ImGui::GetIO().WantCaptureMouse)
+        return;
+    }
+
+    if (action == GLFW_PRESS && gameplayInputEnabled() && !ImGui::GetIO().WantCaptureMouse)
+    {
+        if (mouseAimActive())
         {
-            // Enable camera rotation and hide cursor
-            m_enableMouseCamera = true;
-            glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            m_firstMouse = true; // Reset first mouse flag to avoid jumps
-            if (m_cameraMode != CameraMode::FREE)
-            {
-                m_chaseCameraState.initialized = false;
-                m_chaseCameraState.returnBlend = 1.0f;
-            }
+            // Mouse aim: right button holds free look. The aim freezes, so the
+            // jet keeps flying where it was pointed while the mouse looks round.
+            m_freeLookMouseHeld = true;
+            return;
         }
-        else if (action == GLFW_RELEASE)
+        // Free camera: look around. Chase cameras: orbit the subject.
+        m_enableMouseCamera = true;
+        m_chaseCamera.setOrbiting(true);
+        updateCursorCapture();
+    }
+    else if (action == GLFW_RELEASE)
+    {
+        m_freeLookMouseHeld = false;
+        if (m_enableMouseCamera)
         {
-            releaseMouseCameraCapture();
+            m_enableMouseCamera = false;
+            m_chaseCamera.setOrbiting(false);
+            updateCursorCapture();
         }
     }
+}
+
+void Application::scrollCallback(double yoffset)
+{
+    if (!mouseAimActive() || ImGui::GetIO().WantCaptureMouse)
+    {
+        return;
+    }
+    // Wheel pulls the chase camera in or out.
+    const float scale = m_aimCamera.distanceScale() * std::pow(0.9f, static_cast<float>(yoffset));
+    m_aimCamera.setDistanceScale(std::clamp(scale, 0.6f, 2.5f));
 }

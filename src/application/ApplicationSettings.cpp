@@ -165,6 +165,9 @@ bool Application::loadSettings()
     m_savedAirDensity = std::max(readFloat("air_density", m_savedAirDensity), 0.0f);
     m_savedCameraFOV = std::clamp(readFloat("camera_fov", m_savedCameraFOV), 10.0f, 120.0f);
     m_savedCameraSpeed = std::max(readFloat("camera_speed", m_savedCameraSpeed), 0.1f);
+    m_mouseAimSensitivity = std::clamp(readFloat("mouse_aim_sensitivity", m_mouseAimSensitivity), 0.01f, 0.3f);
+    m_invertMouseY = readBool("invert_mouse_y", m_invertMouseY);
+    m_cameraSmoothing = std::clamp(readFloat("camera_smoothing", m_cameraSmoothing), 3.0f, 40.0f);
 
     if (m_renderer)
     {
@@ -251,7 +254,8 @@ std::string Application::buildSettingsSnapshot() const
 
     const float gravity = m_physicsEngine ? m_physicsEngine->getGravity() : m_savedGravity;
     const float airDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity;
-    const float cameraFOV = m_renderer ? m_renderer->getCameraFOV() : m_savedCameraFOV;
+    // The live FOV moves with mouse-aim zoom; the saved one is the user's choice.
+    const float cameraFOV = m_savedCameraFOV;
     const float cameraSpeed = m_renderer ? m_renderer->getCameraSpeed() : m_savedCameraSpeed;
 
     output << "show_trajectory=" << formatBoolValue(m_showTrajectory) << "\n";
@@ -340,12 +344,10 @@ void Application::saveSettings()
 
         const float gravity = m_physicsEngine ? m_physicsEngine->getGravity() : m_savedGravity;
         const float airDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity;
-        const float cameraFOV = m_renderer ? m_renderer->getCameraFOV() : m_savedCameraFOV;
         const float cameraSpeed = m_renderer ? m_renderer->getCameraSpeed() : m_savedCameraSpeed;
 
         m_savedGravity = gravity;
         m_savedAirDensity = airDensity;
-        m_savedCameraFOV = cameraFOV;
         m_savedCameraSpeed = cameraSpeed;
 
         const std::string snapshot = buildSettingsSnapshot();

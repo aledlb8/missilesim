@@ -277,6 +277,8 @@ private:
     // Mouse control functions
     void mouseCallback(double xpos, double ypos);
     void mouseButtonCallback(int button, int action);
+    void scrollCallback(double yoffset);
+
 
     // Target functions
     void createTarget(const glm::vec3 &position, float radius = 5.0f);
@@ -382,12 +384,21 @@ private:
     float m_lastMouseX;
     float m_lastMouseY;
     bool m_firstMouse;
-    bool m_enableMouseCamera = false;
+    bool m_enableMouseCamera = false; // right mouse held: free-camera look or chase orbit
+    bool m_cursorCaptured = false;
+    glm::vec2 m_pendingMouseDelta{0.0f}; // pixels since the last frame, for mouse aim
+    bool m_freeLookHeld = false;
+    bool m_freeLookMouseHeld = false; // right mouse held in mouse aim
     CameraMode m_cameraMode = CameraMode::FREE;
     FreeCameraState m_freeCameraState;
     ChaseCamera m_chaseCamera;
     MouseAimCamera m_aimCamera;
     float m_lastFrameDeltaTime = 0.016f;
+
+    // Mouse aim settings (Settings > Controls, autosaved).
+    float m_mouseAimSensitivity = 0.06f; // degrees of aim per pixel of mouse travel
+    bool m_invertMouseY = false;
+    float m_cameraSmoothing = 12.0f;     // mouse-aim camera follow rate, 1/s
 
     // Simulation components
     std::unique_ptr<PhysicsEngine> m_physicsEngine;
