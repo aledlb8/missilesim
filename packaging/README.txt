@@ -10,6 +10,7 @@ Running it
 1. Extract the whole zip somewhere (Desktop, Documents, ...). Keep the
    "assets" folder next to MissileSim.exe.
 2. Double-click MissileSim.exe.
+3. Choose START ENGAGEMENT, then press F to launch.
 
 Windows SmartScreen may warn that the app is from an unknown publisher,
 because it is not code-signed. Click "More info" -> "Run anyway".
@@ -22,23 +23,27 @@ Nothing else needs to be installed.
 Controls
 --------
   F                     Launch the missile
+  R                     Seeker cue: lock a target before launch
   Enter                 Pause / resume
-  Tab                   Show / hide the UI
-  C                     Back to the free camera, framing the engagement
-  R                     Toggle the pre-launch seeker cue
+  V                     Cycle camera: free, missile, fighter
+  C                     Frame the whole engagement
   W A S D               Move the free camera
   Space / Ctrl          Camera up / down
   Shift                 Move the camera faster
   Right mouse + drag    Look around
+  Tab                   Control panel (tune the missile, targets, world)
+  H                     Hide / show the HUD
+  F11                   Fullscreen
+  Esc                   Menu (settings, restart, quit)
 
-Use the HUD to switch between the Free, Missile and Fighter Jet cameras, and
-the control panels to tune the missile, targets and simulation while it runs.
+Settings > Display has window mode, V-sync and interface size;
+Settings > Graphics and Audio have the rest.
 
 
 Files it creates
 ----------------
 Next to MissileSim.exe:
   config\user_settings.ini   your settings (delete it to reset to defaults)
-  imgui.ini                  UI window layout
+  imgui.ini                  interface state
   missilesim.log             log of the last run - send this along if
                              something goes wrong
