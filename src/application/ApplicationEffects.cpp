@@ -272,7 +272,7 @@ void Application::emitFrameVisualEffects(float deltaTime)
         const float afterburnerIntensity = glm::clamp(target->getThrottle(), 0.0f, 1.0f);
         for (const auto &socket : m_renderer->getExhaustSockets(*target))
         {
-            const glm::vec3 previous = socket.position + target->getPreviousPosition() - target->getPosition();
+            const glm::vec3 previous = socket.position + target->getPreviousRenderPosition() - target->getRenderPosition();
             m_renderer->emitJetAfterburner(previous, socket.position, -socket.direction,
                                            target->getVelocity(), afterburnerIntensity);
         }
@@ -287,13 +287,13 @@ void Application::emitFrameVisualEffects(float deltaTime)
         if (wakeIntensity > 0.04f)
         {
             const glm::vec3 wingOffset = (right * radius * 0.95f) + (up * radius * 0.03f) - (forward * radius * 0.08f);
-            m_renderer->emitJetWake(target->getPreviousPosition() - wingOffset,
-                                    target->getPosition() - wingOffset,
+            m_renderer->emitJetWake(target->getPreviousRenderPosition() - wingOffset,
+                                    target->getRenderPosition() - wingOffset,
                                     forward,
                                     target->getVelocity(),
                                     wakeIntensity);
-            m_renderer->emitJetWake(target->getPreviousPosition() + wingOffset,
-                                    target->getPosition() + wingOffset,
+            m_renderer->emitJetWake(target->getPreviousRenderPosition() + wingOffset,
+                                    target->getRenderPosition() + wingOffset,
                                     forward,
                                     target->getVelocity(),
                                     wakeIntensity);
@@ -310,8 +310,8 @@ void Application::emitFrameVisualEffects(float deltaTime)
         const float heatFraction = (flare->getInitialHeatSignature() > 0.0f)
                                        ? glm::clamp(flare->getHeatSignature() / flare->getInitialHeatSignature(), 0.0f, 1.0f)
                                        : 0.0f;
-        m_renderer->emitFlareEffect(flare->getPreviousPosition(),
-                                    flare->getPosition(),
+        m_renderer->emitFlareEffect(flare->getPreviousRenderPosition(),
+                                    flare->getRenderPosition(),
                                     flare->getVelocity(),
                                     heatFraction);
     }

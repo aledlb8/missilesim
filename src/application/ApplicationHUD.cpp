@@ -379,7 +379,7 @@ void Application::renderHud()
             char idText[8];
             std::snprintf(idText, sizeof(idText), "T%zu", i + 1);
 
-            const Projected p = project(target->getPosition());
+            const Projected p = project(target->getRenderPosition());
             if (p.onScreen)
             {
                 const float half = ui::px(13.0f) + ui::px(12.0f) * std::clamp(900.0f / std::max(range, 1.0f), 0.0f, 1.0f);

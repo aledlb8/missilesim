@@ -295,7 +295,7 @@ void Application::updateTitleCamera(float deltaTime)
     const glm::vec3 forward = m_titleCameraForward;
     const glm::vec3 right = safeNormalize(glm::cross(forward, worldUp), glm::vec3(1.0f, 0.0f, 0.0f));
     const float distance = std::clamp(subject->getRadius() * 6.5f, 24.0f, 60.0f);
-    const glm::vec3 subjectPosition = subject->getPosition();
+    const glm::vec3 subjectPosition = subject->getRenderPosition();
 
     glm::vec3 cameraPosition = subjectPosition +
                                (-std::cos(m_titleOrbitAngle) * forward + std::sin(m_titleOrbitAngle) * right) * distance +

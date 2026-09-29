@@ -484,7 +484,7 @@ void Application::update(float deltaTime)
         }
 
         // Accumulated time approach for fixed time step
-        static float accumulator = 0.0f;
+        float &accumulator = m_physicsAccumulator;
         accumulator += deltaTime * m_simulationSpeed;
 
         // Cap accumulated time to prevent "spiral of death" if game lags
@@ -640,6 +640,10 @@ void Application::update(float deltaTime)
             }
         }
 
+        // Leftover fraction of a step: rendering blends the last two step
+        // states by it so motion is smooth at any frame rate.
+        m_renderAlpha = std::clamp(accumulator / m_timeStep, 0.0f, 1.0f);
+
         collectPendingTargetFlares();
         removeInactiveFlares();
 
@@ -711,6 +715,7 @@ void Application::render()
         }
 
         const bool inEngagement = m_screen == Screen::Playing;
+        setRenderBlendForAll(m_renderAlpha);
         if (inEngagement)
         {
             updateActiveCameraMode();

@@ -279,6 +279,9 @@ private:
     void mouseButtonCallback(int button, int action);
     void scrollCallback(double yoffset);
 
+    // Render interpolation across fixed physics steps (see PhysicsObject).
+    void beginFixedStepForAll();
+    void setRenderBlendForAll(float alpha);
 
     // Target functions
     void createTarget(const glm::vec3 &position, float radius = 5.0f);
@@ -399,6 +402,10 @@ private:
     float m_mouseAimSensitivity = 0.06f; // degrees of aim per pixel of mouse travel
     bool m_invertMouseY = false;
     float m_cameraSmoothing = 12.0f;     // mouse-aim camera follow rate, 1/s
+
+    // Fixed-step physics bookkeeping for render interpolation.
+    float m_physicsAccumulator = 0.0f;
+    float m_renderAlpha = 1.0f;
 
     // Simulation components
     std::unique_ptr<PhysicsEngine> m_physicsEngine;
