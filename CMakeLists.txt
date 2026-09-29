@@ -91,6 +91,8 @@ add_subdirectory(src/audio)
 # Offline renderer: plays scripted scenarios through the audio engine into WAVs.
 if(MISSILESIM_BUILD_TOOLS)
     add_subdirectory(tools/audition)
+    add_subdirectory(tools/fox2_kinematics)
+    add_subdirectory(tools/flight_harness)
 endif()
 
 # Project source files
