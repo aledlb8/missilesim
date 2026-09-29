@@ -32,6 +32,7 @@
 #include "physics/forces/Drag.h"
 #include "physics/forces/Lift.h"
 #include "rendering/Renderer.h"
+#include "sim/Fox2Catalog.h"
 
 using missilesim::application::detail::formatBoolValue;
 using missilesim::application::detail::formatVec3Value;
@@ -215,6 +216,19 @@ bool Application::loadSettings()
     m_hudVisible = readBool("hud_visible", m_hudVisible);
     m_showUI = readBool("control_panel_visible", m_showUI);
     setVsyncEnabled(readBool("vsync", m_vsyncEnabled));
+    const std::string playerRole = readString("player_role", "sam");
+    if (playerRole == "fighter")
+    {
+        m_playerRole = PlayerRole::Fighter;
+        const std::string fox2Id = readString("fox2_id", "aim-9x-blk2");
+        m_fox2Id = missilesim::fox2::find(fox2Id.c_str()) != nullptr ? fox2Id : "aim-9x-blk2";
+    }
+    else
+    {
+        m_playerRole = PlayerRole::Sam;
+        m_fox2Id = "custom";
+    }
+
     const std::string displayMode = readString("display_mode", displayModeName(m_displayMode));
     if (displayMode == displayModeName(DisplayMode::Borderless))
     {
@@ -283,6 +297,8 @@ std::string Application::buildSettingsSnapshot() const
     output << "ui_scale=" << m_uiScale << "\n";
     output << "hud_visible=" << formatBoolValue(m_hudVisible) << "\n";
     output << "control_panel_visible=" << formatBoolValue(m_showUI) << "\n";
+    output << "player_role=" << (m_playerRole == PlayerRole::Fighter ? "fighter" : "sam") << "\n";
+    output << "fox2_id=" << m_fox2Id << "\n";
 
     if (m_renderer && m_renderer->hasPBR())
     {
