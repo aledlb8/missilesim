@@ -27,6 +27,16 @@ The models replace these historical CC0 placeholders (not included in the new mo
 - [Simple Missile](https://opengameart.org/content/simple-missile), tbbk.
 - [Funky Aircraft](https://opengameart.org/content/funky-aircraft), Savino.
 
+## Fonts
+
+The interface uses fonts from Google Fonts, bundled in `fonts/` and licensed
+under the SIL Open Font License 1.1 (full text beside the files):
+
+- [Barlow](https://github.com/jpt/barlow) and Barlow Condensed, Jeremy Tribby
+  (`OFL-Barlow.txt`): interface text, headings and HUD labels.
+- [IBM Plex Mono](https://github.com/IBM/plex), IBM Corp. (`OFL-IBMPlexMono.txt`):
+  numeric readouts.
+
 ## Audio
 
 There are no audio assets. Every sound is synthesized at runtime from the simulation state by the physical audio engine in `src/audio` (see the README), so no recorded or third-party audio is used.
