@@ -225,6 +225,13 @@ bool PhysicsEngine::checkMissileTargetHit(Missile *missile)
         if (!target->isActive())
             continue;
 
+        // Custom rounds stay armed (arm distance 0). Catalog Fox 2s wait for
+        // their fuze gate so a rail shot cannot detonate in the minimum range.
+        if (!missile->isFuzeArmed())
+        {
+            return false;
+        }
+
         const float detonationRadius = target->getRadius() + missile->getProximityFuseRadius();
         if (segmentIntersectsSphere(missilePrevPos, missilePos, target->getPosition(), detonationRadius))
         {
