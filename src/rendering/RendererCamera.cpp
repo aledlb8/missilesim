@@ -67,6 +67,30 @@ void Renderer::setCameraTarget(const glm::vec3 &target)
     updateCameraVectors();
 }
 
+void Renderer::setCameraView(const glm::vec3 &position, const glm::vec3 &forward, const glm::vec3 &up)
+{
+    if (glm::length2(forward) < 1.0e-10f)
+    {
+        return;
+    }
+    const glm::vec3 front = glm::normalize(forward);
+    glm::vec3 orthoUp = up - front * glm::dot(up, front);
+    if (glm::length2(orthoUp) < 1.0e-10f)
+    {
+        return;
+    }
+    orthoUp = glm::normalize(orthoUp);
+
+    m_cameraPosition = position;
+    m_cameraFront = front;
+    m_cameraUp = orthoUp;
+    m_cameraRight = glm::normalize(glm::cross(front, orthoUp));
+    m_cameraTarget = position + front;
+    // Keep yaw/pitch in step so the free camera resumes from this view.
+    m_cameraPitch = glm::degrees(std::asin(glm::clamp(front.y, -1.0f, 1.0f)));
+    m_cameraYaw = glm::degrees(std::atan2(front.z, front.x));
+}
+
 void Renderer::rotateCameraYaw(float deltaDegrees)
 {
     m_cameraYaw += deltaDegrees;

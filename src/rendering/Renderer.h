@@ -89,6 +89,10 @@ public:
     // Camera controls
     void setCameraPosition(const glm::vec3 &position);
     void setCameraTarget(const glm::vec3 &target);
+    // Full orientation for the chase and mouse-aim rigs. Unlike the yaw/pitch
+    // path it keeps the given up vector, so the view can roll and can look
+    // straight up or down without flipping.
+    void setCameraView(const glm::vec3 &position, const glm::vec3 &forward, const glm::vec3 &up);
     void rotateCameraYaw(float deltaDegrees);
     void rotateCameraPitch(float deltaDegrees);
     void moveCameraForward(float distance);
