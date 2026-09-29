@@ -24,6 +24,7 @@
 #include <glm/gtx/norm.hpp>
 
 #include "audio/AudioSystem.h"
+#include "objects/Fighter.h"
 #include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
@@ -231,9 +232,15 @@ void Application::frameDetonationCamera()
         return;
     }
 
-    // Freeze the camera where the chase left it and pan to the impact point so
-    // the explosion stays centred in view for the duration of the hold.
-    m_renderer->setCameraTarget(m_detonationHoldPosition);
+    // Freeze the camera where the chase left it and ease round to the impact
+    // point so the explosion stays centred for the hold, keeping the current
+    // roll instead of snapping it level.
+    const glm::vec3 position = m_renderer->getCameraPosition();
+    const glm::vec3 front = m_renderer->getCameraFront();
+    const glm::vec3 toBlast = safeNormalize(m_detonationHoldPosition - position, front);
+    const float blend = 1.0f - std::exp(-6.0f * std::max(m_lastFrameDeltaTime, 0.0f));
+    const glm::vec3 forward = safeNormalize(front + (toBlast - front) * blend, toBlast);
+    m_renderer->setCameraView(position, forward, m_renderer->getCameraUp());
 }
 
 void Application::updateMissileCamera()
@@ -243,25 +250,18 @@ void Application::updateMissileCamera()
         return;
     }
 
-    const glm::vec3 fallbackForward = safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f));
-    glm::vec3 forward = safeNormalize(m_missile->getVelocity(), glm::vec3(0.0f));
-    if (glm::length2(forward) < 0.0001f)
+    glm::vec3 heading = m_missile->getVelocity();
+    if (glm::length2(heading) < 1.0f)
     {
-        forward = safeNormalize(m_missile->getThrustDirection(), fallbackForward);
+        heading = m_missile->getThrustDirection();
     }
-
-    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-    const glm::vec3 missilePosition = m_missile->getPosition();
-    const float missileSpeed = glm::length(m_missile->getVelocity());
-    const float chaseDistance = std::clamp(8.0f + missileSpeed * 0.04f, 8.0f, 30.0f);
-    const float chaseHeight = std::clamp(1.4f + missileSpeed * 0.005f, 1.4f, 7.0f);
-    const float lookAhead = std::clamp(25.0f + missileSpeed * 0.12f, 25.0f, 120.0f);
-
-    const glm::vec3 focusPoint = missilePosition + worldUp * 0.8f;
-    const glm::vec3 cameraPosition = missilePosition - forward * chaseDistance + worldUp * chaseHeight;
-    const glm::vec3 lookTarget = missilePosition + forward * lookAhead + worldUp * 0.8f;
-
-    applyChaseCamera(focusPoint, cameraPosition, lookTarget);
+    const float speed = glm::length(m_missile->getVelocity());
+    const float distance = std::clamp(8.0f + speed * 0.04f, 8.0f, 30.0f);
+    const float height = std::clamp(1.4f + speed * 0.005f, 1.4f, 7.0f);
+    const float lookAhead = std::clamp(25.0f + speed * 0.12f, 25.0f, 120.0f);
+    m_chaseCamera.setOrbiting(m_enableMouseCamera);
+    m_chaseCamera.update(m_lastFrameDeltaTime, m_missile->getRenderPosition(), heading, distance, height, lookAhead, m_savedCameraFOV);
+    applyCameraPose(m_chaseCamera.pose());
 }
 
 void Application::updateFighterJetCamera()
@@ -271,41 +271,38 @@ void Application::updateFighterJetCamera()
         return;
     }
 
+    if (m_playerRole == PlayerRole::Fighter && m_fighter)
+    {
+        m_aimCamera.update(m_lastFrameDeltaTime, m_fighter->getRenderPosition(), m_fighter->getRadius(), m_savedCameraFOV,
+                           m_cameraSmoothing);
+        applyCameraPose(m_aimCamera.pose());
+        return;
+    }
+
+    // SAM role: ride along behind the target the missile is after.
     Target *focusTarget = getTrackedMissileTarget();
     if (focusTarget == nullptr)
     {
         focusTarget = findBestTarget();
     }
-
     if (focusTarget == nullptr)
     {
         return;
     }
 
-    const glm::vec3 fallbackForward = safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f));
-    glm::vec3 forward = safeNormalize(focusTarget->getVelocity(), glm::vec3(0.0f));
-    if (glm::length2(forward) < 0.0001f && m_missile)
+    glm::vec3 heading = focusTarget->getVelocity();
+    if (glm::length2(heading) < 1.0f && m_missile)
     {
-        forward = safeNormalize(focusTarget->getPosition() - m_missile->getPosition(), fallbackForward);
+        heading = focusTarget->getPosition() - m_missile->getPosition();
     }
-    if (glm::length2(forward) < 0.0001f)
-    {
-        forward = fallbackForward;
-    }
-
-    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-    const glm::vec3 targetPosition = focusTarget->getPosition();
-    const float targetSpeed = glm::length(focusTarget->getVelocity());
-    const float targetRadius = std::max(focusTarget->getRadius(), 1.0f);
-    const float chaseDistance = std::clamp(targetRadius * 4.0f + targetSpeed * 0.05f, 12.0f, 40.0f);
-    const float chaseHeight = std::clamp(targetRadius * 1.5f + targetSpeed * 0.008f, 3.0f, 12.0f);
-    const float lookAhead = std::clamp(targetRadius * 10.0f + targetSpeed * 0.15f, 20.0f, 150.0f);
-
-    const glm::vec3 focusPoint = targetPosition + worldUp * (targetRadius * 0.35f);
-    const glm::vec3 cameraPosition = targetPosition - forward * chaseDistance + worldUp * chaseHeight;
-    const glm::vec3 lookTarget = targetPosition + forward * lookAhead + worldUp * (targetRadius * 0.35f);
-
-    applyChaseCamera(focusPoint, cameraPosition, lookTarget);
+    const float speed = glm::length(focusTarget->getVelocity());
+    const float radius = std::max(focusTarget->getRadius(), 1.0f);
+    const float distance = std::clamp(radius * 4.0f + speed * 0.05f, 12.0f, 40.0f);
+    const float height = std::clamp(radius * 1.5f + speed * 0.008f, 3.0f, 12.0f);
+    const float lookAhead = std::clamp(radius * 10.0f + speed * 0.15f, 20.0f, 150.0f);
+    m_chaseCamera.setOrbiting(m_enableMouseCamera);
+    m_chaseCamera.update(m_lastFrameDeltaTime, focusTarget->getRenderPosition(), heading, distance, height, lookAhead, m_savedCameraFOV);
+    applyCameraPose(m_chaseCamera.pose());
 }
 
 void Application::captureFreeCameraState()
@@ -337,129 +334,71 @@ void Application::restoreFreeCameraState()
 
 void Application::resetChaseCameraState()
 {
-    m_chaseCameraState = {};
+    m_chaseCamera.reset();
 }
 
-void Application::primeChaseCameraState(const glm::vec3 &focusPoint)
+void Application::applyCameraPose(const CameraPose &pose)
 {
     if (!m_renderer)
     {
         return;
     }
-
-    glm::vec3 offset = m_renderer->getCameraPosition() - focusPoint;
-    float distance = glm::length(offset);
-    if (distance <= 0.0001f)
-    {
-        offset = -safeNormalize(m_renderer->getCameraFront(), glm::vec3(0.0f, 0.0f, 1.0f)) * 12.0f;
-        distance = glm::length(offset);
-    }
-
-    const glm::vec3 direction = offset / std::max(distance, 0.0001f);
-    m_chaseCameraState.yaw = glm::degrees(std::atan2(direction.z, direction.x));
-    m_chaseCameraState.pitch = glm::degrees(std::asin(glm::clamp(direction.y, -1.0f, 1.0f)));
-    m_chaseCameraState.distance = distance;
-    m_chaseCameraState.returnBlend = 1.0f;
-    m_chaseCameraState.initialized = true;
+    m_renderer->setCameraView(pose.position, pose.forward, pose.up);
+    m_renderer->setCameraFOV(pose.fov);
 }
 
-void Application::updateChaseOrbit(float yawDeltaDegrees, float pitchDeltaDegrees)
+void Application::resetAimCamera()
 {
-    if (m_cameraMode == CameraMode::FREE)
-    {
-        return;
-    }
-
-    if (!m_chaseCameraState.initialized)
-    {
-        return;
-    }
-
-    m_chaseCameraState.yaw += yawDeltaDegrees;
-    m_chaseCameraState.pitch = glm::clamp(m_chaseCameraState.pitch + pitchDeltaDegrees, -80.0f, 80.0f);
-    m_chaseCameraState.returnBlend = 1.0f;
+    const glm::vec3 nose = m_fighter ? m_fighter->getNose() : glm::vec3(0.0f, 0.0f, 1.0f);
+    m_aimCamera.reset(nose);
+    m_pendingMouseDelta = glm::vec2(0.0f);
 }
 
-void Application::applyChaseCamera(const glm::vec3 &focusPoint,
-                                   const glm::vec3 &defaultPosition,
-                                   const glm::vec3 &defaultTarget)
+bool Application::mouseAimActive() const
 {
-    if (!m_renderer)
+    return m_playerRole == PlayerRole::Fighter && m_fighter && m_cameraMode == CameraMode::FIGHTER_JET &&
+           m_screen == Screen::Playing && m_overlay == Overlay::None && !m_showUI;
+}
+
+void Application::updateCursorCapture()
+{
+    if (!m_window)
     {
         return;
     }
-
-    auto buildOrbitPosition = [&]() -> glm::vec3
+    const bool wanted = mouseAimActive() || m_enableMouseCamera;
+    if (wanted == m_cursorCaptured)
     {
-        const float yaw = glm::radians(m_chaseCameraState.yaw);
-        const float pitch = glm::radians(m_chaseCameraState.pitch);
-        const float cosPitch = std::cos(pitch);
-        glm::vec3 offset(cosPitch * std::cos(yaw),
-                         std::sin(pitch),
-                         cosPitch * std::sin(yaw));
-
-        if (glm::length2(offset) <= 0.0001f)
-        {
-            offset = glm::vec3(0.0f, 0.0f, 1.0f);
-        }
-        else
-        {
-            offset = glm::normalize(offset);
-        }
-
-        return focusPoint + (offset * std::max(m_chaseCameraState.distance, 1.0f));
-    };
-
-    if (m_enableMouseCamera)
-    {
-        if (!m_chaseCameraState.initialized)
-        {
-            primeChaseCameraState(focusPoint);
-        }
-
-        if (m_chaseCameraState.initialized)
-        {
-            m_renderer->setCameraPosition(buildOrbitPosition());
-            m_renderer->setCameraTarget(focusPoint);
-            m_chaseCameraState.returnBlend = 1.0f;
-            return;
-        }
-    }
-
-    if (m_chaseCameraState.initialized && m_chaseCameraState.returnBlend > 0.001f)
-    {
-        const glm::vec3 orbitPosition = buildOrbitPosition();
-        const float blend = glm::clamp(m_chaseCameraState.returnBlend, 0.0f, 1.0f);
-        m_renderer->setCameraPosition(glm::mix(defaultPosition, orbitPosition, blend));
-        m_renderer->setCameraTarget(glm::mix(defaultTarget, focusPoint, blend));
-
-        const float blendDecay = glm::clamp(m_lastFrameDeltaTime, 0.0f, 0.05f) * 3.5f;
-        m_chaseCameraState.returnBlend = std::max(0.0f, blend - blendDecay);
-        if (m_chaseCameraState.returnBlend <= 0.0f)
-        {
-            m_chaseCameraState.initialized = false;
-        }
         return;
     }
-
-    m_renderer->setCameraPosition(defaultPosition);
-    m_renderer->setCameraTarget(defaultTarget);
+    m_cursorCaptured = wanted;
+    m_firstMouse = true;
+    m_pendingMouseDelta = glm::vec2(0.0f);
+    glfwSetInputMode(m_window, GLFW_CURSOR, wanted ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    // Raw (unaccelerated, unscaled) motion while captured, where supported:
+    // the aim then moves exactly with the hand, as a shooter's does.
+    if (glfwRawMouseMotionSupported())
+    {
+        glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, wanted ? GLFW_TRUE : GLFW_FALSE);
+    }
 }
 
 void Application::releaseMouseCameraCapture()
 {
-    const bool wasCapturing = m_enableMouseCamera;
     m_enableMouseCamera = false;
     m_firstMouse = true;
-
-    if (wasCapturing && m_cameraMode != CameraMode::FREE && m_chaseCameraState.initialized)
+    m_freeLookMouseHeld = false;
+    m_freeLookHeld = false;
+    m_chaseCamera.setOrbiting(false);
+    m_aimCamera.setFreeLook(false);
+    if (m_window && m_cursorCaptured)
     {
-        m_chaseCameraState.returnBlend = 1.0f;
-    }
-
-    if (m_window)
-    {
+        m_cursorCaptured = false;
         glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        if (glfwRawMouseMotionSupported())
+        {
+            glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        }
     }
 }
 

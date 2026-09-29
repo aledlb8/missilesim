@@ -9,8 +9,10 @@
 #include <vector>
 #include "objects/Target.h"
 #include "sim/SimulationConfig.h"
+#include "CameraRig.h"
 
 class AudioSystem;
+class Fighter;
 class Flare;
 struct FlareLaunchRequest;
 struct GLFWwindow;
@@ -43,6 +45,12 @@ private:
         FREE,
         MISSILE,
         FIGHTER_JET
+    };
+
+    enum class PlayerRole
+    {
+        Sam,
+        Fighter
     };
 
     enum class DisplayMode
@@ -135,15 +143,6 @@ private:
         float fov = 50.0f;
         float speed = 35.0f;
         bool valid = false;
-    };
-
-    struct ChaseCameraState
-    {
-        float yaw = 0.0f;
-        float pitch = 0.0f;
-        float distance = 0.0f;
-        float returnBlend = 0.0f;
-        bool initialized = false;
     };
 
     struct TrajectoryPreviewConfig
@@ -258,12 +257,13 @@ private:
     void captureFreeCameraState();
     void restoreFreeCameraState();
     void resetChaseCameraState();
-    void primeChaseCameraState(const glm::vec3 &focusPoint);
-    void updateChaseOrbit(float yawDeltaDegrees, float pitchDeltaDegrees);
-    void applyChaseCamera(const glm::vec3 &focusPoint,
-                          const glm::vec3 &defaultPosition,
-                          const glm::vec3 &defaultTarget);
+    void applyCameraPose(const CameraPose &pose);
     void releaseMouseCameraCapture();
+    // Mouse aim owns the (hidden, raw) cursor while flying the fighter from
+    // its own camera with no panel or menu open.
+    bool mouseAimActive() const;
+    void updateCursorCapture();
+    void resetAimCamera();
     const char *getCameraModeLabel() const;
     void updateEnvironmentScale();
     float computeEngagementRadius() const;
@@ -372,7 +372,8 @@ private:
     bool m_enableMouseCamera = false;
     CameraMode m_cameraMode = CameraMode::FREE;
     FreeCameraState m_freeCameraState;
-    ChaseCameraState m_chaseCameraState;
+    ChaseCamera m_chaseCamera;
+    MouseAimCamera m_aimCamera;
     float m_lastFrameDeltaTime = 0.016f;
 
     // Simulation components
@@ -380,6 +381,7 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<AudioSystem> m_audioSystem;
     std::unique_ptr<Missile> m_missile;
+    std::unique_ptr<Fighter> m_fighter;
     std::vector<std::unique_ptr<Target>> m_targets;
     std::vector<std::unique_ptr<Flare>> m_flares;
     missilesim::sim::SimulationConfig m_simulationConfig;
@@ -450,6 +452,12 @@ private:
     // Score tracking
     int m_score = 0;      // Player's score
     int m_targetHits = 0; // Number of targets hit
+
+    // SAM keeps the custom round. Fighter carries one catalog Fox 2 on the wingtip.
+    PlayerRole m_playerRole = PlayerRole::Sam;
+    std::string m_fox2Id = "custom";
+    int m_fox2Rounds = 2;
+    int m_railSign = 1;
 
     // Missile flight state
     bool m_missileInFlight = false;
