@@ -15,6 +15,7 @@
 #include <iterator>
 #include <string>
 
+#include "objects/Fighter.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
 #include "physics/Atmosphere.h"
@@ -111,6 +112,14 @@ const char *Application::missionStateLabel() const
     {
         return "READY";
     }
+    if (m_missile->isFox2())
+    {
+        if (m_missile->fox2SeekerLocked() || m_missile->fox2OnTrackMemory())
+        {
+            return m_missile->isThrustEnabled() ? "INTERCEPT" : "GLIDE";
+        }
+        return m_missile->isThrustEnabled() ? "BOOST" : "BALLISTIC";
+    }
     const bool locked = m_missile->isGuidanceEnabled() && getTrackedMissileTarget() != nullptr;
     const bool thrust = m_missile->isThrustEnabled();
     if (locked && thrust)
@@ -204,7 +213,7 @@ void Application::renderHud()
     // ---- Target markers ------------------------------------------------------
     if (m_showTargetInfo)
     {
-        const Target *chaseSubject = (m_cameraMode == CameraMode::FIGHTER_JET)
+        const Target *chaseSubject = (m_cameraMode == CameraMode::FIGHTER_JET && m_playerRole != PlayerRole::Fighter)
                                          ? (trackedTarget != nullptr ? trackedTarget : findBestTarget())
                                          : nullptr;
         const float edgeInset = ui::px(44.0f);
@@ -292,6 +301,44 @@ void Application::renderHud()
                 drawList->AddText(font.monoMedium, ui::px(11.5f), ImVec2(p.screen.x + s + ui::px(5.0f), p.screen.y - ui::px(6.5f)),
                                   colour, "MSL");
             }
+        }
+    }
+
+    // ---- Mouse aim (fighter camera) ----------------------------------------------
+    // War Thunder's two marks: the circle is where the mouse asks the nose to
+    // go, the cross is where the nose points now. The instructor flies the
+    // cross onto the circle.
+    if (m_playerRole == PlayerRole::Fighter && m_fighter && m_cameraMode == CameraMode::FIGHTER_JET)
+    {
+        constexpr float kMarkerRange = 1500.0f;
+        const glm::vec3 origin3 = m_fighter->getRenderPosition();
+        const ImU32 shade = ui::toU32(ImVec4(0.0f, 0.0f, 0.0f, 0.35f));
+        const ImU32 ink = ui::toU32(ImVec4(1.0f, 1.0f, 1.0f, 0.92f));
+
+        const Projected nose = project(origin3 + m_fighter->getRenderNose() * kMarkerRange);
+        if (nose.onScreen)
+        {
+            const float arm = ui::px(9.0f);
+            const float gap = ui::px(3.0f);
+            const ImVec2 c = nose.screen;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                const ImU32 colour = pass == 0 ? shade : ink;
+                const float width = pass == 0 ? ui::px(3.4f) : ui::px(1.6f);
+                drawList->AddLine(ImVec2(c.x - arm, c.y), ImVec2(c.x - gap, c.y), colour, width);
+                drawList->AddLine(ImVec2(c.x + gap, c.y), ImVec2(c.x + arm, c.y), colour, width);
+                drawList->AddLine(ImVec2(c.x, c.y - arm), ImVec2(c.x, c.y - gap), colour, width);
+                drawList->AddLine(ImVec2(c.x, c.y + gap), ImVec2(c.x, c.y + arm), colour, width);
+            }
+        }
+
+        const Projected aim = project(origin3 + m_aimCamera.aimDirection() * kMarkerRange);
+        if (aim.onScreen)
+        {
+            const float radius = ui::px(12.0f);
+            const bool freeLook = m_aimCamera.isFreeLook();
+            drawList->AddCircle(aim.screen, radius, shade, 40, ui::px(3.6f));
+            drawList->AddCircle(aim.screen, radius, freeLook ? ui::toU32(ui::color::accent) : ink, 40, ui::px(1.7f));
         }
     }
 
@@ -488,9 +535,22 @@ void Application::renderHud()
             const Atmosphere::State air = m_physicsEngine->getAtmosphereState(altitude);
             mach = air.speedOfSoundMetersPerSecond > 0.0f ? speed / air.speedOfSoundMetersPerSecond : 0.0f;
         }
+        const bool fighterStrip = m_playerRole == PlayerRole::Fighter && !m_missileInFlight && !m_launchSequence.active && m_fighter != nullptr;
         const glm::vec3 felt = m_missile->getAcceleration() + glm::vec3(0.0f, kGravity, 0.0f);
-        const float loadFactor = m_missileInFlight ? glm::length(felt) / kGravity : 1.0f;
-        const float fuelFraction = m_missileFuel > 0.0f ? std::clamp(m_missile->getFuel() / m_missileFuel, 0.0f, 1.0f) : 0.0f;
+        const float loadFactor = fighterStrip ? m_fighter->getLoadFactor()
+                                               : (m_missileInFlight ? glm::length(felt) / kGravity : 1.0f);
+        const float fuelCapacity = m_missile->isFox2() ? m_missile->getFuelCapacity() : m_missileFuel;
+        const float fuelFraction = fuelCapacity > 0.0f ? std::clamp(m_missile->getFuel() / fuelCapacity, 0.0f, 1.0f) : 0.0f;
+        const float stripSpeed = fighterStrip ? glm::length(m_fighter->getVelocity()) : speed;
+        float stripMach = mach;
+        float stripAltitude = altitude;
+        if (fighterStrip && m_physicsEngine)
+        {
+            stripAltitude = std::max(m_fighter->getPosition().y, 0.0f);
+            const Atmosphere::State fighterAir = m_physicsEngine->getAtmosphereState(stripAltitude);
+            stripMach = fighterAir.speedOfSoundMetersPerSecond > 0.0f ? stripSpeed / fighterAir.speedOfSoundMetersPerSecond : 0.0f;
+        }
+        const float throttleFraction = fighterStrip ? glm::clamp(m_fighter->getThrottleLever() / Fighter::kMaxLever, 0.0f, 1.0f) : fuelFraction;
 
         struct Cell
         {
@@ -499,12 +559,27 @@ void Application::renderHud()
             const char *unit;
         };
         Cell cells[6] = {{"SPEED", "", "m/s"}, {"MACH", "", ""}, {"ALTITUDE", "", "m"}, {"LOAD", "", "g"}, {"FUEL", "", "%"}, {"FLIGHT", "", "s"}};
-        std::snprintf(cells[0].value, sizeof(cells[0].value), "%.0f", speed);
-        std::snprintf(cells[1].value, sizeof(cells[1].value), "%.2f", mach);
-        std::snprintf(cells[2].value, sizeof(cells[2].value), "%.0f", altitude);
+        if (fighterStrip)
+        {
+            cells[4].label = "THR";
+            cells[4].unit = m_fighter->isAfterburner() ? "AB" : "%";
+            cells[5].label = "RND";
+            cells[5].unit = "";
+        }
+        std::snprintf(cells[0].value, sizeof(cells[0].value), "%.0f", stripSpeed);
+        std::snprintf(cells[1].value, sizeof(cells[1].value), "%.2f", stripMach);
+        std::snprintf(cells[2].value, sizeof(cells[2].value), "%.0f", stripAltitude);
         std::snprintf(cells[3].value, sizeof(cells[3].value), "%.1f", loadFactor);
-        std::snprintf(cells[4].value, sizeof(cells[4].value), "%.0f", fuelFraction * 100.0f);
-        std::snprintf(cells[5].value, sizeof(cells[5].value), "%.1f", m_missileFlightTime);
+        std::snprintf(cells[4].value, sizeof(cells[4].value), "%.0f",
+                      fighterStrip ? m_fighter->getThrottleLever() * 100.0f : fuelFraction * 100.0f);
+        if (fighterStrip)
+        {
+            std::snprintf(cells[5].value, sizeof(cells[5].value), "%d", m_fox2Rounds);
+        }
+        else
+        {
+            std::snprintf(cells[5].value, sizeof(cells[5].value), "%.1f", m_missileFlightTime);
+        }
 
         const float cellWidth = ui::px(98.0f);
         const float stripHeight = ui::px(68.0f);
@@ -515,7 +590,7 @@ void Application::renderHud()
         stripTop = min.y;
         drawGlass(drawList, min, max, 1.0f, ui::px(10.0f));
 
-        const float valueAlpha = (m_missileInFlight || m_launchSequence.active) ? 1.0f : 0.55f;
+        const float valueAlpha = (fighterStrip || m_missileInFlight || m_launchSequence.active) ? 1.0f : 0.55f;
         for (int i = 0; i < 6; ++i)
         {
             const float cellX = min.x + ui::px(6.0f) + cellWidth * static_cast<float>(i);
@@ -527,7 +602,7 @@ void Application::renderHud()
             ui::drawTracked(drawList, font.display, ui::px(11.5f), ImVec2(innerX, min.y + ui::px(12.0f)),
                             ui::toU32(ui::color::textMuted), cells[i].label, 0.18f);
             const float valueSize = ui::px(23.0f);
-            const bool fuelLow = i == 4 && fuelFraction < 0.15f && m_missileInFlight;
+            const bool fuelLow = i == 4 && !fighterStrip && fuelFraction < 0.15f && m_missileInFlight;
             drawList->AddText(font.monoMedium, valueSize, ImVec2(innerX, min.y + ui::px(29.0f)),
                               ui::toU32(fuelLow ? ui::color::danger : ui::color::text, valueAlpha), cells[i].value);
             if (cells[i].unit[0] != '\0')
@@ -542,7 +617,7 @@ void Application::renderHud()
                 const float barY = max.y - ui::px(10.0f);
                 drawList->AddRectFilled(ImVec2(innerX, barY), ImVec2(innerX + barWidth, barY + ui::px(2.5f)),
                                         ui::toU32(ImVec4(1.0f, 1.0f, 1.0f, 0.10f)), ui::px(1.0f));
-                drawList->AddRectFilled(ImVec2(innerX, barY), ImVec2(innerX + barWidth * fuelFraction, barY + ui::px(2.5f)),
+                drawList->AddRectFilled(ImVec2(innerX, barY), ImVec2(innerX + barWidth * (fighterStrip ? throttleFraction : fuelFraction), barY + ui::px(2.5f)),
                                         ui::toU32(fuelLow ? ui::color::danger : ui::color::accent, valueAlpha), ui::px(1.0f));
             }
         }
@@ -552,6 +627,10 @@ void Application::renderHud()
         {
             const char *launch = "Launch";
             const char *cue = "Seeker cue";
+            if (fighterStrip && m_missile->fox2Spec() != nullptr)
+            {
+                launch = m_missile->fox2Spec()->displayName;
+            }
             const char *cueState = m_seekerCueEnabled ? "ON" : "OFF";
             const float bodySize = ui::px(14.5f);
             const float launchWidth = textWidth(font.body, bodySize, launch);
@@ -576,14 +655,20 @@ void Application::renderHud()
         const float alpha = 1.0f - std::clamp((m_hud.engagementTime - kHintsVisibleSeconds) / 1.5f, 0.0f, 1.0f);
         if (alpha > 0.001f)
         {
-            const char *const hints[][2] = {{"Tab", "Controls"}, {"V", "Camera"}, {"H", "Hide HUD"}, {"Esc", "Menu"}};
-            float y = origin.y + height - margin - ui::px(24.0f) * 4.0f;
-            for (const auto &hint : hints)
+            static const char *const samHints[][2] = {{"Tab", "Controls"}, {"V", "Camera"}, {"H", "Hide HUD"}, {"Esc", "Menu"}};
+            static const char *const fighterHints[][2] = {{"Mouse", "Aim"},       {"RMB", "Free look"},
+                                                          {"Shift", "Throttle up"}, {"Ctrl", "Throttle down"}, {"X", "Afterburner"},
+                                                          {"F", "Fire"},          {"V", "Camera"},         {"Esc", "Menu"}};
+            const bool fighterRole = m_playerRole == PlayerRole::Fighter;
+            const auto *hints = fighterRole ? fighterHints : samHints;
+            const size_t hintCount = fighterRole ? std::size(fighterHints) : std::size(samHints);
+            float y = origin.y + height - margin - ui::px(24.0f) * static_cast<float>(hintCount);
+            const float textX = origin.x + margin + ui::px(fighterRole ? 64.0f : 46.0f);
+            for (size_t i = 0; i < hintCount; ++i)
             {
-                const float capWidth = ui::drawKeycap(drawList, ImVec2(origin.x + margin, y), hint[0], alpha);
-                (void)capWidth;
-                drawList->AddText(font.body, ui::px(14.0f), ImVec2(origin.x + margin + ui::px(46.0f), y + ui::px(3.0f)),
-                                  ui::toU32(ui::color::textMuted, alpha), hint[1]);
+                ui::drawKeycap(drawList, ImVec2(origin.x + margin, y), hints[i][0], alpha);
+                drawList->AddText(font.body, ui::px(14.0f), ImVec2(textX, y + ui::px(3.0f)),
+                                  ui::toU32(ui::color::textMuted, alpha), hints[i][1]);
                 y += ui::px(24.0f);
             }
         }
@@ -607,7 +692,7 @@ void Application::renderHud()
         ui::drawTracked(drawList, font.display, ui::px(12.0f), ImVec2(centre.x - ui::px(12.0f), centre.y - radius - ui::px(26.0f)),
                         ui::toU32(ui::color::textMuted), "RWR", 0.16f);
 
-        const bool threat = jet != nullptr && jet->hasThreatAssessment();
+        const bool threat = m_playerRole != PlayerRole::Fighter && jet != nullptr && jet->hasThreatAssessment();
         if (threat)
         {
             const glm::vec3 forward = safeNormalize(jet->getVelocity(), glm::vec3(0.0f, 0.0f, 1.0f));
