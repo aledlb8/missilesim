@@ -22,24 +22,31 @@ void Jet::reset(const glm::vec3 &position, const glm::vec3 &velocity, const glm:
     m_flcs = {};
     m_instructor = {};
     m_command = {};
+    m_controls = {};
+    m_controls.instructor.aimDirection = m_airframe.forward();
+}
+
+void Jet::setControls(const JetControls &controls, float sampleDeltaTime)
+{
+    m_controls = controls;
+    m_instructor.observeAim(controls.instructor.aimDirection, sampleDeltaTime);
 }
 
 void Jet::step(float deltaTime, const AirData &air, float gravity)
 {
-    if (!(deltaTime > 0.0f))
+    if (!(deltaTime > 0.0f) || !std::isfinite(deltaTime))
     {
         return;
     }
 
     const float lever = m_controls.afterburner ? 1.0f : std::clamp(m_controls.throttle, 0.0f, 1.0f) * kMilitaryLever;
     m_airframe.setThrottle(lever);
-    m_instructor.observeAim(m_controls.instructor.aimDirection, deltaTime);
 
     const int steps = std::max(1, static_cast<int>(std::ceil(deltaTime / kInnerStepSeconds - 1.0e-4f)));
     const float dt = deltaTime / static_cast<float>(steps);
     for (int i = 0; i < steps; ++i)
     {
-        m_command = m_instructor.update(m_airframe, m_controls.instructor, gravity);
+        m_command = m_instructor.update(m_airframe, m_controls.instructor, gravity, dt);
         m_airframe.setSurfaceCommand(m_flcs.update(m_airframe, m_command, gravity));
         m_airframe.step(dt, air, gravity);
     }

@@ -26,7 +26,7 @@ public:
     glm::vec3 getRenderAcceleration() const override { return m_acceleration; }
 
     void place(const glm::vec3 &position, const glm::vec3 &velocity, const glm::vec3 &nose);
-    void setInstructorInput(const missilesim::flight::InstructorInput &input) { m_input = input; }
+    void setInstructorInput(const missilesim::flight::InstructorInput &input, float sampleDeltaTime);
     void adjustThrottle(float delta);
     void toggleAfterburner();
 
@@ -61,7 +61,6 @@ private:
     float m_lever = 0.85f;
     float m_leverBeforeAfterburner = 1.0f;
     missilesim::flight::Jet m_jet;
-    missilesim::flight::InstructorInput m_input;
     glm::quat m_stepStartAttitude{1.0f, 0.0f, 0.0f, 0.0f};
     glm::quat m_renderAttitude{1.0f, 0.0f, 0.0f, 0.0f};
 };

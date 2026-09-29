@@ -32,19 +32,32 @@ namespace missilesim::flight
     class MouseAimInstructor
     {
     public:
-        // Once per frame, with the frame time, so the instructor can lead a
-        // moving aim point instead of trailing it.
-        void observeAim(const glm::vec3 &aimDirection, float deltaTime);
+        // Once per input sample, even on frames with no physics steps. Time
+        // is in simulation seconds; zero clears motion and rebases the aim.
+        void observeAim(const glm::vec3 &aimDirection, float sampleDeltaTime);
 
-        PilotCommand update(const F16Airframe &airframe, const InstructorInput &input, float gravity);
+        PilotCommand update(const F16Airframe &airframe, const InstructorInput &input, float gravity, float deltaTime);
 
         const InstructorStatus &status() const { return m_status; }
 
     private:
+        // Manual control engages immediately. On release, return smoothly
+        // from the aircraft's achieved rate, not a saturated stick demand.
+        struct AxisHandoff
+        {
+            float apply(float automatic, float manual, float achieved, bool held, float deltaTime);
+            bool wasHeld = false;
+            float remaining = 0.0f;
+            float releaseValue = 0.0f;
+        };
+
         InstructorStatus m_status;
         glm::vec3 m_previousAim{0.0f, 0.0f, 1.0f};
         glm::vec3 m_aimRate{0.0f}; // world angular velocity of the aim, rad/s
         bool m_hasPreviousAim = false;
         float m_rollCommit = 0.0f; // +-1 while a big roll is committed to a direction
+        AxisHandoff m_pitchHandoff;
+        AxisHandoff m_rollHandoff;
+        AxisHandoff m_yawHandoff;
     };
 }

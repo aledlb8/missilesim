@@ -362,6 +362,13 @@ void Application::run()
         {
             try
             {
+                // Deliver input before sampling controls and simulating this
+                // frame, including events accumulated during the V-sync wait.
+                glfwPollEvents();
+                if (glfwWindowShouldClose(m_window))
+                {
+                    break;
+                }
                 if (isWindowMinimized())
                 {
                     // Nothing to draw into: sleep until the window is restored.
@@ -418,10 +425,9 @@ void Application::run()
                 }
                 flushSettingsAutosave(deltaTime);
 
-                // Poll events and swap buffers
+                // Present the completed frame.
                 try
                 {
-                    glfwPollEvents();
                     glfwSwapBuffers(m_window);
                     revealWindowAfterFirstFrame();
                 }

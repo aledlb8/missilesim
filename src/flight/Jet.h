@@ -26,7 +26,10 @@ namespace missilesim::flight
         Jet();
 
         void reset(const glm::vec3 &position, const glm::vec3 &velocity, const glm::vec3 &forward, const glm::vec3 &up);
-        void setControls(const JetControls &controls) { m_controls = controls; }
+        // Submit once per input sample, independently of the physics step.
+        // sampleDeltaTime is elapsed simulation time between input samples;
+        // zero rebases the aim without motion (reset, pause or camera change).
+        void setControls(const JetControls &controls, float sampleDeltaTime);
         const JetControls &controls() const { return m_controls; }
 
         void step(float deltaTime, const AirData &air, float gravity);

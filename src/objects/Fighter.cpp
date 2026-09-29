@@ -25,8 +25,9 @@ void Fighter::place(const glm::vec3 &position, const glm::vec3 &velocity, const 
     const glm::vec3 forward = unitOr(nose, glm::vec3(0.0f, 0.0f, 1.0f));
     m_jet.reset(position, velocity, forward, glm::vec3(0.0f, 1.0f, 0.0f));
     m_lever = 0.85f;
-    m_input = {};
-    m_input.aimDirection = forward;
+    missilesim::flight::InstructorInput input;
+    input.aimDirection = forward;
+    setInstructorInput(input, 0.0f);
     syncFromJet();
     m_previousPosition = position;
     m_stepStartPosition = position;
@@ -39,6 +40,15 @@ void Fighter::place(const glm::vec3 &position, const glm::vec3 &velocity, const 
 void Fighter::adjustThrottle(float delta)
 {
     m_lever = std::clamp(m_lever + delta, 0.0f, kMaxLever);
+}
+
+void Fighter::setInstructorInput(const missilesim::flight::InstructorInput &input, float sampleDeltaTime)
+{
+    missilesim::flight::JetControls controls;
+    controls.instructor = input;
+    controls.throttle = std::min(m_lever, 1.0f);
+    controls.afterburner = isAfterburner();
+    m_jet.setControls(controls, sampleDeltaTime);
 }
 
 void Fighter::toggleAfterburner()
@@ -72,11 +82,6 @@ void Fighter::updateFlight(float deltaTime, float density, float speedOfSound, f
     }
 
     m_previousPosition = m_position;
-    missilesim::flight::JetControls controls;
-    controls.instructor = m_input;
-    controls.throttle = std::min(m_lever, 1.0f);
-    controls.afterburner = isAfterburner();
-    m_jet.setControls(controls);
     m_jet.step(deltaTime, {density, speedOfSound}, gravity);
     syncFromJet();
 }

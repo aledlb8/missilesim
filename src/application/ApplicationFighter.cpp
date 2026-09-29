@@ -151,7 +151,10 @@ void Application::sampleFighterControls(float deltaTime)
             m_fighter->adjustThrottle(std::clamp(throttleKey, -1.0f, 1.0f) * kThrottleRatePerSecond * std::max(deltaTime, 0.0f));
         }
     }
-    m_fighter->setInstructorInput(input);
+    // Aim velocity belongs to the input sampling clock, not the fixed-step
+    // clock. Rebase while paused or outside mouse aim to avoid a resume kick.
+    const float sampleTime = flying && mouseAimActive() && !m_isPaused ? deltaTime * m_simulationSpeed : 0.0f;
+    m_fighter->setInstructorInput(input, sampleTime);
 }
 
 void Application::handleFighterCrash()

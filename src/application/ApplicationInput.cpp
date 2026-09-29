@@ -138,8 +138,6 @@ void Application::processInput(float deltaTime)
     }
     m_pendingMouseDelta = glm::vec2(0.0f);
 
-    sampleFighterControls(deltaTime);
-
     if (m_cameraMode == CameraMode::FREE)
     {
         const bool speedBoost = glfwGetKey(m_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
@@ -193,6 +191,8 @@ void Application::processInput(float deltaTime)
     {
         rearmFighter();
     }
+
+    sampleFighterControls(deltaTime);
 
     if (pressed(GLFW_KEY_F))
     {
