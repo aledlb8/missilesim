@@ -117,6 +117,14 @@ void Missile::setFuel(float kg)
 
 void Missile::synchronizeMass()
 {
+    // Catalog rounds other than the R-3S keep launch mass fixed. Their fuel
+    // field is a burn timer, not propellant, so it must not be added again.
+    if (m_fox2Active && !m_countPropellantInMass)
+    {
+        m_mass = std::max(m_dryMass, 0.01f);
+        return;
+    }
+
     m_mass = std::max(m_dryMass + m_fuel, 0.01f);
 }
 
@@ -165,6 +173,14 @@ void Missile::clearTarget()
 
 void Missile::updateHeatSeeker(const std::vector<Target *> &targets, const std::vector<Flare *> &flares, float deltaTime)
 {
+    // Catalog seekers keep tracking after burnout. The custom path below still
+    // returns while the motor is off.
+    if (m_fox2Active)
+    {
+        updateFox2InFlight(targets, flares, deltaTime);
+        return;
+    }
+
     if (!m_guidanceEnabled || !m_thrustEnabled || deltaTime <= 0.0f)
     {
         return;
@@ -315,6 +331,12 @@ bool Missile::consumeSelfDestructRequest()
 
 void Missile::applyGuidance(float deltaTime, float airDensity)
 {
+    if (m_fox2Active)
+    {
+        applyFox2Guidance(deltaTime, airDensity);
+        return;
+    }
+
     // Only apply guidance if enabled and target exists
     if (!m_guidanceEnabled || !m_hasTarget)
     {
@@ -548,8 +570,10 @@ bool Missile::applyThrust(float deltaTime)
         const float backPressureThrust = (m_nozzleExitPressure - m_ambientPressure) * m_nozzleExitArea;
         const float thrustMagnitude = std::max(effectiveThrottle * (m_thrust + backPressureThrust), 0.0f);
 
-        // Apply thrust force in the thrust direction
-        glm::vec3 thrustForce = m_thrustDirection * thrustMagnitude;
+        // Apply thrust force in the thrust direction. Fox 2 thrust vectoring
+        // scales the axial part by cos(delta); the custom round leaves the
+        // scale at 1.
+        glm::vec3 thrustForce = m_thrustDirection * (thrustMagnitude * m_axialThrustScale);
         applyForce(thrustForce);
 
         // Update remaining fuel and wet mass after the burn.
@@ -560,6 +584,11 @@ bool Missile::applyThrust(float deltaTime)
             m_thrustEnabled = false;
         }
         synchronizeMass();
+
+        if (m_fox2Active && m_fox2MotorStarted && !m_thrustEnabled && m_fox2BurnoutTime < 0.0f)
+        {
+            m_fox2BurnoutTime = m_fox2FlightTime;
+        }
 
         return true;
     }
@@ -582,11 +611,18 @@ void Missile::update(float deltaTime)
     // Apply thrust if enabled
     applyThrust(deltaTime);
 
+    if (m_fox2Active && m_fox2MotorStarted && !m_thrustEnabled && m_fox2BurnoutTime < 0.0f)
+    {
+        m_fox2BurnoutTime = m_fox2FlightTime;
+    }
+
     // Continue with normal physics update
     PhysicsObject::update(deltaTime);
 
     // When guidance is inactive, keep thrust aligned with the current flight path.
-    if ((!m_guidanceEnabled || !m_hasTarget || !m_thrustEnabled) && glm::length2(m_velocity) > 0.001f)
+    // A Fox 2 keeps its body axis; overwriting it with velocity would erase the
+    // angle of attack the airframe is allowed to hold.
+    if (!m_fox2Active && (!m_guidanceEnabled || !m_hasTarget || !m_thrustEnabled) && glm::length2(m_velocity) > 0.001f)
     {
         m_thrustDirection = glm::normalize(m_velocity);
     }

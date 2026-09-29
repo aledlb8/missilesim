@@ -3,6 +3,7 @@
 #include "PhysicsObject.h"
 #include "Target.h" // Include complete Target definition instead of forward declaration
 #include "physics/Aerodynamics.h"
+#include "sim/Fox2Catalog.h"
 #include <vector>
 
 class Flare;
@@ -47,6 +48,10 @@ public:
     // Lift coefficient produced by the current guidance maneuver (set each
     // step by applyGuidance), used by the drag model for induced drag.
     float getCommandedLiftCoefficient() const override { return m_commandedLiftCoefficient; }
+
+    // Fleeman body Cd0 for a catalog Fox 2. The custom round leaves this false
+    // and keeps the Mach-curve drag path.
+    bool sampleZeroLiftDrag(float mach, float dynamicPressurePa, float &cd0) const override;
 
     // Override object type
     std::string getType() const override { return "Missile"; }
@@ -97,6 +102,28 @@ public:
     void applyGuidance(float deltaTime, float airDensity);
     bool consumeSelfDestructRequest();
 
+    // Catalog Fox 2. The custom SAM never sets these; its sliders stay in Application.
+    void clearFox2();
+    void configureFox2(const missilesim::fox2::Spec &spec);
+    bool isFox2() const { return m_fox2Active; }
+    const missilesim::fox2::Spec *fox2Spec() const { return m_fox2Active ? &m_fox2 : nullptr; }
+    bool isFuzeArmed() const;
+    bool isReducedSmoke() const { return m_fox2Active && m_fox2.reducedSmoke; }
+    const glm::vec3 &getBodyForward() const { return m_bodyForward; }
+    void setBodyForward(const glm::vec3 &forward);
+    void beginFox2Flight(const glm::vec3 &nose, bool irLock);
+    float getFuelCapacity() const { return (m_fox2Active && m_fuelCapacity > 0.0f) ? m_fuelCapacity : m_fuel; }
+    bool hasFox2InfraredLock() const { return m_fox2Active && m_fox2Locked; }
+    bool fox2GuidanceExpired() const { return m_fox2GuidanceExpired; }
+    bool fox2SeekerLocked() const { return m_fox2Locked; }
+    bool fox2HadLock() const { return m_fox2HadLock; }
+    // Lock lost, still flying on the remembered track.
+    bool fox2OnTrackMemory() const;
+    void clearFox2Lock();
+    // Uncaged rail seeker. Geometric designation, then an infrared lock if the
+    // aspect and range gates pass. Does not run proportional navigation.
+    void updateFox2Prelaunch(const std::vector<Target *> &targets, const glm::vec3 &fighterNose, const glm::vec3 &fighterPosition);
+
     // Thrust system. The configured thrust is the sea-level, full-burn thrust;
     // the effective exhaust velocity is derived from it and the burn rate
     // (Ve = thrust / mdot), and a nozzle back-pressure term scales thrust with
@@ -146,6 +173,8 @@ public:
 
 private:
     void synchronizeMass();
+    void updateFox2InFlight(const std::vector<Target *> &targets, const std::vector<Flare *> &flares, float deltaTime);
+    void applyFox2Guidance(float deltaTime, float airDensity);
 
     // Aerodynamic properties
     float m_dragCoefficient;
@@ -185,4 +214,32 @@ private:
     float m_nozzleExitArea = 0.01f;                            // Nozzle exit area in m^2
     float m_nozzleExitPressure = 101325.0f;                    // Design exit pressure in Pa
     float m_ambientPressure = 101325.0f;                       // Local ambient pressure in Pa
+
+    // Fox 2 state. Inactive for the custom SAM, whose mass, drag, and seeker
+    // stay on the fields above.
+    bool m_fox2Active = false;
+    bool m_countPropellantInMass = false;
+    float m_fuelCapacity = 0.0f;
+    float m_axialThrustScale = 1.0f;
+    missilesim::fox2::Spec m_fox2{};
+    glm::vec3 m_bodyForward{0.0f, 0.0f, 1.0f};
+    glm::vec3 m_boresight{0.0f, 0.0f, 1.0f};
+    glm::vec3 m_fox2LaunchPosition{0.0f};
+    float m_fox2FlightTime = 0.0f;
+    float m_fox2BurnoutTime = -1.0f;
+    float m_fox2InhibitLeft = 0.0f;
+    bool m_fox2Locked = false;
+    bool m_fox2HadLock = false;
+    bool m_fox2GuidanceExpired = false;
+    bool m_fox2MotorStarted = false;
+    const Flare *m_fox2RiseFlare = nullptr;
+    float m_fox2RiseIrradiance = 0.0f;
+    float m_fox2RiseTime = -1.0f;
+    // Last seeker track, flown on (extrapolated) when the lock drops so the
+    // round keeps turning toward where the target should be and the seeker
+    // looks there to reacquire. Age < 0: nothing remembered.
+    glm::vec3 m_fox2MemoryPosition{0.0f};
+    glm::vec3 m_fox2MemoryVelocity{0.0f};
+    float m_fox2MemoryAge = -1.0f;
+    void rememberFox2Track(const glm::vec3 &position, const glm::vec3 &velocity);
 };
