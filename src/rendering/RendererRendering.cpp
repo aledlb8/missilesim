@@ -2,6 +2,7 @@
 #include "SceneEffects.h"
 #include "pbr/PBRPipeline.h"
 
+#include "../objects/Fighter.h"
 #include "../objects/Missile.h"
 #include "../objects/PhysicsObject.h"
 #include "../objects/Target.h"
@@ -128,6 +129,11 @@ namespace
             return glm::vec3(0.0f, 1.0f, 0.0f);
         }
 
+        if (missile->isFox2())
+        {
+            return normalizeOrFallback(missile->getBodyForward(), missile->getThrustDirection());
+        }
+
         if (!missile->isThrustEnabled())
         {
             return normalizeOrFallback(missile->getThrustDirection(), missile->getVelocity());
@@ -188,7 +194,7 @@ namespace
 
 glm::mat4 Renderer::buildObjectModelMatrix(const PhysicsObject &object) const
 {
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), object.getPosition());
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), object.getRenderPosition());
     const glm::vec3 velocity = object.getVelocity();
     if (object.getType() == "Missile")
         model *= buildAxisOrientationMatrix(getMissileRenderDirection(static_cast<const Missile *>(&object)));
@@ -197,6 +203,22 @@ glm::mat4 Renderer::buildObjectModelMatrix(const PhysicsObject &object) const
         if (glm::length2(velocity) > 0.000001f)
             model *= buildTargetOrientationMatrix(velocity, object.getRenderAcceleration());
         model = glm::scale(model, glm::vec3(std::max(static_cast<const Target &>(object).getRadius(), 1.0f)));
+    }
+    else if (object.getType() == "Fighter")
+    {
+        const Fighter &fighter = static_cast<const Fighter &>(object);
+        const glm::vec3 forward = normalizeOrFallback(fighter.getRenderNose(), glm::vec3(0.0f, 0.0f, 1.0f));
+        const glm::vec3 up = normalizeOrFallback(fighter.getRenderUp() - forward * glm::dot(fighter.getRenderUp(), forward),
+                                                 glm::vec3(0.0f, 1.0f, 0.0f));
+        // The mesh's local x is up x forward (the pilot's left in this
+        // right-handed world), which keeps the basis a proper rotation.
+        const glm::vec3 right = glm::normalize(glm::cross(up, forward));
+        glm::mat4 rotation(1.0f);
+        rotation[0] = glm::vec4(right, 0.0f);
+        rotation[1] = glm::vec4(forward, 0.0f);
+        rotation[2] = glm::vec4(-up, 0.0f);
+        model *= rotation;
+        model = glm::scale(model, glm::vec3(std::max(fighter.getRadius(), 1.0f)));
     }
     else if (glm::length2(velocity) > 0.000001f)
         model *= buildAxisOrientationMatrix(velocity);
@@ -244,7 +266,7 @@ void Renderer::render(PhysicsObject *object)
         glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
-    else if (object->getType() == "Target")
+    else if (object->getType() == "Target" || object->getType() == "Fighter")
     {
         if (isPBRActive())
         {
