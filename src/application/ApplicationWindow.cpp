@@ -2,16 +2,23 @@
 // borderless / fullscreen), DPI tracking, the window icon and native styling.
 #include "Application.h"
 
+#include <glad/glad.h>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <ctime>
+#include <filesystem>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "stb/stb_image_write.h"
 #include "ui/Theme.h"
 
 #ifdef _WIN32
@@ -375,5 +382,49 @@ void Application::revealWindowAfterFirstFrame()
         glfwShowWindow(m_window);
         glfwFocusWindow(m_window);
         m_windowRevealed = true;
+    }
+}
+
+void Application::saveScreenshot()
+{
+    int width = 0;
+    int height = 0;
+    glfwGetFramebufferSize(m_window, &width, &height);
+    if (width <= 0 || height <= 0)
+    {
+        return;
+    }
+
+    std::vector<unsigned char> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 3u);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+    const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+    std::tm local{};
+    localtime_s(&local, &seconds);
+    char name[64];
+    std::snprintf(name, sizeof(name), "missilesim-%04d%02d%02d-%02d%02d%02d-%03d.png", local.tm_year + 1900, local.tm_mon + 1,
+                  local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec, static_cast<int>(millis));
+
+    try
+    {
+        std::filesystem::create_directories("screenshots");
+        const std::string path = (std::filesystem::path("screenshots") / name).string();
+        stbi_flip_vertically_on_write(1);
+        if (stbi_write_png(path.c_str(), width, height, 3, pixels.data(), width * 3) != 0)
+        {
+            std::cout << "Screenshot saved: " << path << std::endl;
+        }
+        else
+        {
+            std::cerr << "ERROR: Could not write screenshot " << path << std::endl;
+        }
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "ERROR: Screenshot failed: " << e.what() << std::endl;
     }
 }

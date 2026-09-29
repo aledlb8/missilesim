@@ -175,6 +175,8 @@ private:
     void createMainWindow();
     void setDisplayMode(DisplayMode mode);
     void toggleFullscreen();
+    // F12: the finished frame (scene + HUD) to screenshots/<timestamp>.png.
+    void saveScreenshot();
     void updateWindowFrame();
     void revealWindowAfterFirstFrame();
     bool isWindowMinimized() const;
@@ -320,6 +322,7 @@ private:
     bool m_vsyncEnabled = true;
     bool m_windowRevealed = false;
     bool m_fullscreenKeyHeld = false;
+    bool m_screenshotKeyHeld = false;
 
     // Screen flow and menu state
     Screen m_screen = Screen::Title;

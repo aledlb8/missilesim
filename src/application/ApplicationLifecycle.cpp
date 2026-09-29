@@ -407,6 +407,15 @@ void Application::run()
 
                 // Render
                 render();
+                if (m_window != nullptr)
+                {
+                    const bool screenshotKey = glfwGetKey(m_window, GLFW_KEY_F12) == GLFW_PRESS;
+                    if (screenshotKey && !m_screenshotKeyHeld)
+                    {
+                        saveScreenshot();
+                    }
+                    m_screenshotKeyHeld = screenshotKey;
+                }
                 flushSettingsAutosave(deltaTime);
 
                 // Poll events and swap buffers
