@@ -1,5 +1,6 @@
 // Flies the game's Jet through scripted scenarios and prints handling numbers.
-// Usage: flight_harness [scenario-name-filter]
+// Usage: flight_harness [scenario-name-filter | --check]
+#include "HandlingChecks.h"
 #include "flight/Jet.h"
 #include "physics/Atmosphere.h"
 
@@ -58,7 +59,7 @@ namespace
         {
             JetControls c = jet.controls();
             setup(t, c);
-            jet.setControls(c);
+            jet.setControls(c, kFrame);
             jet.step(kFrame, airAt(jet.airframe().position().y), kGravity);
             const AirframeTelemetry &tm = jet.airframe().telemetry();
             s.maxNz = std::max(s.maxNz, tm.normalLoad);
@@ -131,6 +132,10 @@ namespace
 int main(int argc, char **argv)
 {
     const std::string filter = argc > 1 ? argv[1] : "";
+    if (filter == "--check")
+    {
+        return runHandlingChecks();
+    }
 
     // ---- Mouse-aim step responses: aim jumps once, instructor flies there.
     struct AimCase
