@@ -49,7 +49,7 @@ void Application::applySimulationConfigDefaults()
 {
     const missilesim::sim::SimulationConfig &config = m_simulationConfig;
 
-    m_timeStep = config.environment.fixedTimeStep;
+    m_clock.setStep(config.environment.fixedTimeStep);
     m_simulationSpeed = config.environment.simulationSpeed;
     m_groundEnabled = config.environment.groundCollisionEnabled;
     m_groundRestitution = config.environment.groundRestitution;
@@ -184,7 +184,6 @@ void Application::initialize()
         missilesim::ui::initializeTheme(windowContentScale());
 
         // Create simulation components
-        m_physicsEngine = std::make_unique<PhysicsEngine>();
         m_renderer = std::make_unique<Renderer>();
         m_audioSystem = std::make_unique<AudioSystem>();
         m_audioSystem->initialize();
@@ -195,45 +194,31 @@ void Application::initialize()
         {
             std::cerr << "WARNING: Using built-in simulation defaults. " << configLoad.error << std::endl;
         }
+        for (const std::string &warning : configLoad.warnings)
+        {
+            std::cerr << "WARNING: " << configLoad.path.string() << ": " << warning << std::endl;
+        }
         applySimulationConfigDefaults();
+
+        m_seedSource.seed(std::random_device{}());
+        m_world = std::make_unique<missilesim::sim::World>(m_simulationConfig, m_seedSource());
 
         const bool loadedSettings = loadSettings();
 
-        // Set ground collision properties
-        m_physicsEngine->setGroundEnabled(m_groundEnabled);
-        m_physicsEngine->setGroundRestitution(m_groundRestitution);
-        m_physicsEngine->setGravity(m_savedGravity);
-        m_physicsEngine->setAirDensity(m_savedAirDensity);
+        // User settings override the config's environment.
+        m_world->physics().setGroundEnabled(m_groundEnabled);
+        m_world->physics().setGroundRestitution(m_groundRestitution);
+        m_world->physics().setGravity(m_savedGravity);
+        m_world->physics().setAirDensity(m_savedAirDensity);
         m_renderer->setCameraFOV(m_savedCameraFOV);
         m_renderer->setCameraSpeed(m_savedCameraSpeed);
 
-        // Create missile with default parameters
-        resetMissile();
-
-        // Create targets first, before setting up missile guidance
-        resetTargets();
-
+        // Targets first: the fighter spawns pointed at the first of them.
+        restartWorld();
         if (m_playerRole == PlayerRole::Fighter)
         {
-            placeFighterAtEngagement();
             setCameraMode(CameraMode::FIGHTER_JET);
             resetAimCamera();
-            stageFox2OnRail();
-            refreshFox2Prelaunch();
-        }
-
-        // Run a small update so the autonomous target controller starts from a live state.
-        if (m_physicsEngine && !m_targets.empty())
-        {
-            // Update targets to initialize movement patterns
-            for (auto &target : m_targets)
-            {
-                if (target && target->isActive())
-                {
-                    // Apply a small delta time to initialize movement
-                    target->update(0.016f);
-                }
-            }
         }
 
         frameEngagementCamera();
@@ -265,7 +250,7 @@ void Application::shutdown()
 {
     try
     {
-        if (!m_window && !m_renderer && !m_physicsEngine && !m_audioSystem)
+        if (!m_window && !m_renderer && !m_world && !m_audioSystem)
         {
             return;
         }
@@ -276,27 +261,13 @@ void Application::shutdown()
             m_settingsDirty = false;
         }
 
-        // First clear objects that might be using the renderer or physics
-        m_missile.reset(); // Release missile before targets to avoid invalid target references
-        clearFlares();
-
-        // Clean up targets
-        for (auto &target : m_targets)
-        {
-            if (target && m_physicsEngine)
-            {
-                m_physicsEngine->removeTarget(target.get());
-            }
-        }
-        m_targets.clear();
-
-        // Clean up physics engine and renderer before ImGui
+        // Audio holds pointers into the simulation; stop it first.
         if (m_audioSystem)
         {
             m_audioSystem->shutdown();
             m_audioSystem.reset();
         }
-        m_physicsEngine.reset();
+        m_world.reset();
         m_renderer.reset();
 
         // Cleanup ImGui - use explicit checks to avoid calling shutdown on null pointers
@@ -411,6 +382,11 @@ void Application::run()
                 {
                     update(deltaTime);
                 }
+                else
+                {
+                    // A launch while paused still shows its effects.
+                    processSimEvents();
+                }
 
                 // Render
                 render();
@@ -474,238 +450,50 @@ void Application::update(float deltaTime)
 {
     try
     {
-        // Validate deltaTime to prevent instability
-        if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime))
+        if (!m_world)
         {
-            deltaTime = 0.016f; // Default to ~60 FPS
-        }
-
-        // Cap excessively large deltaTime values which could cause instability
-        if (deltaTime > 0.1f)
-        {
-            deltaTime = 0.1f;
-        }
-
-        // Safety check for null missile (in case it wasn't initialized)
-        if (!m_missile)
-        {
-            resetMissile();
             return;
         }
 
+        const float frame = (deltaTime > 0.0f && std::isfinite(deltaTime)) ? deltaTime : 0.016f;
         if (m_renderer)
         {
-            m_renderer->updateEffects(deltaTime);
+            m_renderer->updateEffects(frame);
         }
 
-        // Accumulated time approach for fixed time step
-        float &accumulator = m_physicsAccumulator;
-        accumulator += deltaTime * m_simulationSpeed;
-
-        // Cap accumulated time to prevent "spiral of death" if game lags
-        if (accumulator > 0.5f)
+        // Whole fixed steps only; the clock owns the backlog policy.
+        const int steps = m_clock.advance(frame, m_simulationSpeed);
+        for (int step = 0; step < steps; ++step)
         {
-            accumulator = 0.5f;
+            m_world->step();
         }
-
-        // Validate timeStep
-        if (m_timeStep <= 0.0f || std::isnan(m_timeStep) || std::isinf(m_timeStep))
-        {
-            m_timeStep = 0.01f; // Default to sensible value
-        }
-
-        // Update physics in fixed time steps
-        int maxSteps = 5; // Prevent too many updates in a single frame
-        int stepCount = 0;
-
-        while (accumulator >= m_timeStep && stepCount < maxSteps)
-        {
-            try
-            {
-                // Store previous position of missile for hit detection
-                glm::vec3 prevMissilePos = m_missile->getPosition();
-
-                beginFixedStepForAll();
-                updateFighter(m_timeStep);
-                if (!m_missileInFlight && !m_detonationHoldActive)
-                {
-                    stageFox2OnRail();
-                    refreshFox2Prelaunch();
-                }
-
-                updateMissileLaunchSequence(m_timeStep);
-
-                // Update physics
-                m_physicsEngine->update(m_timeStep);
-
-                // Check if a new hit occurred this frame
-                bool interceptionOccurred = false;
-                for (const auto &target : m_targets)
-                {
-                    if (target && !target->isActive() && target->getPosition() != glm::vec3(0))
-                    {
-                        // This target was just hit (inactive but not yet reset).
-                        const glm::vec3 impactPosition = target->getPosition();
-                        m_score += 100; // Add points for hitting a target
-                        m_targetHits++; // Increment hit counter
-
-                        // Clear its position so it isn't re-detected next step.
-                        target->setPosition(glm::vec3(0));
-
-                        // Detonate at the impact point and hold the scene so the
-                        // explosion is visible before the simulation resets.
-                        beginDetonationHold(impactPosition);
-                        interceptionOccurred = true;
-                    }
-                }
-
-                if (interceptionOccurred)
-                {
-                    accumulator -= m_timeStep;
-                    stepCount++;
-                    break;
-                }
-
-                if (m_missileInFlight && m_missile)
-                {
-                    m_missileFlightTime += m_timeStep;
-
-                    const glm::vec3 missilePos = m_missile->getPosition();
-                    const glm::vec3 missileVel = m_missile->getVelocity();
-                    const float missileSpeed = glm::length(missileVel);
-
-                    bool terminateFlight = m_missile->consumeSelfDestructRequest();
-
-                    // Treat ground contact as impact rather than allowing endless bouncing/guidance loops.
-                    if (!terminateFlight && m_groundEnabled && prevMissilePos.y > 0.05f && missilePos.y <= 0.01f)
-                    {
-                        terminateFlight = true;
-                    }
-
-                    // Kill bad flights that leave the playable space.
-                    const float engagementRadius = computeEngagementRadius();
-                    const bool fox2Flight = m_missile->isFox2();
-                    const float maxFlightRadius = fox2Flight ? 150000.0f : std::max(5000.0f, engagementRadius * 5.0f);
-                    const float maxFlightAltitude = fox2Flight ? 30000.0f : std::max(3000.0f, engagementRadius * 1.8f);
-                    const float missileHorizontalDistance = glm::length(glm::vec2(missilePos.x, missilePos.z));
-                    if (!terminateFlight &&
-                        (missileHorizontalDistance > maxFlightRadius || missilePos.y > maxFlightAltitude))
-                    {
-                        terminateFlight = true;
-                    }
-
-                    Target *trackedTarget = m_missile->getTargetObject();
-                    if (!terminateFlight && trackedTarget && trackedTarget->isActive())
-                    {
-                        const glm::vec3 toTarget = trackedTarget->getPosition() - missilePos;
-                        const float distanceToTarget = glm::length(toTarget);
-                        m_closestTargetDistance = std::min(m_closestTargetDistance, distanceToTarget);
-
-                        if (m_missileFlightTime > 0.75f &&
-                            distanceToTarget > (m_closestTargetDistance + std::max(trackedTarget->getRadius() * 4.0f, 25.0f)) &&
-                            glm::length2(toTarget) > 0.0001f &&
-                            missileSpeed > 1.0f)
-                        {
-                            const glm::vec3 lineOfSight = glm::normalize(toTarget);
-                            const glm::vec3 relativeVelocity = trackedTarget->getVelocity() - missileVel;
-                            const float rangeRate = glm::dot(relativeVelocity, lineOfSight);
-                            const float aspect = glm::dot(glm::normalize(missileVel), lineOfSight);
-
-                            // If the target is behind the missile and range is opening, the shot is spent.
-                            // Fox 2 shots are allowed to lose the target aft and keep flying.
-                            if (!fox2Flight && rangeRate > 15.0f && aspect < -0.15f)
-                            {
-                                terminateFlight = true;
-                            }
-                        }
-                    }
-
-                    // Stop dead-stick missiles from wandering forever after they have burned out.
-                    if (!terminateFlight &&
-                        !m_missile->isThrustEnabled() &&
-                        m_missileFlightTime > 2.0f &&
-                        missileSpeed < 15.0f)
-                    {
-                        terminateFlight = true;
-                    }
-
-                    if (terminateFlight)
-                    {
-                        beginDetonationHold(missilePos);
-                        accumulator -= m_timeStep;
-                        stepCount++;
-                        break;
-                    }
-                }
-
-                accumulator -= m_timeStep;
-                stepCount++;
-            }
-            catch (const std::exception &e)
-            {
-                std::cerr << "ERROR: Exception during physics update step: " << e.what() << std::endl;
-                accumulator = 0.0f; // Reset accumulator to prevent more steps this frame
-                break;
-            }
-            catch (...)
-            {
-                std::cerr << "ERROR: Unknown exception during physics update step" << std::endl;
-                accumulator = 0.0f; // Reset accumulator to prevent more steps this frame
-                break;
-            }
-        }
-
         // Leftover fraction of a step: rendering blends the last two step
         // states by it so motion is smooth at any frame rate.
-        m_renderAlpha = std::clamp(accumulator / m_timeStep, 0.0f, 1.0f);
+        m_renderAlpha = m_clock.alpha();
+        processSimEvents();
 
-        collectPendingTargetFlares();
-        removeInactiveFlares();
+        m_launchNoticeTimer = std::max(m_launchNoticeTimer - frame, 0.0f);
 
-        // While holding on a detonation, keep the scene alive (effects, audio,
-        // targets) but defer any reset until the player has seen the blast.
+        // The hold is presentation: wall-clock, independent of the sim speed.
         if (m_detonationHoldActive)
         {
-            m_detonationHoldTimer += deltaTime; // wall-clock, independent of sim speed
+            m_detonationHoldTimer += frame;
             if (m_detonationHoldTimer >= m_detonationHoldDuration)
             {
                 finishDetonationHold();
             }
         }
-        else
+        else if (!m_followedShot.valid() && !m_world->shots().empty())
         {
-            // Check if all targets are inactive, and create new ones if needed
-            bool allTargetsInactive = true;
-            for (const auto &target : m_targets)
-            {
-                if (target && target->isActive())
-                {
-                    allTargetsInactive = false;
-                    break;
-                }
-            }
-
-            if (allTargetsInactive && !m_targets.empty())
-            {
-                resetTargets();
-                resetMissile();
-            }
+            m_followedShot = m_world->shots().back()->id;
         }
 
-        // If no targets exist but we should have some, create them
-        if (m_targets.empty() && m_targetCount > 0)
+        // Sandbox rule: once every aircraft is down and nothing is still in
+        // the air (or on camera), a new formation takes off.
+        const bool cleared = !targets().empty() && !m_world->anyTargetAlive();
+        if ((cleared || targets().empty()) && m_world->shots().empty() && !m_detonationHoldActive && m_targetCount > 0)
         {
             resetTargets();
-        }
-
-        // Update targets for movement (in case they need updating outside physics engine)
-        for (const auto &target : m_targets)
-        {
-            if (target && target->isActive())
-            {
-                // Additional target-specific updates could be added here
-                // Physics engine already calls target->update()
-            }
         }
     }
     catch (const std::exception &e)
@@ -730,7 +518,10 @@ void Application::render()
         }
 
         const bool inEngagement = m_screen == Screen::Playing;
-        setRenderBlendForAll(m_renderAlpha);
+        if (m_world)
+        {
+            m_world->setRenderBlend(m_renderAlpha);
+        }
         if (inEngagement)
         {
             updateActiveCameraMode();
@@ -745,41 +536,45 @@ void Application::render()
         updateEnvironmentScale();
         m_renderer->renderEnvironment();
 
-        // Safety check for null missile
-        if (!m_missile)
-        {
-            resetMissile();
-        }
-
-        // Render missile (hidden during a detonation hold: it has been consumed
-        // by the explosion, so it should vanish rather than linger as debris).
-        const bool hideEmptyRail = m_playerRole == PlayerRole::Fighter && m_fox2Rounds <= 0 && !m_missileInFlight;
-        if (m_missile && !m_detonationHoldActive && !hideEmptyRail)
+        // Loaded rounds on their rails or in the cell, then every shot in the
+        // air. A shot that has ended is gone: the blast consumed it.
+        if (m_world)
         {
             try
             {
-                m_renderer->render(m_missile.get());
+                for (const missilesim::sim::Station &station : m_world->stations())
+                {
+                    if (station.round)
+                    {
+                        m_renderer->render(station.round.get());
+                    }
+                }
+                for (const auto &shot : m_world->shots())
+                {
+                    m_renderer->render(shot->missile.get());
+                }
 
-                // Render predicted trajectory if enabled (tactical overlay: not behind the title)
-                if (m_showTrajectory && inEngagement && !m_missile->isFox2())
+                // Predicted trajectory of the SAM round (tactical overlay: not behind the title).
+                const Missile *focus = focusMissile();
+                if (m_showTrajectory && inEngagement && focus != nullptr && !focus->isFox2())
                 {
                     renderPredictedTrajectory();
                 }
             }
             catch (const std::exception &e)
             {
-                std::cerr << "ERROR: Exception rendering missile: " << e.what() << std::endl;
+                std::cerr << "ERROR: Exception rendering missiles: " << e.what() << std::endl;
             }
             catch (...)
             {
-                std::cerr << "ERROR: Unknown exception rendering missile" << std::endl;
+                std::cerr << "ERROR: Unknown exception rendering missiles" << std::endl;
             }
         }
 
         renderFighter();
 
         // Render targets (their screen markers are drawn by the HUD)
-        for (const auto &target : m_targets)
+        for (const auto &target : targets())
         {
             try
             {

@@ -28,7 +28,11 @@ def main():
     command = entry['command'].rsplit(' -c ', 1)[0]
     command = re.sub(r'/Fo\S+', '/Foexhaust_review.obj', command)
     command += f' -c "{root / "tools/verify_exhaust.cpp"}"'
-    objects = [str(p.relative_to(build)) for folder in ('rendering', 'objects', 'physics', 'sim')
+    # Core objects now come from missilesim_core.lib in LINK_LIBRARIES.
+    # Old per-app .obj files may remain after reconfiguring; linking them would
+    # silently mix obsolete class layouts with the current headers.
+    folders = ('rendering',) if (build / 'lib/missilesim_core.lib').exists() else ('rendering', 'objects', 'physics', 'sim')
+    objects = [str(p.relative_to(build)) for folder in folders
                for p in (build / 'CMakeFiles/MissileSimOpenGL.dir/src' / folder).rglob('*.obj')]
     libraries = next(line.split('=', 1)[1].strip() for line in (build / 'build.ninja').read_text().splitlines()
                      if line.strip().startswith('LINK_LIBRARIES =') and 'glad' in line)

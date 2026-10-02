@@ -2,32 +2,25 @@
 
 #include <glm/glm.hpp>
 #include <chrono>
-#include <deque>
 #include <memory>
 #include <random>
 #include <string>
 #include <vector>
 #include "objects/Target.h"
+#include "sim/EntityId.h"
+#include "sim/FixedStepClock.h"
 #include "sim/SimulationConfig.h"
+#include "sim/World.h"
 #include "CameraRig.h"
 
 class AudioSystem;
 class Fighter;
 class Flare;
-struct FlareLaunchRequest;
 struct GLFWwindow;
 struct ImVec2;
 class Missile;
 class PhysicsEngine;
 class Renderer;
-
-// Structure to represent a visual explosion effect
-struct ExplosionEffect
-{
-    glm::vec3 position;  // Position of the explosion
-    float timeRemaining; // Time remaining for the effect to display
-    float size;          // Current size of the explosion
-};
 
 class Application
 {
@@ -149,28 +142,6 @@ private:
         bool valid = false;
     };
 
-    // Drives a cold-launch profile: a soft ejection charge lobs the round
-    // vertically clear of the cell, the main motor lights in mid-air, then the
-    // missile pitches over toward the target before guidance takes the steer.
-    struct MissileLaunchSequence
-    {
-        bool active = false;
-        bool motorIgnited = false;
-        bool guidanceArmed = false;
-        bool boostComplete = false;
-        bool ignitionEffectEmitted = false;
-        bool restoreGuidanceEnabled = true;
-        float elapsed = 0.0f;
-        float ignitionDelay = 0.85f;                 // eject coast time before the motor lights
-        float thrustRampDuration = 0.30f;            // ignition -> full throttle (punchy)
-        float guidanceArmDelay = 1.30f;              // backstop: hand off to guidance by here
-        float boostDuration = 1.5f;                  // high-thrust booster burn after ignition
-        float sustainThrust = 10000.0f;              // configured motor thrust, restored post-boost
-        glm::vec3 ejectDirection{0.0f, 1.0f, 0.0f};  // near-vertical ejection vector
-        glm::vec3 launchDirection{0.0f, 0.0f, 1.0f}; // fallback boost aim toward target
-        glm::vec3 aimDirection{0.0f, 1.0f, 0.0f};    // live pitch-over aim, rate-limited
-    };
-
     // Window management (ApplicationWindow.cpp)
     void createMainWindow();
     void setDisplayMode(DisplayMode mode);
@@ -211,6 +182,10 @@ private:
 
     void processInput(float deltaTime);
     void update(float deltaTime);
+    // Turns the simulation's events into effects, sound, camera holds and the
+    // HUD notices. Presentation reacts to outcomes; it never infers them.
+    void processSimEvents();
+    void handleSimEvent(const missilesim::sim::SimEvent &event, std::vector<missilesim::sim::EntityId> &detonatedShots);
     void render();
     void setupUI();
     void frameEngagementCamera();
@@ -243,43 +218,34 @@ private:
     void mouseButtonCallback(int button, int action);
     void scrollCallback(double yoffset);
 
-    // Render interpolation across fixed physics steps (see PhysicsObject).
-    void beginFixedStepForAll();
-    void setRenderBlendForAll(float alpha);
+    // Simulation access (the World owns every simulated object).
+    PhysicsEngine *physics() const;
+    Fighter *fighter() const;
+    const std::vector<std::unique_ptr<Target>> &targets() const;
+    const std::vector<std::unique_ptr<Flare>> &flares() const;
+    // The shot the missile camera and the HUD follow (null when none is flying).
+    const missilesim::sim::Shot *followedShot() const;
+    // The followed shot's round, else the round that fires next.
+    Missile *focusMissile() const;
+    bool focusInFlight() const { return followedShot() != nullptr; }
+    bool seekerUncaged() const;
+    missilesim::sim::CustomRoundSpec customRoundSpec() const;
 
-    // Target functions
-    void createTarget(const glm::vec3 &position, float radius = 5.0f);
-    void createRandomTarget();
+    // Engagement lifecycle
+    void restartWorld();
     void resetTargets();
-    void createFlare(const FlareLaunchRequest &request);
-    void collectPendingTargetFlares();
-    void removeInactiveFlares();
-    void clearFlares();
 
     // Missile functions
     void launchMissile();
-    void resetMissile();
     void setPlayerRole(PlayerRole role);
     void selectFox2(const char *id);
-    void launchFox2FromRail();
-    void stageFox2OnRail();
-    void rearmFighter();
-    void updateFighter(float deltaTime);
-    void placeFighterAtEngagement();
+    void selectAircraft(const char *id);
+    void rearm();
     void sampleFighterControls(float deltaTime);
-    void handleFighterCrash();
-    void refreshFox2Prelaunch();
     void renderFighter();
     void emitFighterVisuals();
     float fox2SeekerCueRadiusPixels() const;
-    glm::vec3 computeMissileLaunchDirection(Target *lockedTarget,
-                                            const glm::vec3 &cameraForward,
-                                            const glm::vec3 &stagedVelocity) const;
-    glm::vec3 computeColdLaunchEjectDirection(const glm::vec3 &launchDirection) const;
-    void resetMissileLaunchSequence();
-    void updateMissileLaunchSequence(float deltaTime);
-    void updatePreLaunchMissileAim(Target *trackedTarget);
-    Target *findBestTarget();
+    Target *findBestTarget() const;
     bool projectWorldPointToScreen(const glm::vec3 &worldPosition, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
     bool projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
     Target *findSeekerCueTarget() const;
@@ -290,16 +256,15 @@ private:
     void renderPreLaunchSeekerCue() const;
     void renderSeekerXrayOverlay() const;
 
-    // Interception / detonation handling. Instead of resetting the instant a
-    // missile detonates, we spawn the explosion and hold the scene for a few
-    // seconds so the impact is visible (especially from onboard cameras),
-    // then reset.
+    // When the followed shot ends, the onboard cameras hold on its end point
+    // for a few seconds so the outcome is visible, then pick up the next shot
+    // in the air. The simulation keeps running throughout.
     void beginDetonationHold(const glm::vec3 &position);
     void finishDetonationHold();
     void frameDetonationCamera();
 
     // Visual effects
-    void createExplosion(const glm::vec3 &position);
+    void createExplosion(const glm::vec3 &position, const glm::vec3 &velocityHint);
     void emitFrameVisualEffects(float deltaTime);
     void updateAudioFrame(float deltaTime);
 
@@ -368,26 +333,22 @@ private:
     bool m_invertMouseY = false;
     float m_cameraSmoothing = 12.0f;     // mouse-aim camera follow rate, 1/s
 
-    // Fixed-step physics bookkeeping for render interpolation.
-    float m_physicsAccumulator = 0.0f;
+    // Fixed-step clock and render interpolation.
+    missilesim::sim::FixedStepClock m_clock;
     float m_renderAlpha = 1.0f;
 
     // Simulation components
-    std::unique_ptr<PhysicsEngine> m_physicsEngine;
+    std::unique_ptr<missilesim::sim::World> m_world;
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<AudioSystem> m_audioSystem;
-    std::unique_ptr<Missile> m_missile;
-    std::unique_ptr<Fighter> m_fighter;
-    std::vector<std::unique_ptr<Target>> m_targets;
-    std::vector<std::unique_ptr<Flare>> m_flares;
     missilesim::sim::SimulationConfig m_simulationConfig;
+    missilesim::sim::EntityId m_followedShot;
 
-    // Visual effects
-    std::deque<ExplosionEffect> m_explosions;
-    float m_explosionDuration = 1.0f; // Duration of explosion effect in seconds
-    float m_explosionMaxSize = 10.0f; // Maximum size of explosion
+    // Why the last launch request was refused, shown briefly on the HUD.
+    missilesim::sim::LaunchBlock m_launchNotice = missilesim::sim::LaunchBlock::None;
+    float m_launchNoticeTimer = 0.0f;
 
-    // Post-interception hold: keep the explosion on screen before resetting.
+    // Camera hold on the followed shot's end point.
     bool m_detonationHoldActive = false;
     float m_detonationHoldTimer = 0.0f;
     float m_detonationHoldDuration = 3.0f; // wall-clock seconds to view the blast
@@ -402,12 +363,10 @@ private:
     float m_trajectoryTime = 12.0f;        // Time in seconds to predict trajectory
     TrajectoryPreviewCache m_trajectoryPreviewCache;
     std::chrono::milliseconds m_trajectoryPreviewRefreshInterval{100};
-    bool m_seekerCueEnabled = false;
     float m_seekerCueRadiusPixels = 44.0f;
     bool m_seekerXrayEnabled = false; // In-flight seeker x-ray overlay toggle
 
     // Simulation properties
-    float m_timeStep = 0.01f; // Physics time step in seconds
     float m_simulationSpeed = 1.0f;
     bool m_isPaused = false;
     float m_audioVolume = 1.0f; // master output gain, 0..1
@@ -445,24 +404,13 @@ private:
     int m_targetCount = 1; // Number of targets to create
     TargetAIConfig m_targetAIConfig;
 
-    // Score tracking
-    int m_score = 0;      // Player's score
-    int m_targetHits = 0; // Number of targets hit
-
-    // SAM keeps the custom round. Fighter carries one catalog Fox 2 on the wingtip.
+    // SAM keeps the custom round. Fighter carries catalog Fox 2s on the wingtips.
     PlayerRole m_playerRole = PlayerRole::Sam;
     std::string m_fox2Id = "custom";
-    int m_fox2Rounds = 2;
-    int m_railSign = 1;
+    std::string m_aircraftId = "f-16c-block-50";
 
-    // Missile flight state
-    bool m_missileInFlight = false;
-    float m_missileFlightTime = 0.0f;
-    float m_closestTargetDistance = 1000000.0f;
-    MissileLaunchSequence m_launchSequence;
-
-    // Random number generator
-    std::mt19937 m_rng;
+    // Seeds each engagement's simulation (the seed is shown in telemetry).
+    std::mt19937_64 m_seedSource;
 
     // Autosaved user settings
     std::string m_settingsPath = "config/user_settings.ini";

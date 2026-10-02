@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <iterator>
 
+#include "flight/AircraftCatalog.h"
+#include "objects/Fighter.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
 #include "physics/Atmosphere.h"
@@ -198,6 +200,75 @@ namespace
         }
     }
 
+    void drawAircraftCard(const missilesim::flight::AircraftCard &card)
+    {
+        char line[96];
+        fox2Readout("Status", missilesim::flight::cardStatusLabel(card.status),
+                    card.status != missilesim::flight::CardStatus::Insufficient);
+        fox2Readout("Model", card.tableModel ? "Six degree of freedom" : "Point mass", true);
+        if (card.massKg > 0.0f)
+        {
+            fox2Readout("Mass", card.massText, card.massPublished);
+        }
+        else
+        {
+            formatMeasure(line, sizeof(line), "%.0f kg stand-in", missilesim::flight::kStandInMassKg);
+            fox2Readout("Mass", line, false);
+        }
+        const bool thrustStandIn = !card.tableModel && card.maxThrustN <= 0.0f && card.militaryThrustN <= 0.0f;
+        if (thrustStandIn)
+        {
+            fox2Readout("Thrust", "T/W = 1 stand-in", false);
+        }
+        else
+        {
+            fox2Readout("Military thrust", card.militaryText, card.militaryPublished);
+            fox2Readout("Maximum thrust", card.maxText, card.maxThrustPublished);
+        }
+        fox2Readout("Wing area", card.areaText, card.areaPublished);
+        if (card.positiveGPublished)
+        {
+            formatMeasure(line, sizeof(line), "%.1f g", card.positiveG);
+            fox2Readout("Positive load", line, true);
+        }
+        else
+        {
+            fox2Readout("Positive load", "9 stand-in", false);
+        }
+        if (card.negativeGPublished)
+        {
+            formatMeasure(line, sizeof(line), "%.1f g", card.negativeG);
+            fox2Readout("Negative load", line, true);
+        }
+        else
+        {
+            fox2Readout("Negative load", "-3 stand-in", false);
+        }
+        fox2Readout("Sea-level speed", card.speedText, card.speedPublished);
+        if (card.tableModel)
+        {
+            fox2Readout("Drag", "NASA TP-1538 tables", true);
+        }
+        else if (card.speedEquality)
+        {
+            fox2Readout("Drag", "Matched to the sea-level speed", true);
+        }
+        else if (card.areaPublished)
+        {
+            fox2Readout("Drag", "Cd0 0.020 stand-in", false);
+        }
+        else
+        {
+            formatMeasure(line, sizeof(line), "%.0f km/h stand-in", missilesim::flight::kStandInSeaLevelMps * 3.6f);
+            fox2Readout("Drag", line, false);
+        }
+        if (card.note != nullptr && card.note[0] != '\0')
+        {
+            ImGui::Dummy(ImVec2(0.0f, ui::px(8.0f)));
+            note(card.note);
+        }
+    }
+
     const char *aiStateName(TargetAIState state)
     {
         switch (state)
@@ -218,44 +289,21 @@ namespace
 
 void Application::setupUI()
 {
-    if (!m_missile || !m_renderer || !m_physicsEngine)
+    if (!m_world || !m_renderer)
     {
         return;
     }
 
+    // Rounds already in the air keep what they were launched with.
     auto applyLiveMissileConfig = [&]()
     {
-        m_missile->setMass(m_mass);
-        m_missile->setDragCoefficient(m_dragCoefficient);
-        m_missile->setCrossSectionalArea(m_crossSectionalArea);
-        m_missile->setLiftCoefficient(m_liftCoefficient);
-        m_missile->setGuidanceEnabled(m_guidanceEnabled);
-        m_missile->setNavigationGain(m_navigationGain);
-        m_missile->setMaxSteeringForce(m_maxSteeringForce);
-        m_missile->setTrackingAngle(m_trackingAngle);
-        m_missile->setProximityFuseRadius(m_proximityFuseRadius);
-        m_missile->setCountermeasureResistance(m_countermeasureResistance);
-        m_missile->setTerrainAvoidanceEnabled(m_terrainAvoidanceEnabled);
-        m_missile->setTerrainClearance(m_terrainClearance);
-        m_missile->setTerrainLookAheadTime(m_terrainLookAheadTime);
-        m_missile->setGroundReferenceAltitude(m_physicsEngine->getGroundLevel());
-        m_missile->setThrust(m_missileThrust);
-        m_missile->setFuelConsumptionRate(m_missileFuelConsumptionRate);
-        if (!m_missileInFlight)
-        {
-            m_missile->setFuel(m_missileFuel);
-        }
+        m_world->setCustomRoundSpec(customRoundSpec(), true);
     };
 
     auto applyLiveTargetAIConfig = [&]()
     {
-        for (const auto &target : m_targets)
-        {
-            if (target)
-            {
-                target->setAIConfig(m_targetAIConfig);
-            }
-        }
+        m_world->setTargetAIConfig(m_targetAIConfig);
+        m_world->applyTargetAIConfigToAll();
     };
 
     // ---- Panel frame ------------------------------------------------------------
@@ -309,15 +357,35 @@ void Application::setupUI()
     {
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const float buttonWidth = (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
-        const bool missileBusy = m_missileInFlight || m_launchSequence.active || m_detonationHoldActive;
-        const bool railsEmpty = m_playerRole == PlayerRole::Fighter && m_fox2Rounds <= 0;
-        if (missileBusy)
+        const missilesim::sim::LaunchBlock block = m_world->launchClearance();
+        const char *blockedLabel = "UNAVAILABLE";
+        switch (block)
         {
-            ui::button("IN FLIGHT", ui::ButtonStyle::Ghost, buttonWidth);
+        case missilesim::sim::LaunchBlock::NoRound:
+            blockedLabel = "EMPTY";
+            break;
+        case missilesim::sim::LaunchBlock::Reloading:
+            blockedLabel = "RELOADING";
+            break;
+        case missilesim::sim::LaunchBlock::SeekerCaged:
+            blockedLabel = "CAGED";
+            break;
+        case missilesim::sim::LaunchBlock::NoDesignation:
+            blockedLabel = "NO TARGET";
+            break;
+        case missilesim::sim::LaunchBlock::NeedsInfraredLock:
+            blockedLabel = "NO IR LOCK";
+            break;
+        default:
+            break;
         }
-        else if (railsEmpty)
+        if (block != missilesim::sim::LaunchBlock::None)
         {
-            ui::button("EMPTY", ui::ButtonStyle::Ghost, buttonWidth);
+            ui::button(blockedLabel, ui::ButtonStyle::Ghost, buttonWidth);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("%s", missilesim::sim::launchBlockMessage(block));
+            }
         }
         else if (ui::button("LAUNCH", ui::ButtonStyle::Primary, buttonWidth))
         {
@@ -326,14 +394,7 @@ void Application::setupUI()
         ImGui::SameLine();
         if (ui::button("REARM", ui::ButtonStyle::Secondary, buttonWidth))
         {
-            if (m_playerRole == PlayerRole::Fighter)
-            {
-                rearmFighter();
-            }
-            else
-            {
-                resetMissile();
-            }
+            rearm();
         }
         ImGui::SameLine();
         if (ui::button(m_isPaused ? "RESUME" : "PAUSE", ui::ButtonStyle::Secondary, buttonWidth))
@@ -401,11 +462,53 @@ void Application::setupUI()
 
         if (m_playerRole == PlayerRole::Fighter)
         {
-            note("Two wingtip rounds. The missile leaves at the fighter's speed: no vertical hop, no booster multiplier, no terrain avoidance. W and S pitch, A and D roll, Q and E rudder, Shift and Ctrl throttle, X afterburner, G rearm, F launch, R uncage.");
-            if (m_missileInFlight || m_detonationHoldActive)
+            note("Two wingtip rounds, fired right rail first; both can be in the air at once. Each leaves at the fighter's speed: no vertical hop, no booster multiplier, no terrain avoidance. S pulls and W pushes. A and D command roll rate, so a tap sets the bank and holding the key keeps rolling. Q and E rudder, Shift and Ctrl throttle, X afterburner, G rearm, F launch, R uncage.");
+
+            ui::sectionLabel("AIRCRAFT");
+            note("The picture stays models/jet.obj. Choosing a name replaces the whole flight model. A faint row is not a published number.");
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 0.03f));
+            ImGui::BeginChild("##aircraft-catalog", ImVec2(0.0f, ui::px(280.0f)), ImGuiChildFlags_Borders);
+            const char *const aircraftFamilies[] = {"United States", "Europe", "Russia", "China"};
+            const missilesim::flight::AircraftCard *cards = missilesim::flight::aircraftCatalog();
+            const int cardCount = missilesim::flight::aircraftCatalogCount();
+            auto drawAircraft = [&](const missilesim::flight::AircraftCard &card)
+            {
+                ImGui::PushID(card.id);
+                const bool selected = m_aircraftId == card.id;
+                if (ImGui::Selectable(card.displayName, selected, ImGuiSelectableFlags_None, ImVec2(0.0f, ui::px(26.0f))))
+                {
+                    selectAircraft(card.id);
+                }
+                ImGui::PopID();
+            };
+            for (const char *family : aircraftFamilies)
+            {
+                bool any = false;
+                for (int cardIndex = 0; cardIndex < cardCount; ++cardIndex)
+                {
+                    if (cards[cardIndex].family != nullptr && std::strcmp(cards[cardIndex].family, family) == 0)
+                    {
+                        if (!any)
+                        {
+                            ui::sectionLabel(family);
+                            any = true;
+                        }
+                        drawAircraft(cards[cardIndex]);
+                    }
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            const missilesim::flight::AircraftCard *selectedAircraft = missilesim::flight::findAircraft(m_aircraftId.c_str());
+            if (selectedAircraft != nullptr)
+            {
+                ui::sectionLabel(selectedAircraft->displayName);
+                drawAircraftCard(*selectedAircraft);
+            }
+            if (!m_world->shots().empty())
             {
                 ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
-                note("The round already in the air keeps its seeker. This choice loads the next rail.");
+                note("Rounds already in the air keep their seeker. This choice reloads the rails that are still loaded.");
             }
 
             ui::sectionLabel("FOX 2");
@@ -474,7 +577,7 @@ void Application::setupUI()
             break;
         }
 
-        note("Custom cold-launch round. A vertical hop, a four-times boost, and terrain avoidance stay on this missile. The catalog rounds are the fighter's.");
+        note("Custom cold-launch round. A vertical hop, a four-times boost, and terrain avoidance stay on this missile. The cell reloads two seconds after each launch, so several rounds can be in the air. The catalog rounds are the fighter's.");
         ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
 
         ui::sectionLabel("LAUNCHER");
@@ -508,7 +611,7 @@ void Application::setupUI()
         ui::sliderRow("Look-ahead", &m_terrainLookAheadTime, 0.5f, 12.0f, "%.1f s");
 
         ImGui::Dummy(ImVec2(0.0f, ui::px(12.0f)));
-        note("Changes apply to the next missile. Apply now to update the one on the rail or in flight.");
+        note("Changes apply to the next round loaded. Apply now to reload the round in the cell; rounds in the air keep theirs.");
         ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
         if (ui::button("APPLY NOW", ui::ButtonStyle::Secondary, -1.0f))
         {
@@ -548,7 +651,10 @@ void Application::setupUI()
         }
 
         ui::sectionLabel("ROSTER");
-        const glm::vec3 missilePosition = m_missile->getPosition();
+        const Missile *focus = focusMissile();
+        const Fighter *jet = fighter();
+        const glm::vec3 missilePosition = focus != nullptr ? focus->getPosition()
+                                                           : (jet != nullptr ? jet->getPosition() : glm::vec3(0.0f));
         if (ImGui::BeginTable("##roster", 5, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX))
         {
             ImGui::PushFont(ui::fonts().medium, ui::type::body - 2.0f);
@@ -563,13 +669,10 @@ void Application::setupUI()
             ImGui::PopFont();
 
             ImGui::PushFont(ui::fonts().mono, ui::type::body - 2.5f);
-            for (size_t i = 0; i < m_targets.size(); ++i)
+            const std::vector<std::unique_ptr<Target>> &aircraft = targets();
+            for (size_t i = 0; i < aircraft.size(); ++i)
             {
-                const Target *target = m_targets[i].get();
-                if (target == nullptr)
-                {
-                    continue;
-                }
+                const Target *target = aircraft[i].get();
                 const bool active = target->isActive();
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -604,23 +707,23 @@ void Application::setupUI()
     {
         ui::sectionLabel("SIMULATION");
         ui::sliderRow("Time scale", &m_simulationSpeed, 0.1f, 10.0f, "%.1f\xC3\x97", "Simulation speed relative to real time.");
-        float gravity = m_physicsEngine->getGravity();
+        float gravity = physics()->getGravity();
         if (ui::sliderRow("Gravity", &gravity, 0.0f, 20.0f, "%.2f m/s\xC2\xB2"))
         {
-            m_physicsEngine->setGravity(gravity);
+            physics()->setGravity(gravity);
         }
-        float airDensity = m_physicsEngine->getAirDensity();
+        float airDensity = physics()->getAirDensity();
         if (ui::sliderRow("Sea-level air density", &airDensity, 0.0f, 2.0f, "%.3f kg/m\xC2\xB3"))
         {
-            m_physicsEngine->setAirDensity(airDensity);
+            physics()->setAirDensity(airDensity);
         }
         if (ui::toggleRow("Ground collision", &m_groundEnabled))
         {
-            m_physicsEngine->setGroundEnabled(m_groundEnabled);
+            physics()->setGroundEnabled(m_groundEnabled);
         }
         if (m_groundEnabled && ui::sliderRow("Ground bounce", &m_groundRestitution, 0.0f, 1.0f, "%.2f", "Restitution of ground impacts."))
         {
-            m_physicsEngine->setGroundRestitution(m_groundRestitution);
+            physics()->setGroundRestitution(m_groundRestitution);
         }
 
         ui::sectionLabel("OVERLAYS");
@@ -653,16 +756,30 @@ void Application::setupUI()
     default: // Telemetry
     {
         char buffer[96];
-        const glm::vec3 position = m_missile->getPosition();
-        const glm::vec3 velocity = m_missile->getVelocity();
-        const glm::vec3 acceleration = m_missile->getAcceleration();
-        const float speed = glm::length(velocity);
-        const float altitude = std::max(position.y, 0.0f);
-        const Atmosphere::State air = m_physicsEngine->getAtmosphereState(altitude);
-        const Target *tracked = getTrackedMissileTarget();
+        const Missile *focus = focusMissile();
+        const missilesim::sim::Shot *shot = followedShot();
 
         ui::sectionLabel("MISSION");
         ui::readoutRow("State", missionStateLabel());
+        std::snprintf(buffer, sizeof(buffer), "%016llx", static_cast<unsigned long long>(m_world->seed()));
+        ui::readoutRow("Scenario seed", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f s", m_world->time());
+        ui::readoutRow("Simulation time", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%zu", m_world->shots().size());
+        ui::readoutRow("Rounds in the air", buffer);
+        if (focus == nullptr)
+        {
+            ui::readoutRow("Seeker", "No round");
+            break;
+        }
+
+        const glm::vec3 position = focus->getPosition();
+        const glm::vec3 velocity = focus->getVelocity();
+        const glm::vec3 acceleration = focus->getAcceleration();
+        const float speed = glm::length(velocity);
+        const float altitude = std::max(position.y, 0.0f);
+        const Atmosphere::State air = physics()->getAtmosphereState(altitude);
+        const Target *tracked = getTrackedMissileTarget();
         ui::readoutRow("Seeker", getMissileSeekerStateLabel());
         if (tracked != nullptr)
         {
@@ -673,16 +790,16 @@ void Application::setupUI()
         {
             ui::readoutRow("Target range", "No lock");
         }
-        if (m_closestTargetDistance < 999999.0f)
+        if (shot != nullptr && shot->closestApproach >= 0.0f)
         {
-            std::snprintf(buffer, sizeof(buffer), "%.1f m", m_closestTargetDistance);
+            std::snprintf(buffer, sizeof(buffer), "%.1f m", shot->closestApproach);
             ui::readoutRow("Closest pass", buffer);
         }
         else
         {
             ui::readoutRow("Closest pass", "\xE2\x80\x94");
         }
-        std::snprintf(buffer, sizeof(buffer), "%.1f s", m_missileFlightTime);
+        std::snprintf(buffer, sizeof(buffer), "%.1f s", shot != nullptr ? shot->flightTime : 0.0f);
         ui::readoutRow("Flight time", buffer);
 
         ui::sectionLabel("MISSILE");
@@ -692,25 +809,25 @@ void Application::setupUI()
         ui::readoutRow("Velocity (m/s)", buffer);
         std::snprintf(buffer, sizeof(buffer), "%.1f m/s\xC2\xB2", glm::length(acceleration));
         ui::readoutRow("Acceleration", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.0f m/s", speed);
+        std::snprintf(buffer, sizeof(buffer), "%.0f km/h", speed * 3.6f);
         ui::readoutRow("Speed", buffer);
         std::snprintf(buffer, sizeof(buffer), "%.2f", air.speedOfSoundMetersPerSecond > 0.0f ? speed / air.speedOfSoundMetersPerSecond : 0.0f);
         ui::readoutRow("Mach", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.0f m", position.y - m_physicsEngine->getGroundLevel());
+        std::snprintf(buffer, sizeof(buffer), "%.0f m", position.y - physics()->getGroundLevel());
         ui::readoutRow("Terrain clearance", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.1f kg", m_missile->getMass());
+        std::snprintf(buffer, sizeof(buffer), "%.1f kg", focus->getMass());
         ui::readoutRow("Mass", buffer);
 
         ui::sectionLabel("PROPULSION");
-        const bool thrusting = m_missile->isThrustEnabled();
-        const bool burnedOut = !thrusting && m_missile->getFuel() <= 0.0f;
+        const bool thrusting = focus->isThrustEnabled();
+        const bool burnedOut = !thrusting && focus->getFuel() <= 0.0f;
         const ImVec4 motorColour = thrusting ? ui::color::accent : ui::color::textMuted;
         ui::readoutRow("Motor", thrusting ? "Burning" : (burnedOut ? "Burned out" : "Off"), &motorColour);
-        std::snprintf(buffer, sizeof(buffer), "%.0f N  \xC2\xB7  %.0f%%", m_missile->getThrust(), m_missile->getThrottle() * 100.0f);
+        std::snprintf(buffer, sizeof(buffer), "%.0f N  \xC2\xB7  %.0f%%", focus->getThrust(), focus->getThrottle() * 100.0f);
         ui::readoutRow("Thrust", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.1f kg", m_missile->getFuel());
+        std::snprintf(buffer, sizeof(buffer), "%.1f kg", focus->getFuel());
         ui::readoutRow("Propellant", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", m_missile->getFuelConsumptionRate());
+        std::snprintf(buffer, sizeof(buffer), "%.2f kg/s", focus->getFuelConsumptionRate());
         ui::readoutRow("Burn rate", buffer);
 
         ui::sectionLabel("ATMOSPHERE");

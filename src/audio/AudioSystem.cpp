@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace audio = missilesim::audio;
 namespace synth = missilesim::audio::synth;
@@ -81,10 +80,43 @@ struct AudioSystem::Impl
         float throttle = 0.7f;
     };
 
-    Emitter<synth::RocketMotorVoice> missile;
-    std::unordered_map<const Target *, TargetVoice> targets;
-    std::unordered_map<const Flare *, Emitter<synth::FlareVoice>> flares;
-    std::unordered_set<const Flare *> retiredFlares;
+    std::unordered_map<std::uint32_t, Emitter<synth::RocketMotorVoice>> missiles;
+    std::unordered_map<std::uint32_t, TargetVoice> targets;
+    std::unordered_map<std::uint32_t, Emitter<synth::FlareVoice>> flares;
+
+    // Updates every listed source and releases the voices of sources that
+    // are no longer listed.
+    template <typename Source, typename Voices, typename Update>
+    void syncSources(const std::vector<Source> &sources, Voices &voices, Update update)
+    {
+        std::unordered_map<std::uint32_t, bool> seen;
+        seen.reserve(sources.size());
+        for (const Source &source : sources)
+        {
+            if (source.object == nullptr || source.id == 0)
+            {
+                continue;
+            }
+            seen[source.id] = true;
+            update(*source.object, voices[source.id]);
+        }
+        for (auto it = voices.begin(); it != voices.end();)
+        {
+            if (seen.count(it->first) == 0)
+            {
+                releaseVoice(it->second);
+                it = voices.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
+    static void releaseVoice(TargetVoice &voice) { voice.emitter.release(); }
+    template <typename Voice>
+    static void releaseVoice(Emitter<Voice> &voice) { voice.release(); }
 
     std::shared_ptr<synth::SeekerToneVoice> seeker;
     std::shared_ptr<synth::MissileWarningVoice> missileWarning;
@@ -122,7 +154,7 @@ struct AudioSystem::Impl
         engine.setEnvironment(settings);
     }
 
-    void updateMissile(const Missile &source)
+    void updateMissile(const Missile &source, Emitter<synth::RocketMotorVoice> &missile)
     {
         const bool burning = source.isThrustEnabled() && source.getFuel() > 0.0f;
         const glm::vec3 velocity = source.getVelocity();
@@ -326,90 +358,37 @@ void AudioSystem::setListener(const glm::vec3 &position, const glm::vec3 &forwar
     }
 }
 
-void AudioSystem::syncMissile(const Missile *missile, bool inFlight)
+void AudioSystem::syncMissiles(const std::vector<AudioMissileSource> &missiles)
 {
     Impl &impl = *m_impl;
     if (!impl.running)
     {
         return;
     }
-    if (missile == nullptr || !inFlight)
-    {
-        impl.missile.release();
-        return;
-    }
-    impl.updateMissile(*missile);
+    impl.syncSources(missiles, impl.missiles,
+                     [&impl](const Missile &missile, Emitter<synth::RocketMotorVoice> &voice) { impl.updateMissile(missile, voice); });
 }
 
-void AudioSystem::syncTargets(const std::vector<Target *> &activeTargets)
+void AudioSystem::syncTargets(const std::vector<AudioTargetSource> &activeTargets)
 {
     Impl &impl = *m_impl;
     if (!impl.running)
     {
         return;
     }
-
-    std::unordered_set<const Target *> seen;
-    seen.reserve(activeTargets.size());
-    for (const Target *target : activeTargets)
-    {
-        if (target == nullptr)
-        {
-            continue;
-        }
-        seen.insert(target);
-        impl.updateTarget(*target, impl.targets[target]);
-    }
-
-    for (auto it = impl.targets.begin(); it != impl.targets.end();)
-    {
-        if (seen.count(it->first) == 0)
-        {
-            it->second.emitter.release();
-            it = impl.targets.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
+    impl.syncSources(activeTargets, impl.targets,
+                     [&impl](const Target &target, Impl::TargetVoice &voice) { impl.updateTarget(target, voice); });
 }
 
-void AudioSystem::syncFlares(const std::vector<Flare *> &activeFlares)
+void AudioSystem::syncFlares(const std::vector<AudioFlareSource> &activeFlares)
 {
     Impl &impl = *m_impl;
     if (!impl.running)
     {
         return;
     }
-
-    const std::unordered_set<const Flare *> active(activeFlares.begin(), activeFlares.end());
-    for (const Flare *flare : active)
-    {
-        if (flare != nullptr && impl.retiredFlares.count(flare) == 0)
-        {
-            impl.updateFlare(*flare, impl.flares[flare]);
-        }
-    }
-
-    for (auto it = impl.flares.begin(); it != impl.flares.end();)
-    {
-        if (active.count(it->first) == 0)
-        {
-            it->second.release();
-            it = impl.flares.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
-    // A retired flare's address may be reused by a new flare once the old one
-    // has left the active list, so forget it at that point.
-    for (auto it = impl.retiredFlares.begin(); it != impl.retiredFlares.end();)
-    {
-        it = (active.count(*it) == 0) ? impl.retiredFlares.erase(it) : std::next(it);
-    }
+    impl.syncSources(activeFlares, impl.flares,
+                     [&impl](const Flare &flare, Emitter<synth::FlareVoice> &voice) { impl.updateFlare(flare, voice); });
 }
 
 void AudioSystem::syncCockpitCues(const CockpitCueState &cues)
@@ -469,31 +448,14 @@ void AudioSystem::playExplosion(const glm::vec3 &position)
                       glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-void AudioSystem::retireFlare(const Flare *flare)
-{
-    Impl &impl = *m_impl;
-    if (!impl.running || flare == nullptr)
-    {
-        return;
-    }
-    const auto it = impl.flares.find(flare);
-    if (it != impl.flares.end())
-    {
-        it->second.release();
-        impl.flares.erase(it);
-    }
-    impl.retiredFlares.insert(flare);
-}
-
-void AudioSystem::stopMissileEmitters()
-{
-    m_impl->missile.release();
-}
-
 void AudioSystem::stopAllEmitters()
 {
     Impl &impl = *m_impl;
-    impl.missile.release();
+    for (auto &entry : impl.missiles)
+    {
+        entry.second.release();
+    }
+    impl.missiles.clear();
     for (auto &entry : impl.targets)
     {
         entry.second.emitter.release();
@@ -504,5 +466,4 @@ void AudioSystem::stopAllEmitters()
         entry.second.release();
     }
     impl.flares.clear();
-    impl.retiredFlares.clear();
 }

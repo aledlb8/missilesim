@@ -88,19 +88,39 @@ target_link_libraries(imgui PUBLIC glfw3)
 # Physical audio engine + synthesis voices (always optimised, see its CMakeLists).
 add_subdirectory(src/audio)
 
-# Offline renderer: plays scripted scenarios through the audio engine into WAVs.
+# The simulation without windows, rendering or audio: physics, flight models,
+# objects and the engagement World. The game and the headless tools link the
+# same library, so what the harness checks is what the game runs.
+file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS
+    "src/physics/*.cpp"
+    "src/objects/*.cpp"
+    "src/flight/*.cpp"
+    "src/sim/*.cpp"
+)
+add_library(missilesim_core STATIC ${CORE_SOURCES})
+target_include_directories(missilesim_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(missilesim_core PUBLIC glm::glm PRIVATE nlohmann_json::nlohmann_json)
+if(NOT MISSILESIM_PORTABLE)
+    # Lets the config loader find assets/ when a tool runs from the build tree.
+    target_compile_definitions(missilesim_core PRIVATE
+        MISSILESIM_SOURCE_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+endif()
+
+# Headless tools and their checks (CTest).
 if(MISSILESIM_BUILD_TOOLS)
     enable_testing()
     add_subdirectory(tools/audition)
     add_subdirectory(tools/fox2_kinematics)
     add_subdirectory(tools/flight_harness)
+    add_subdirectory(tools/engagement_harness)
 endif()
 
-# Project source files
+# Game sources: everything that is not in the core library or the audio library.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "src/*.cpp"
 )
 list(FILTER SOURCES EXCLUDE REGEX "/src/audio/(engine|synth)/")
+list(FILTER SOURCES EXCLUDE REGEX "/src/(physics|objects|flight|sim)/")
 
 # Include directories for our project
 set(INCLUDES
@@ -119,7 +139,7 @@ set(INCLUDES
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Link libraries
-target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad::glad glm::glm imgui missilesim_audio assimp::assimp nlohmann_json::nlohmann_json)
+target_link_libraries(${PROJECT_NAME} PRIVATE missilesim_core glfw glad::glad glm::glm imgui missilesim_audio assimp::assimp nlohmann_json::nlohmann_json)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE MISSILESIM_VERSION="${PROJECT_VERSION}")
 

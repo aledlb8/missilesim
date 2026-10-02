@@ -13,6 +13,15 @@
 #include "objects/Target.h"
 #include "objects/Missile.h"
 
+// First contact of a body with the ground during one update() call.
+struct GroundContact
+{
+    const PhysicsObject *object = nullptr;
+    glm::vec3 position{0.0f};  // where it met the ground
+    glm::vec3 velocity{0.0f};  // velocity at contact, before any bounce
+    float timeIntoUpdate = 0.0f; // seconds into the update() step
+};
+
 class PhysicsEngine
 {
 public:
@@ -39,6 +48,10 @@ public:
     float getGroundLevel() const { return m_groundLevel; }
     void setGroundRestitution(float restitution) { m_groundRestitution = restitution; }
     float getGroundRestitution() const { return m_groundRestitution; }
+    // Bodies that touched the ground during the last update(). A bounce can
+    // carry a body back above the ground by the end of the step, so its end
+    // position alone does not show the contact.
+    const std::vector<GroundContact> &getGroundContacts() const { return m_groundContacts; }
 
     // Target management
     void addTarget(Target *target);
@@ -50,20 +63,17 @@ public:
     void removeFlare(Flare *flare);
     const std::vector<Flare *> &getFlares() const { return m_flares; }
 
-    // Missile guidance
-    void setMissileTarget(Missile *missile, Target *target);
-
-    // Hit detection
-    bool checkMissileTargetHit(Missile *missile);
+    // Hit detection and every other outcome belong to sim::World, which sees
+    // all platforms (including the player's fighter) and both bodies' motion.
 
 private:
-    void integrateStep(float deltaTime);
-    void handleGroundCollision(PhysicsObject *object);
-    void handleTargetCollisions();
+    void integrateStep(float deltaTime, float timeIntoUpdate);
+    void handleGroundCollision(PhysicsObject *object, float timeIntoUpdate);
 
     std::vector<PhysicsObject *> m_objects;
     std::vector<Target *> m_targets;
     std::vector<Flare *> m_flares;
+    std::vector<GroundContact> m_groundContacts;
 
     // Physics forces
     std::unique_ptr<Gravity> m_gravity;

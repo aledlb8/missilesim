@@ -191,18 +191,13 @@ void Application::startEngagement()
     m_hud = HudTracker{};
 
     // The targets have been flying around behind the title screen; start the
-    // engagement from a fresh, framed setup.
-    resetTargets();
-    resetMissile();
+    // engagement from a fresh, framed setup with a new seed.
+    restartWorld();
     if (m_playerRole == PlayerRole::Fighter)
     {
         // Straight into the cockpit view: mouse aim from the first frame.
-        m_fox2Rounds = 2;
-        m_railSign = 1;
-        placeFighterAtEngagement();
         setCameraMode(CameraMode::FIGHTER_JET);
         resetAimCamera();
-        resetMissile();
     }
     else
     {
@@ -226,8 +221,7 @@ void Application::returnToTitle()
     m_cameraMode = CameraMode::FREE;
     m_hud = HudTracker{};
     resetChaseCameraState();
-    resetTargets();
-    resetMissile();
+    restartWorld();
     beginScreenFade(0.7f);
 }
 
@@ -271,7 +265,7 @@ void Application::updateTitleCamera(float deltaTime)
     }
 
     Target *subject = nullptr;
-    for (const auto &target : m_targets)
+    for (const auto &target : targets())
     {
         if (target && target->isActive())
         {
@@ -300,9 +294,9 @@ void Application::updateTitleCamera(float deltaTime)
     glm::vec3 cameraPosition = subjectPosition +
                                (-std::cos(m_titleOrbitAngle) * forward + std::sin(m_titleOrbitAngle) * right) * distance +
                                worldUp * (distance * 0.18f);
-    if (m_physicsEngine)
+    if (physics())
     {
-        cameraPosition.y = std::max(cameraPosition.y, m_physicsEngine->getGroundLevel() + 6.0f);
+        cameraPosition.y = std::max(cameraPosition.y, physics()->getGroundLevel() + 6.0f);
     }
 
     // Compose the aircraft on the right third, clear of the menu on the left.
@@ -499,9 +493,16 @@ void Application::renderPauseMenu()
         closePauseMenu();
         break;
     case 1:
-        resetTargets();
-        resetMissile();
-        setCameraMode(CameraMode::FREE, true);
+        restartWorld();
+        if (m_playerRole == PlayerRole::Fighter)
+        {
+            setCameraMode(CameraMode::FIGHTER_JET);
+            resetAimCamera();
+        }
+        else
+        {
+            setCameraMode(CameraMode::FREE, true);
+        }
         m_pausedBeforeMenu = false;
         closePauseMenu();
         beginScreenFade(0.4f);

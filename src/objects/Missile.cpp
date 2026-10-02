@@ -108,6 +108,11 @@ void Missile::setThrottle(float throttle)
 void Missile::setFuel(float kg)
 {
     m_fuel = std::max(kg, 0.0f);
+    if (!m_fox2Active)
+    {
+        // Loading propellant sets the capacity the fuel gauge reads against.
+        m_fuelCapacity = m_fuel;
+    }
     if (m_fuel <= 0.0f)
     {
         m_thrustEnabled = false;
@@ -169,6 +174,25 @@ void Missile::clearTarget()
     m_trackingDecoy = false;
     m_trackedSourceVelocity = glm::vec3(0.0f);
     m_selfDestructRequested = false;
+}
+
+void Missile::forgetFlare(const Flare *flare)
+{
+    if (flare == nullptr)
+    {
+        return;
+    }
+    if (m_trackedFlare == flare)
+    {
+        m_trackedFlare = nullptr;
+        m_trackingDecoy = false;
+    }
+    if (m_fox2RiseFlare == flare)
+    {
+        m_fox2RiseFlare = nullptr;
+        m_fox2RiseIrradiance = 0.0f;
+        m_fox2RiseTime = -1.0f;
+    }
 }
 
 void Missile::updateHeatSeeker(const std::vector<Target *> &targets, const std::vector<Flare *> &flares, float deltaTime)
@@ -237,7 +261,15 @@ void Missile::updateHeatSeeker(const std::vector<Target *> &targets, const std::
 
     if (bestTarget == nullptr)
     {
+        // Nothing left inside the seeker's field. The round had a source, so
+        // this is the same loss as the target leaving the field in
+        // applyGuidance: the round destroys itself rather than fly on blind.
+        // The seeker runs every physics sub-step, so a request made on an
+        // earlier sub-step must survive the later ones.
+        const bool hadSource = m_hasTarget;
+        const bool alreadyRequested = m_selfDestructRequested;
         clearTarget();
+        m_selfDestructRequested = alreadyRequested || hadSource;
         return;
     }
 

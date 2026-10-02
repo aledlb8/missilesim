@@ -12,24 +12,6 @@ namespace
     // stable now that the arbitrary acceleration/velocity clamps are gone.
     constexpr float kMaxSubStepSeconds = 0.0025f; // 400 Hz integration ceiling
     constexpr int kMaxSubStepsPerFrame = 32;
-
-    bool segmentIntersectsSphere(const glm::vec3 &segmentStart,
-                                 const glm::vec3 &segmentEnd,
-                                 const glm::vec3 &sphereCenter,
-                                 float sphereRadius)
-    {
-        const glm::vec3 segment = segmentEnd - segmentStart;
-        const float segmentLengthSq = glm::dot(segment, segment);
-        if (segmentLengthSq <= 0.0001f)
-        {
-            return glm::length(segmentStart - sphereCenter) <= sphereRadius;
-        }
-
-        const float projection = glm::dot(sphereCenter - segmentStart, segment) / segmentLengthSq;
-        const float clampedProjection = glm::clamp(projection, 0.0f, 1.0f);
-        const glm::vec3 closestPoint = segmentStart + (segment * clampedProjection);
-        return glm::length(closestPoint - sphereCenter) <= sphereRadius;
-    }
 } // namespace
 
 PhysicsEngine::PhysicsEngine()
@@ -43,6 +25,7 @@ PhysicsEngine::PhysicsEngine()
 
 void PhysicsEngine::update(float deltaTime)
 {
+    m_groundContacts.clear();
     if (deltaTime <= 0.0f || std::isnan(deltaTime) || std::isinf(deltaTime))
     {
         return;
@@ -57,11 +40,11 @@ void PhysicsEngine::update(float deltaTime)
 
     for (int step = 0; step < subStepCount; ++step)
     {
-        integrateStep(subStep);
+        integrateStep(subStep, subStep * static_cast<float>(step + 1));
     }
 }
 
-void PhysicsEngine::integrateStep(float deltaTime)
+void PhysicsEngine::integrateStep(float deltaTime, float timeIntoUpdate)
 {
     try
     {
@@ -125,7 +108,7 @@ void PhysicsEngine::integrateStep(float deltaTime)
             // Handle ground collision
             if (m_groundEnabled)
             {
-                handleGroundCollision(object);
+                handleGroundCollision(object, timeIntoUpdate);
             }
         }
 
@@ -144,9 +127,6 @@ void PhysicsEngine::integrateStep(float deltaTime)
                 target->update(deltaTime);
             }
         }
-
-        // Handle target-missile collisions
-        handleTargetCollisions();
     }
     catch (const std::exception &e)
     {
@@ -158,7 +138,7 @@ void PhysicsEngine::integrateStep(float deltaTime)
     }
 }
 
-void PhysicsEngine::handleGroundCollision(PhysicsObject *object)
+void PhysicsEngine::handleGroundCollision(PhysicsObject *object, float timeIntoUpdate)
 {
     if (!object)
         return;
@@ -169,6 +149,23 @@ void PhysicsEngine::handleGroundCollision(PhysicsObject *object)
     // Check if object is below ground level
     if (pos.y < m_groundLevel)
     {
+        const bool first = std::none_of(m_groundContacts.begin(), m_groundContacts.end(),
+                                        [object](const GroundContact &contact) { return contact.object == object; });
+        if (first)
+        {
+            // Back along this sub-step's path to the surface.
+            const glm::vec3 &previous = object->getPreviousPosition();
+            const float drop = previous.y - pos.y;
+            const float fraction = drop > 1.0e-6f ? std::clamp((previous.y - m_groundLevel) / drop, 0.0f, 1.0f) : 1.0f;
+            GroundContact contact;
+            contact.object = object;
+            contact.position = previous + (pos - previous) * fraction;
+            contact.position.y = m_groundLevel;
+            contact.velocity = vel;
+            contact.timeIntoUpdate = timeIntoUpdate;
+            m_groundContacts.push_back(contact);
+        }
+
         // Calculate new position (at ground level)
         glm::vec3 newPos = pos;
         newPos.y = m_groundLevel;
@@ -194,54 +191,6 @@ void PhysicsEngine::handleGroundCollision(PhysicsObject *object)
         object->setPosition(newPos);
         object->setVelocity(vel);
     }
-}
-
-void PhysicsEngine::handleTargetCollisions()
-{
-    // Check each missile against each target
-    for (auto *object : m_objects)
-    {
-        // Check if object is a missile
-        if (object->getType() == "Missile")
-        {
-            Missile *missile = static_cast<Missile *>(object);
-            checkMissileTargetHit(missile);
-        }
-    }
-}
-
-bool PhysicsEngine::checkMissileTargetHit(Missile *missile)
-{
-    if (!missile)
-        return false;
-
-    const glm::vec3 &missilePos = missile->getPosition();
-    const glm::vec3 &missilePrevPos = missile->getPreviousPosition();
-
-    // Check against each target
-    for (auto *target : m_targets)
-    {
-        // Skip inactive targets
-        if (!target->isActive())
-            continue;
-
-        // Custom rounds stay armed (arm distance 0). Catalog Fox 2s wait for
-        // their fuze gate so a rail shot cannot detonate in the minimum range.
-        if (!missile->isFuzeArmed())
-        {
-            return false;
-        }
-
-        const float detonationRadius = target->getRadius() + missile->getProximityFuseRadius();
-        if (segmentIntersectsSphere(missilePrevPos, missilePos, target->getPosition(), detonationRadius))
-        {
-            // Hit detected! Deactivate the target
-            target->setActive(false);
-            return true;
-        }
-    }
-
-    return false;
 }
 
 void PhysicsEngine::addObject(PhysicsObject *object)
@@ -361,80 +310,6 @@ void PhysicsEngine::removeTarget(Target *target)
     catch (...)
     {
         std::cerr << "Error: Unknown exception in removeTarget" << std::endl;
-    }
-}
-
-void PhysicsEngine::setMissileTarget(Missile *missile, Target *target)
-{
-    try
-    {
-        // Safety checks
-        if (!missile)
-        {
-            std::cerr << "Warning: Attempted to set target for null missile" << std::endl;
-            return;
-        }
-
-        if (!target)
-        {
-            std::cerr << "Warning: Attempted to set null target for missile" << std::endl;
-            missile->clearTarget(); // Make sure the missile doesn't have a bad target
-            missile->setGuidanceEnabled(false);
-            return;
-        }
-
-        if (!target->isActive())
-        {
-            std::cerr << "Warning: Attempted to set inactive target for missile" << std::endl;
-            missile->clearTarget();
-            missile->setGuidanceEnabled(false);
-            return;
-        }
-
-        // Validate target position
-        const glm::vec3 &targetPos = target->getPosition();
-        if (std::isnan(targetPos.x) || std::isnan(targetPos.y) || std::isnan(targetPos.z) ||
-            std::isinf(targetPos.x) || std::isinf(targetPos.y) || std::isinf(targetPos.z))
-        {
-            std::cerr << "Warning: Target has invalid position (NaN or infinity)" << std::endl;
-            missile->clearTarget();
-            missile->setGuidanceEnabled(false);
-            return;
-        }
-
-        // Print debug information
-        std::cout << "Setting missile target:" << std::endl;
-        std::cout << "  Missile position: (" << missile->getPosition().x << ", "
-                  << missile->getPosition().y << ", " << missile->getPosition().z << ")" << std::endl;
-        std::cout << "  Target position: (" << target->getPosition().x << ", "
-                  << target->getPosition().y << ", " << target->getPosition().z << ")" << std::endl;
-        std::cout << "  Target is active: " << (target->isActive() ? "Yes" : "No") << std::endl;
-        std::cout << "  Target AI state: " << static_cast<int>(target->getAIState()) << std::endl;
-        std::cout << "  Target commanded speed: " << target->getCommandedSpeed() << std::endl;
-
-        // Set the target object for guidance (new approach)
-        missile->setTargetObject(target);
-        missile->setGuidanceEnabled(true);
-
-        std::cout << "Target set successfully, guidance enabled with continuous tracking" << std::endl;
-    }
-    catch (const std::exception &e)
-    {
-        std::cerr << "Error: Exception in setMissileTarget: " << e.what() << std::endl;
-        if (missile)
-        {
-            missile->clearTarget();
-            missile->setGuidanceEnabled(false);
-        }
-    }
-    catch (...)
-    {
-        std::cerr << "Error: Unknown exception in setMissileTarget" << std::endl;
-        if (missile)
-        {
-            missile->clearTarget();
-            missile->setGuidanceEnabled(false);
-        }
     }
 }
 

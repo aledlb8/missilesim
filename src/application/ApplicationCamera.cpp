@@ -47,19 +47,20 @@ float Application::computeEngagementRadius() const
 {
     float engagementRadius = std::max(400.0f, m_targetAIConfig.preferredDistance * 1.6f);
 
-    if (m_missile)
+    if (const Missile *missile = focusMissile())
     {
-        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(m_missile->getPosition().x, m_missile->getPosition().z)) + 150.0f);
+        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(missile->getPosition().x, missile->getPosition().z)) + 150.0f);
     }
 
-    if (m_playerRole == PlayerRole::Fighter && m_fighter)
+    const Fighter *jet = fighter();
+    if (m_playerRole == PlayerRole::Fighter && jet)
     {
-        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(m_fighter->getPosition().x, m_fighter->getPosition().z)) + 150.0f);
+        engagementRadius = std::max(engagementRadius, glm::length(glm::vec2(jet->getPosition().x, jet->getPosition().z)) + 150.0f);
     }
 
-    for (const auto &target : m_targets)
+    for (const auto &target : targets())
     {
-        if (!target || !target->isActive())
+        if (!target->isActive())
         {
             continue;
         }
@@ -80,19 +81,20 @@ void Application::updateEnvironmentScale()
     const float engagementRadius = computeEngagementRadius();
     float maxAltitude = std::max(320.0f, glm::clamp(m_targetAIConfig.preferredDistance * 0.22f, 180.0f, 900.0f));
 
-    if (m_missile)
+    if (const Missile *missile = focusMissile())
     {
-        maxAltitude = std::max(maxAltitude, m_missile->getPosition().y + 150.0f);
+        maxAltitude = std::max(maxAltitude, missile->getPosition().y + 150.0f);
     }
 
-    if (m_playerRole == PlayerRole::Fighter && m_fighter)
+    const Fighter *jet = fighter();
+    if (m_playerRole == PlayerRole::Fighter && jet)
     {
-        maxAltitude = std::max(maxAltitude, m_fighter->getPosition().y + 150.0f);
+        maxAltitude = std::max(maxAltitude, jet->getPosition().y + 150.0f);
     }
 
-    for (const auto &target : m_targets)
+    for (const auto &target : targets())
     {
-        if (!target || !target->isActive())
+        if (!target->isActive())
         {
             continue;
         }
@@ -114,17 +116,17 @@ void Application::frameEngagementCamera()
     }
 
     std::vector<glm::vec3> points;
-    points.reserve(m_targets.size() + 2);
+    points.reserve(targets().size() + 2);
     points.push_back(glm::vec3(0.0f, 0.0f, 0.0f));
 
-    if (m_missile)
+    if (const Missile *missile = focusMissile())
     {
-        points.push_back(m_missile->getPosition());
+        points.push_back(missile->getPosition());
     }
 
-    for (const auto &target : m_targets)
+    for (const auto &target : targets())
     {
-        if (target && target->isActive())
+        if (target->isActive())
         {
             points.push_back(target->getPosition());
         }
@@ -257,22 +259,23 @@ void Application::frameDetonationCamera()
 
 void Application::updateMissileCamera()
 {
-    if (!m_renderer || !m_missile)
+    const Missile *missile = focusMissile();
+    if (!m_renderer || !missile)
     {
         return;
     }
 
-    glm::vec3 heading = m_missile->getVelocity();
+    glm::vec3 heading = missile->getVelocity();
     if (glm::length2(heading) < 1.0f)
     {
-        heading = m_missile->getThrustDirection();
+        heading = missile->getThrustDirection();
     }
-    const float speed = glm::length(m_missile->getVelocity());
+    const float speed = glm::length(missile->getVelocity());
     const float distance = std::clamp(8.0f + speed * 0.04f, 8.0f, 30.0f);
     const float height = std::clamp(1.4f + speed * 0.005f, 1.4f, 7.0f);
     const float lookAhead = std::clamp(25.0f + speed * 0.12f, 25.0f, 120.0f);
     m_chaseCamera.setOrbiting(m_enableMouseCamera);
-    m_chaseCamera.update(m_lastFrameDeltaTime, m_missile->getRenderPosition(), heading, distance, height, lookAhead, m_savedCameraFOV);
+    m_chaseCamera.update(m_lastFrameDeltaTime, missile->getRenderPosition(), heading, distance, height, lookAhead, m_savedCameraFOV);
     applyCameraPose(m_chaseCamera.pose());
 }
 
@@ -283,9 +286,10 @@ void Application::updateFighterJetCamera()
         return;
     }
 
-    if (m_playerRole == PlayerRole::Fighter && m_fighter)
+    const Fighter *jet = fighter();
+    if (m_playerRole == PlayerRole::Fighter && jet)
     {
-        m_aimCamera.update(m_lastFrameDeltaTime, m_fighter->getRenderPosition(), m_fighter->getRadius(), m_savedCameraFOV,
+        m_aimCamera.update(m_lastFrameDeltaTime, jet->getRenderPosition(), jet->getRadius(), m_savedCameraFOV,
                            m_cameraSmoothing);
         applyCameraPose(m_aimCamera.pose());
         return;
@@ -303,9 +307,10 @@ void Application::updateFighterJetCamera()
     }
 
     glm::vec3 heading = focusTarget->getVelocity();
-    if (glm::length2(heading) < 1.0f && m_missile)
+    const Missile *missile = focusMissile();
+    if (glm::length2(heading) < 1.0f && missile)
     {
-        heading = focusTarget->getPosition() - m_missile->getPosition();
+        heading = focusTarget->getPosition() - missile->getPosition();
     }
     const float speed = glm::length(focusTarget->getVelocity());
     const float radius = std::max(focusTarget->getRadius(), 1.0f);
@@ -361,14 +366,15 @@ void Application::applyCameraPose(const CameraPose &pose)
 
 void Application::resetAimCamera()
 {
-    const glm::vec3 nose = m_fighter ? m_fighter->getNose() : glm::vec3(0.0f, 0.0f, 1.0f);
+    const Fighter *jet = fighter();
+    const glm::vec3 nose = jet ? jet->getNose() : glm::vec3(0.0f, 0.0f, 1.0f);
     m_aimCamera.reset(nose);
     m_pendingMouseDelta = glm::vec2(0.0f);
 }
 
 bool Application::mouseAimActive() const
 {
-    return m_playerRole == PlayerRole::Fighter && m_fighter && m_cameraMode == CameraMode::FIGHTER_JET &&
+    return m_playerRole == PlayerRole::Fighter && fighter() != nullptr && m_cameraMode == CameraMode::FIGHTER_JET &&
            m_screen == Screen::Playing && m_overlay == Overlay::None && !m_showUI;
 }
 
