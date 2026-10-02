@@ -6,6 +6,8 @@
 
 #include <glm/glm.hpp>
 
+#include "Terrain.h"
+
 namespace missilesim::sim
 {
     // Version of the simulation config schema this build reads. A file with
@@ -179,6 +181,7 @@ namespace missilesim::sim
         int schemaVersion = 1;
         std::string name = "Baseline sandbox";
         EnvironmentConfig environment;
+        TerrainConfig terrain;
         VisualizationConfig visualization;
         CameraConfig camera;
         MissileConfig missile;

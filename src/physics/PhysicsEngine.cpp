@@ -21,6 +21,13 @@ PhysicsEngine::PhysicsEngine()
     m_gravity = std::make_unique<Gravity>(9.81f);        // Standard gravity (m/s²)
     m_drag = std::make_unique<Drag>(m_atmosphere.get());
     m_lift = std::make_unique<Lift>(m_atmosphere.get());
+    m_terrain = missilesim::sim::Terrain::shared(missilesim::sim::TerrainConfig{missilesim::sim::TerrainKind::Flat});
+}
+
+void PhysicsEngine::setTerrain(std::shared_ptr<const missilesim::sim::Terrain> terrain)
+{
+    m_terrain = terrain ? std::move(terrain)
+                        : missilesim::sim::Terrain::shared(missilesim::sim::TerrainConfig{missilesim::sim::TerrainKind::Flat});
 }
 
 void PhysicsEngine::update(float deltaTime)
@@ -84,7 +91,7 @@ void PhysicsEngine::integrateStep(float deltaTime, float timeIntoUpdate)
             if (object->getType() == "Missile")
             {
                 Missile *missile = static_cast<Missile *>(object);
-                missile->setGroundReferenceAltitude(m_groundLevel);
+                missile->setGroundReferenceAltitude(getGroundLevel());
 
                 // Sample the local atmosphere once: ambient pressure drives the
                 // motor's altitude thrust lapse, density sets the dynamic
@@ -145,22 +152,27 @@ void PhysicsEngine::handleGroundCollision(PhysicsObject *object, float timeIntoU
 
     const glm::vec3 &pos = object->getPosition();
     glm::vec3 vel = object->getVelocity();
+    const missilesim::sim::Terrain &terrain = *m_terrain;
+    const bool first = std::none_of(m_groundContacts.begin(), m_groundContacts.end(),
+                                    [object](const GroundContact &contact) { return contact.object == object; });
 
-    // Check if object is below ground level
-    if (pos.y < m_groundLevel)
+    if (terrain.isFlat())
     {
-        const bool first = std::none_of(m_groundContacts.begin(), m_groundContacts.end(),
-                                        [object](const GroundContact &contact) { return contact.object == object; });
+        const float groundLevel = terrain.baseHeight();
+        if (pos.y >= groundLevel)
+        {
+            return;
+        }
         if (first)
         {
             // Back along this sub-step's path to the surface.
             const glm::vec3 &previous = object->getPreviousPosition();
             const float drop = previous.y - pos.y;
-            const float fraction = drop > 1.0e-6f ? std::clamp((previous.y - m_groundLevel) / drop, 0.0f, 1.0f) : 1.0f;
+            const float fraction = drop > 1.0e-6f ? std::clamp((previous.y - groundLevel) / drop, 0.0f, 1.0f) : 1.0f;
             GroundContact contact;
             contact.object = object;
             contact.position = previous + (pos - previous) * fraction;
-            contact.position.y = m_groundLevel;
+            contact.position.y = groundLevel;
             contact.velocity = vel;
             contact.timeIntoUpdate = timeIntoUpdate;
             m_groundContacts.push_back(contact);
@@ -168,7 +180,7 @@ void PhysicsEngine::handleGroundCollision(PhysicsObject *object, float timeIntoU
 
         // Calculate new position (at ground level)
         glm::vec3 newPos = pos;
-        newPos.y = m_groundLevel;
+        newPos.y = groundLevel;
 
         // Apply restitution to velocity (bounce effect)
         if (vel.y < 0)
@@ -190,7 +202,46 @@ void PhysicsEngine::handleGroundCollision(PhysicsObject *object, float timeIntoU
         // Update object with new position and velocity
         object->setPosition(newPos);
         object->setVelocity(vel);
+        return;
     }
+
+    // Sloped ground: the whole sub-step path is tested, so a body that ends
+    // the sub-step above the surface still meets a crest it passed through.
+    const glm::vec3 &previous = object->getPreviousPosition();
+    float fraction = 1.0f;
+    if (!terrain.segmentHit(previous, pos, &fraction))
+    {
+        return;
+    }
+    glm::vec3 surface = previous + (pos - previous) * fraction;
+    surface.y = terrain.heightAt(surface.x, surface.z);
+    if (first)
+    {
+        GroundContact contact;
+        contact.object = object;
+        contact.position = surface;
+        contact.velocity = vel;
+        contact.timeIntoUpdate = timeIntoUpdate;
+        m_groundContacts.push_back(contact);
+    }
+
+    // Rest on the surface where the path met it, and bounce off the local
+    // slope: restitution on the normal component, friction on the rest.
+    const glm::vec3 normal = terrain.normalAt(surface.x, surface.z);
+    const float into = glm::dot(vel, normal);
+    if (into < 0.0f)
+    {
+        const glm::vec3 normalPart = normal * into;
+        const glm::vec3 tangentPart = vel - normalPart;
+        const float friction = 0.8f;
+        vel = tangentPart * friction - normalPart * m_groundRestitution;
+        if (glm::length(vel) < 0.1f)
+        {
+            vel = glm::vec3(0.0f);
+        }
+    }
+    object->setPosition(surface);
+    object->setVelocity(vel);
 }
 
 void PhysicsEngine::addObject(PhysicsObject *object)

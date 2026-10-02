@@ -82,6 +82,11 @@ enum class TargetAIState
     RECOVERING
 };
 
+namespace missilesim::sim
+{
+    class Terrain;
+}
+
 class Target : public PhysicsObject
 {
 public:
@@ -143,6 +148,10 @@ public:
     void updateThreatAssessment(const std::vector<Missile *> &missiles);
     std::vector<FlareLaunchRequest> consumePendingFlareLaunches();
 
+    // The ground the aircraft keeps its height band above. Null flies the
+    // band over flat ground at height 0. The terrain must outlive the target.
+    void setTerrain(const missilesim::sim::Terrain *terrain) { m_terrain = terrain; }
+
     void update(float deltaTime) override;
     bool isPointInside(const glm::vec3 &point) const;
 
@@ -162,6 +171,13 @@ private:
     float computeDesiredSpeed(float referenceDistance) const;
     float computeDesiredAltitude(float referenceDistance, float currentSpeed) const;
     void enforceAirspaceConstraint();
+    // Ground height under the aircraft, and the highest ground it reaches in
+    // the next few seconds on its current track. 0 without a terrain.
+    float terrainFloorHere() const;
+    float terrainFloorAhead() const;
+    // Lifts the top of the height band by the tallest ground, so the band
+    // stays as deep over a ridge as over the plain.
+    float terrainCeilingLift() const;
     void updateCountermeasures(float deltaTime, const glm::vec3 &currentVelocity);
     void resetCountermeasureState();
 
@@ -188,6 +204,7 @@ private:
     glm::vec3 m_referenceVelocity = glm::vec3(0.0f);
     float m_referenceDistance = std::numeric_limits<float>::infinity();
     float m_nominalAltitude = 180.0f;
+    const missilesim::sim::Terrain *m_terrain = nullptr;
     float m_altitudeExcursion = 60.0f;
     float m_patrolPhase = 0.0f;
     int m_orbitDirection = 1;

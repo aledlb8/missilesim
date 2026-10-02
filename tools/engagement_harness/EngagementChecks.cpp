@@ -10,6 +10,7 @@
 #include "sim/FixedStepClock.h"
 #include "sim/Random.h"
 #include "sim/Sweep.h"
+#include "sim/Terrain.h"
 
 #include <algorithm>
 #include <chrono>
@@ -546,6 +547,329 @@ namespace harness
             std::error_code ignored;
             fs::remove_all(directory, ignored);
         }
+
+        // ---- Terrain -------------------------------------------------------------------
+
+        sim::TerrainConfig ridgeTerrain()
+        {
+            sim::TerrainConfig terrain;
+            terrain.kind = sim::TerrainKind::Ridge;
+            return terrain;
+        }
+
+        sim::TerrainConfig mountainTerrain()
+        {
+            sim::TerrainConfig terrain;
+            terrain.kind = sim::TerrainKind::Mountains;
+            return terrain;
+        }
+
+        sim::SimulationConfig withTerrain(const sim::SimulationConfig &config, const sim::TerrainConfig &terrain)
+        {
+            sim::SimulationConfig out = config;
+            out.terrain = terrain;
+            return out;
+        }
+
+        // Height of the mesh triangle containing (x, z), built from the
+        // samples and Terrain::kCellTriangles exactly as the renderer builds it.
+        bool meshHeight(const sim::Terrain &terrain, float x, float z, float &out)
+        {
+            const float u = (x - terrain.gridOrigin()) / terrain.cellSize();
+            const float w = (z - terrain.gridOrigin()) / terrain.cellSize();
+            const int i = std::clamp(static_cast<int>(std::floor(u)), 0, terrain.gridCells() - 1);
+            const int j = std::clamp(static_cast<int>(std::floor(w)), 0, terrain.gridCells() - 1);
+            const glm::vec2 p(u - static_cast<float>(i), w - static_cast<float>(j));
+            for (int triangle = 0; triangle < 2; ++triangle)
+            {
+                glm::vec2 corner[3];
+                float height[3];
+                for (int k = 0; k < 3; ++k)
+                {
+                    const int *offset = sim::Terrain::kCellTriangles[triangle * 3 + k];
+                    corner[k] = glm::vec2(static_cast<float>(offset[0]), static_cast<float>(offset[1]));
+                    height[k] = terrain.sample(i + offset[0], j + offset[1]);
+                }
+                const glm::vec2 e1 = corner[1] - corner[0];
+                const glm::vec2 e2 = corner[2] - corner[0];
+                const glm::vec2 d = p - corner[0];
+                const float det = e1.x * e2.y - e1.y * e2.x;
+                const float b1 = (d.x * e2.y - d.y * e2.x) / det;
+                const float b2 = (e1.x * d.y - e1.y * d.x) / det;
+                const float b0 = 1.0f - b1 - b2;
+                if (b0 >= -1.0e-5f && b1 >= -1.0e-5f && b2 >= -1.0e-5f)
+                {
+                    out = b0 * height[0] + b1 * height[1] + b2 * height[2];
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void checkMountainsAndWater(Checks &checks)
+        {
+            const std::shared_ptr<const sim::Terrain> shared = sim::Terrain::shared(mountainTerrain());
+            const sim::Terrain &terrain = *shared;
+            const sim::TerrainConfig &shape = terrain.config();
+
+            sim::RandomStream points = sim::RandomStreams(78).stream("terrain.mountains");
+            const float half = -terrain.gridOrigin();
+            float worstMesh = 0.0f;
+            bool allInside = true;
+            for (int index = 0; index < 20000; ++index)
+            {
+                const float x = points.uniform(-half, half);
+                const float z = points.uniform(-half, half);
+                float mesh = 0.0f;
+                allInside = meshHeight(terrain, x, z, mesh) && allInside;
+                worstMesh = std::max(worstMesh, std::abs(mesh - terrain.bedHeightAt(x, z)));
+            }
+            checks.expect(allInside && worstMesh < 1.0e-2f && sim::Terrain::shared(mountainTerrain()) == shared,
+                          "terrain: mountain land is the drawn land, built once",
+                          format("worst %.4f m, peaks %.0f m", worstMesh, terrain.maxHeight() - shape.baseHeightM));
+
+            // The launch site is flat; the lake and the sea are solid water
+            // over a bed below it; a body dropping onto the water stops at it.
+            const float lakeX = 2300.0f;
+            const float lakeZ = -2100.0f;
+            const float sea = half + 4000.0f;
+            const bool siteFlat = terrain.heightAt(0.0f, 0.0f) == shape.baseHeightM &&
+                                  terrain.heightAt(shape.apronRadiusM * 0.9f, 0.0f) == shape.baseHeightM;
+            const bool lake = terrain.isWater(lakeX, lakeZ) && terrain.heightAt(lakeX, lakeZ) == terrain.waterLevel() &&
+                              terrain.bedHeightAt(lakeX, lakeZ) < terrain.waterLevel() - 5.0f;
+            const bool open = terrain.isWater(sea, 0.0f) && terrain.heightAt(sea, 0.0f) == terrain.waterLevel();
+            float fraction = 0.0f;
+            const glm::vec3 above(lakeX, terrain.waterLevel() + 50.0f, lakeZ);
+            const glm::vec3 below(lakeX + 3.0f, terrain.bedHeightAt(lakeX, lakeZ) - 1.0f, lakeZ);
+            const bool hit = terrain.segmentHit(above, below, &fraction);
+            const float stop = (above + (below - above) * fraction).y - terrain.waterLevel();
+            checks.expect(siteFlat && lake && open && hit && std::abs(stop) < 1.0e-3f,
+                          "terrain: flat launch site, solid lake and sea",
+                          format("water %.1f m, lake bed %.1f m, stop %.4f m", terrain.waterLevel(),
+                                 terrain.bedHeightAt(lakeX, lakeZ), stop));
+        }
+
+        void checkTerrainSurface(Checks &checks)
+        {
+            const sim::Terrain terrain(ridgeTerrain());
+            const sim::TerrainConfig &shape = terrain.config();
+
+            // Seeded points over the whole grid, plus every sample point of a band.
+            sim::RandomStream points = sim::RandomStreams(77).stream("terrain.points");
+            const float half = -terrain.gridOrigin();
+            float worstMesh = 0.0f;
+            bool allInside = true;
+            for (int index = 0; index < 20000; ++index)
+            {
+                const float x = points.uniform(-half, half);
+                const float z = points.uniform(-half, half);
+                float mesh = 0.0f;
+                allInside = meshHeight(terrain, x, z, mesh) && allInside;
+                worstMesh = std::max(worstMesh, std::abs(mesh - terrain.heightAt(x, z)));
+            }
+            float worstSample = 0.0f;
+            for (int i = 0; i <= terrain.gridCells(); i += 7)
+            {
+                const float x = terrain.gridOrigin() + static_cast<float>(i) * terrain.cellSize();
+                const float z = terrain.gridOrigin() + static_cast<float>(terrain.gridCells() / 2) * terrain.cellSize();
+                worstSample = std::max(worstSample, std::abs(terrain.heightAt(x, z) - terrain.sample(i, terrain.gridCells() / 2)));
+            }
+            checks.expect(allInside && worstMesh < 1.0e-3f && worstSample < 1.0e-3f,
+                          "terrain: the drawn triangles are the collision ones",
+                          format("worst %.6f m over 20000 points, %.6f m at samples", worstMesh, worstSample));
+
+            const float apron = terrain.heightAt(0.0f, 0.0f);
+            const float apronEdge = terrain.heightAt(shape.apronRadiusM * 0.95f, 0.0f);
+            const float beyond = terrain.heightAt(half + 50.0f, 300.0f);
+            const float justInside = terrain.heightAt(half - 1.0f, 300.0f);
+            const float crest = terrain.heightAt(0.0f, shape.ridgeDistanceM);
+            checks.expect(apron == shape.baseHeightM && std::abs(apronEdge - shape.baseHeightM) < 0.5f &&
+                              beyond == shape.baseHeightM && std::abs(justInside - shape.baseHeightM) < 0.5f &&
+                              crest > shape.baseHeightM + 0.5f * shape.ridgeHeightM && terrain.maxHeight() >= crest,
+                          "terrain: flat apron and edge, ridge beyond",
+                          format("crest %.1f m, max %.1f m, edge %.3f m", crest, terrain.maxHeight(), justInside));
+
+            // A diving path across the slope: the contact is on the surface,
+            // and splitting the path into steps finds the same point.
+            const glm::vec3 a(-120.0f, terrain.maxHeight() + 40.0f, shape.ridgeDistanceM - 900.0f);
+            const glm::vec3 b(260.0f, shape.baseHeightM - 5.0f, shape.ridgeDistanceM + 200.0f);
+            float whole = 0.0f;
+            const bool hit = terrain.segmentHit(a, b, &whole);
+            const glm::vec3 point = a + (b - a) * whole;
+            float split = -1.0f;
+            const int pieces = 37;
+            for (int piece = 0; piece < pieces && split < 0.0f; ++piece)
+            {
+                const float t0 = static_cast<float>(piece) / pieces;
+                const float t1 = static_cast<float>(piece + 1) / pieces;
+                float local = 0.0f;
+                if (terrain.segmentHit(a + (b - a) * t0, a + (b - a) * t1, &local))
+                {
+                    split = t0 + (t1 - t0) * local;
+                }
+            }
+            const float onSurface = std::abs(terrain.heightAbove(point));
+            const float stepGap = glm::length((b - a) * (split - whole));
+            checks.expect(hit && onSurface < 0.01f && split >= 0.0f && stepGap < 0.05f,
+                          "terrain: swept contact is on the surface, any steps",
+                          format("off surface %.4f m, step gap %.4f m", onSurface, stepGap));
+
+            const glm::vec3 site(0.0f, shape.baseHeightM + 100.0f, 0.0f);
+            const glm::vec3 farSide(0.0f, shape.baseHeightM + 100.0f, shape.ridgeDistanceM + 2000.0f);
+            const glm::vec3 siteHigh(0.0f, terrain.maxHeight() + 20.0f, 0.0f);
+            const glm::vec3 farHigh(0.0f, terrain.maxHeight() + 20.0f, shape.ridgeDistanceM + 2000.0f);
+            const sim::Terrain flat;
+            checks.expect(!terrain.lineOfSight(site, farSide) && terrain.lineOfSight(siteHigh, farHigh) &&
+                              flat.lineOfSight(site, farSide),
+                          "terrain: the ridge blocks line of sight below its crest");
+        }
+
+        void checkTerrainContacts(Checks &checks, const sim::SimulationConfig &config)
+        {
+            const sim::TerrainConfig shape = ridgeTerrain();
+
+            // An unguided body fired level at the ridge face ends on that face,
+            // at the same point whatever the fixed step.
+            auto fireAtRidge = [&](float fixedStep, glm::vec3 &impact) {
+                sim::SimulationConfig ridge = withTerrain(config, shape);
+                ridge.environment.fixedTimeStep = fixedStep;
+                Scenario scenario;
+                scenario.name = "terrain-impact";
+                scenario.seed = 707;
+                scenario.durationSeconds = 6.0;
+                scenario.setup = [](World &world) { world.respawnTargets(1); };
+                scenario.beforeStep = [&shape](World &world, std::uint64_t tick) {
+                    if (tick != 1)
+                    {
+                        return;
+                    }
+                    sim::ScriptedLaunch launch;
+                    launch.team = sim::Team::Red;
+                    launch.position = glm::vec3(0.0f, shape.baseHeightM + 200.0f, 1200.0f);
+                    launch.velocity = glm::vec3(0.0f, 0.0f, 400.0f);
+                    world.launchScripted(launch);
+                };
+                bool ended = false;
+                runScenario(ridge, scenario, [&](World &, const std::vector<SimEvent> &events) {
+                    for (const SimEvent &event : events)
+                    {
+                        if (!ended && event.type == EventType::ShotEnded &&
+                            event.detail == static_cast<std::uint8_t>(sim::ShotEndReason::GroundImpact))
+                        {
+                            impact = event.position;
+                            ended = true;
+                        }
+                    }
+                });
+                return ended;
+            };
+            glm::vec3 coarse(0.0f);
+            glm::vec3 fine(0.0f);
+            const bool coarseHit = fireAtRidge(0.01f, coarse);
+            const bool fineHit = fireAtRidge(0.004f, fine);
+            const sim::Terrain terrain(shape);
+            const float offSurface = std::abs(terrain.heightAbove(coarse));
+            checks.expect(coarseHit && fineHit && offSurface < 0.05f && coarse.y > shape.baseHeightM + 100.0f &&
+                              coarse.z > shape.ridgeDistanceM - shape.ridgeHalfWidthM && coarse.z < shape.ridgeDistanceM &&
+                              glm::length(coarse - fine) < 2.0f,
+                          "terrain: a round meets the ridge face, any step",
+                          format("hit at %.1f m up, z %.1f m, step gap %.2f m", coarse.y - shape.baseHeightM, coarse.z,
+                                 glm::length(coarse - fine)));
+
+            // The fighter flies level into the slope: it crashes on the face,
+            // not at the datum underneath.
+            Scenario crash;
+            crash.name = "terrain-crash";
+            crash.seed = 708;
+            crash.durationSeconds = 12.0;
+            crash.setup = [&shape](World &world) {
+                world.respawnTargets(1);
+                world.setRoleFighter("aim-9x-blk2");
+                Fighter *fighter = world.fighter();
+                if (fighter == nullptr)
+                {
+                    return;
+                }
+                const glm::vec3 nose(0.0f, 0.0f, 1.0f);
+                fighter->place(glm::vec3(0.0f, shape.baseHeightM + 150.0f, 900.0f), nose * 200.0f, nose);
+                missilesim::flight::InstructorInput input;
+                input.aimDirection = nose;
+                fighter->setInstructorInput(input, 0.0f);
+            };
+            sim::EntityId fighterId;
+            glm::vec3 crashPoint(0.0f);
+            bool crashed = false;
+            runScenario(withTerrain(config, shape), crash, [&](World &world, const std::vector<SimEvent> &events) {
+                fighterId = world.fighterId();
+                for (const SimEvent &event : events)
+                {
+                    if (!crashed && event.type == EventType::GroundCollision && event.subject == fighterId)
+                    {
+                        crashPoint = event.position;
+                        crashed = true;
+                    }
+                }
+            });
+            checks.expect(crashed && crashPoint.y > shape.baseHeightM + 60.0f &&
+                              std::abs(terrain.heightAbove(crashPoint)) <= sim::rules::kFighterGroundClearanceM + 0.5f,
+                          "terrain: the fighter crashes on the ridge face",
+                          format("%.1f m up at z %.1f m, %.2f m off the surface", crashPoint.y - shape.baseHeightM, crashPoint.z,
+                                 terrain.heightAbove(crashPoint)));
+
+            // Aircraft keep their height band over the ground under them.
+            sim::TerrainConfig near = shape;
+            near.ridgeDistanceM = 1800.0f;
+            Scenario patrol;
+            patrol.name = "terrain-patrol";
+            patrol.seed = 709;
+            patrol.durationSeconds = 60.0;
+            patrol.setup = [](World &world) { world.respawnTargets(8); };
+            float lowest = 1.0e9f;
+            float highestGround = near.baseHeightM;
+            const sim::Terrain nearTerrain(near);
+            runScenario(withTerrain(config, near), patrol, [&](World &world, const std::vector<SimEvent> &) {
+                for (const auto &target : world.targets())
+                {
+                    if (target->isActive())
+                    {
+                        lowest = std::min(lowest, nearTerrain.heightAbove(target->getPosition()));
+                        highestGround = std::max(highestGround, nearTerrain.heightAt(target->getPosition()));
+                    }
+                }
+            });
+            checks.expect(lowest >= 30.0f && highestGround > near.baseHeightM + 100.0f,
+                          "terrain: aircraft keep their band over the ridge",
+                          format("lowest %.1f m above ground, highest ground flown over %.1f m", lowest,
+                                 highestGround - near.baseHeightM));
+        }
+
+        void checkTerrainConfig(Checks &checks)
+        {
+            namespace fs = std::filesystem;
+            const fs::path directory = fs::temp_directory_path() /
+                                       ("missilesim_terrain_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            fs::create_directories(directory);
+            const fs::path ridgePath = directory / "ridge.json";
+            const fs::path typoPath = directory / "typo.json";
+            std::ofstream(ridgePath) << R"({"schema_version": 1, "terrain": {"kind": "ridge", "ridge_height_m": 400.0}})";
+            std::ofstream(typoPath) << R"({"schema_version": 1, "terrain": {"kind": "glaciers", "cell_size_m": 1.0}})";
+            const sim::SimulationConfigLoadResult ridge = sim::loadSimulationConfig(ridgePath);
+            const sim::SimulationConfigLoadResult typo = sim::loadSimulationConfig(typoPath);
+            bool namesKind = false;
+            bool namesCell = false;
+            for (const std::string &warning : typo.warnings)
+            {
+                namesKind = namesKind || warning.find("glaciers") != std::string::npos;
+                namesCell = namesCell || warning.find("cell_size_m") != std::string::npos;
+            }
+            checks.expect(ridge.loaded && ridge.warnings.empty() && ridge.config.terrain.kind == sim::TerrainKind::Ridge &&
+                              ridge.config.terrain.ridgeHeightM == 400.0f && typo.loaded && namesKind && namesCell &&
+                              typo.config.terrain.kind == sim::TerrainConfig{}.kind && typo.config.terrain.cellSizeM == 16.0f,
+                          "config: terrain kind and ranges are checked",
+                          typo.warnings.empty() ? std::string() : typo.warnings.front());
+            std::error_code ignored;
+            fs::remove_all(directory, ignored);
+        }
     }
 
     int runEngagementChecks(const sim::SimulationConfig &config)
@@ -565,6 +889,10 @@ namespace harness
         checkRemovalMidFlight(checks, config, scenarios);
         checkFlareBirths(checks, config, scenarios);
         checkLaunchRefusals(checks, config);
+        checkTerrainSurface(checks);
+        checkMountainsAndWater(checks);
+        checkTerrainConfig(checks);
+        checkTerrainContacts(checks, config);
 
         std::printf("%d/%d engagement checks passed\n", checks.count - checks.failures, checks.count);
         return checks.failures;

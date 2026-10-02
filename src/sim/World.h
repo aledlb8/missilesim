@@ -23,6 +23,7 @@
 #include "sim/Random.h"
 #include "sim/SimEvents.h"
 #include "sim/SimulationConfig.h"
+#include "sim/Terrain.h"
 #include "objects/Target.h"
 
 #include <cstdint>
@@ -249,7 +250,16 @@ namespace missilesim::sim
         // ---- Environment -------------------------------------------------------
         PhysicsEngine &physics() { return *m_physics; }
         const PhysicsEngine &physics() const { return *m_physics; }
+        // The terrain's base height (the launch site and the altitude datum).
         float groundLevel() const;
+        // The one ground surface: physics contacts, the fighter's crash test,
+        // the AI's height floor and line of sight all read it, and the
+        // renderer meshes it.
+        const Terrain &terrain() const { return *m_terrain; }
+        std::shared_ptr<const Terrain> sharedTerrain() const { return m_terrain; }
+        // Replaces the terrain everywhere at once. Aircraft already placed are
+        // not moved; follow with respawnTargets (or restart) for a fresh field.
+        void setTerrain(const TerrainConfig &config);
 
         // ---- Platforms -----------------------------------------------------------
         Fighter *fighter() { return m_fighter.get(); }
@@ -406,6 +416,7 @@ namespace missilesim::sim
         bool m_recordTrace = false;
 
         std::unique_ptr<PhysicsEngine> m_physics;
+        std::shared_ptr<const Terrain> m_terrain;
 
         std::unique_ptr<Fighter> m_fighter;
         EntityId m_fighterId;

@@ -166,6 +166,7 @@ namespace missilesim::sim
         m_physics->setAirDensity(config.environment.seaLevelAirDensity);
         m_physics->setGroundEnabled(config.environment.groundCollisionEnabled);
         m_physics->setGroundRestitution(config.environment.groundRestitution);
+        setTerrain(config.terrain);
         m_targetAIConfig = targetAIFromConfig(config.targets);
         m_customSpec = customRoundSpecFromConfig(config);
         m_targetSpawnRandom = m_random.stream("targets.spawn");
@@ -263,6 +264,17 @@ namespace missilesim::sim
     float World::groundLevel() const
     {
         return m_physics->getGroundLevel();
+    }
+
+    void World::setTerrain(const TerrainConfig &config)
+    {
+        m_config.terrain = config;
+        m_terrain = Terrain::shared(config);
+        m_physics->setTerrain(m_terrain);
+        for (const auto &target : m_targets)
+        {
+            target->setTerrain(m_terrain.get());
+        }
     }
 
     World::PlatformRecord *World::record(EntityId id)
@@ -390,15 +402,28 @@ namespace missilesim::sim
 
         const Atmosphere::State air = m_physics->getAtmosphereState(m_fighter->getPosition().y);
         const float gravity = std::max(m_physics->getGravity(), 0.0f);
+        const glm::vec3 before = m_fighter->getPosition();
         m_fighter->updateFlight(m_fixedStep, air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond, gravity);
 
         const glm::vec3 position = m_fighter->getPosition();
-        // The fighter has no ground contact model, so the ground is always solid to it.
-        const bool grounded = position.y <= groundLevel() + rules::kFighterGroundClearanceM;
+        // The fighter has no ground contact model, so the ground is always
+        // solid to it. Over sloped ground the whole step is swept, so a crest
+        // passed through inside one step still counts.
+        glm::vec3 impact = position;
+        bool grounded = m_terrain->heightAbove(position) <= rules::kFighterGroundClearanceM;
+        if (!m_terrain->isFlat() && finite(before) && finite(position))
+        {
+            float fraction = 1.0f;
+            if (m_terrain->segmentHit(before, position, &fraction))
+            {
+                grounded = true;
+                impact = before + (position - before) * fraction;
+            }
+        }
         if (!finite(position) || grounded)
         {
             SimEvent event = makeEvent(EventType::GroundCollision, m_fighterId);
-            event.position = finite(position) ? position : glm::vec3(0.0f);
+            event.position = finite(impact) ? impact : glm::vec3(0.0f);
             event.velocity = m_fighter->getVelocity();
             publish(event);
             destroyPlatform(m_fighterId, kNoEntity, event.position);
@@ -488,6 +513,7 @@ namespace missilesim::sim
         const float safeRadius = (std::isfinite(radius) && radius > 0.0f) ? radius : spawn.fallbackRadius;
 
         auto target = std::make_unique<Target>(place, safeRadius);
+        target->setTerrain(m_terrain.get());
         target->setAIConfig(m_targetAIConfig);
         target->setMAWSConfig(toRuntime(m_config.targets.maws));
         target->setFlareDispenserConfig(toRuntime(m_config.targets.flares));
@@ -532,7 +558,11 @@ namespace missilesim::sim
             const float bearing = m_targetSpawnRandom.uniform(0.0f, glm::two_pi<float>());
             const float altitude = m_targetSpawnRandom.uniform(minimumAltitude, maximumAltitude);
             const float radius = m_targetSpawnRandom.uniform(spawn.radiusMin, spawn.radiusMax);
-            spawnTarget(glm::vec3(spawnDistance * std::cos(bearing), altitude, spawnDistance * std::sin(bearing)), radius);
+            const float x = spawnDistance * std::cos(bearing);
+            const float z = spawnDistance * std::sin(bearing);
+            // The altitude band is drawn above the ground under the station.
+            const float lift = m_terrain->heightAt(x, z) - m_terrain->baseHeight();
+            spawnTarget(glm::vec3(x, altitude + lift, z), radius);
         }
 
         // One short update starts each autonomous controller from a live state.

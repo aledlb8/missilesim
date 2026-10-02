@@ -6,6 +6,7 @@
 //   engagement_harness --seed N <name>   the same with another seed
 //   engagement_harness --no-flares ...   targets carry no flares (isolates guidance)
 //   engagement_harness --fox2 ID ...     fighter scenarios carry this catalog round
+//   engagement_harness --terrain ridge ... every scenario flies over the procedural ridge
 //   engagement_harness --telemetry <name> every round's state each 0.1 s
 //   engagement_harness --check           contract checks (exit code = failures)
 //
@@ -126,6 +127,14 @@ int main(int argc, char **argv)
         else if (argument == "--telemetry")
         {
             telemetry = true;
+        }
+        else if (argument == "--terrain" && index + 1 < argc)
+        {
+            if (!sim::parseTerrainKind(argv[++index], config.terrain.kind))
+            {
+                std::fprintf(stderr, "Unknown terrain '%s' (flat or ridge)\n", argv[index]);
+                return 2;
+            }
         }
         else if (argument == "--no-flares")
         {

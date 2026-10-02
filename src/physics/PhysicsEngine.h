@@ -12,6 +12,7 @@
 #include "objects/Flare.h"
 #include "objects/Target.h"
 #include "objects/Missile.h"
+#include "sim/Terrain.h"
 
 // First contact of a body with the ground during one update() call.
 struct GroundContact
@@ -45,7 +46,12 @@ public:
     // Ground collision properties
     void setGroundEnabled(bool enabled) { m_groundEnabled = enabled; }
     bool isGroundEnabled() const { return m_groundEnabled; }
-    float getGroundLevel() const { return m_groundLevel; }
+    // The terrain's base height: the datum for altitude readouts and the
+    // launch site, which the terrain keeps flat.
+    float getGroundLevel() const { return m_terrain->baseHeight(); }
+    // The surface every body meets. Flat at height 0 until a world sets one.
+    void setTerrain(std::shared_ptr<const missilesim::sim::Terrain> terrain);
+    const missilesim::sim::Terrain &getTerrain() const { return *m_terrain; }
     void setGroundRestitution(float restitution) { m_groundRestitution = restitution; }
     float getGroundRestitution() const { return m_groundRestitution; }
     // Bodies that touched the ground during the last update(). A bounce can
@@ -83,6 +89,6 @@ private:
 
     // Ground collision properties
     bool m_groundEnabled = true;
-    float m_groundLevel = 0.0f;       // Y coordinate of the ground
+    std::shared_ptr<const missilesim::sim::Terrain> m_terrain;
     float m_groundRestitution = 0.5f; // Bounciness of the ground (0 to 1)
 };

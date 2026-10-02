@@ -240,6 +240,37 @@ namespace missilesim::sim
             config.environment.groundRestitution = readFloat(*environment, "ground_restitution", config.environment.groundRestitution, 0.0f, 1.0f);
         }
 
+        void readTerrainConfig(const Json &root, SimulationConfig &config)
+        {
+            const Json *terrain = findObject(root, "terrain");
+            if (terrain == nullptr)
+            {
+                return;
+            }
+
+            TerrainConfig &out = config.terrain;
+            const std::string kind = readString(*terrain, "kind", terrainKindName(out.kind));
+            if (!parseTerrainKind(kind.c_str(), out.kind))
+            {
+                warn("'kind' = \"" + kind + "\" is not \"mountains\", \"flat\" or \"ridge\"; " + terrainKindName(out.kind) +
+                     " is used.");
+            }
+            out.baseHeightM = readFloat(*terrain, "base_height_m", out.baseHeightM, -500.0f, 5000.0f);
+            out.apronRadiusM = readFloat(*terrain, "apron_radius_m", out.apronRadiusM, 0.0f, 3000.0f);
+            out.hillAmplitudeM = readFloat(*terrain, "hill_amplitude_m", out.hillAmplitudeM, 0.0f, 500.0f);
+            out.seed = static_cast<std::uint32_t>(readInt(*terrain, "seed", static_cast<int>(out.seed), 0, 1000000));
+            out.mountainHeightM = readFloat(*terrain, "mountain_height_m", out.mountainHeightM, 0.0f, 4000.0f);
+            out.valleyRadiusM = readFloat(*terrain, "valley_radius_m", out.valleyRadiusM, 1500.0f, 20000.0f);
+            out.coastRadiusM = readFloat(*terrain, "coast_radius_m", out.coastRadiusM, 4000.0f, 40000.0f);
+            out.waterBelowBaseM = readFloat(*terrain, "water_below_base_m", out.waterBelowBaseM, 0.1f, 50.0f);
+            out.ridgeHeightM = readFloat(*terrain, "ridge_height_m", out.ridgeHeightM, 0.0f, 2000.0f);
+            out.ridgeDistanceM = readFloat(*terrain, "ridge_distance_m", out.ridgeDistanceM, 500.0f, 15000.0f);
+            out.ridgeHalfWidthM = readFloat(*terrain, "ridge_half_width_m", out.ridgeHalfWidthM, 100.0f, 5000.0f);
+            out.ridgeBearingDeg = readFloat(*terrain, "ridge_bearing_deg", out.ridgeBearingDeg, -360.0f, 360.0f);
+            out.extentHalfM = readFloat(*terrain, "extent_half_m", out.extentHalfM, 1000.0f, 40000.0f);
+            out.cellSizeM = readFloat(*terrain, "cell_size_m", out.cellSizeM, 16.0f, 500.0f);
+        }
+
         void readVisualizationConfig(const Json &root, SimulationConfig &config)
         {
             const Json *visualization = findObject(root, "visualization");
@@ -435,6 +466,7 @@ namespace missilesim::sim
             config.schemaVersion = kSupportedSchemaVersion;
             config.name = readString(root, "name", config.name);
             readEnvironmentConfig(root, config);
+            readTerrainConfig(root, config);
             readVisualizationConfig(root, config);
             readCameraConfig(root, config);
             readMissileConfig(root, config);
