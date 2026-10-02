@@ -11,7 +11,7 @@ import struct
 import numpy as np
 
 
-def export(source, destination):
+def export(source, destination, only=None):
     raw = Path(source).read_bytes()
     magic, version, length = struct.unpack_from('<4sII', raw)
     assert magic == b'glTF' and version == 2 and length == len(raw)
@@ -59,6 +59,8 @@ def export(source, destination):
     destination.mkdir(parents=True, exist_ok=True)
     counts = {}
     for root_name, filename in [('FIGHTER','jet.obj'),('MISSILE','missile.obj')]:
+        if only and root_name != only:
+            continue
         roots = [i for i,n in enumerate(doc['nodes']) if n.get('name') == root_name]
         assert len(roots) == 1, f'Missing or duplicated root: {root_name}'
         # glTF: X right, Y up, -Z forward. Jet loader rotates OBJ -90deg X;
@@ -154,5 +156,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source')
     parser.add_argument('--output',default='assets/models')
+    parser.add_argument('--only',choices=['FIGHTER','MISSILE'],
+                        help='Export one asset without replacing the other runtime model')
     args = parser.parse_args()
-    export(args.source,args.output)
+    export(args.source,args.output,args.only)
