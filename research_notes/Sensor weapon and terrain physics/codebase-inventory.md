@@ -92,7 +92,7 @@ Shared seeker and countermeasure constants:
 | `kUnpublishedStructuralG` | 30 | g | `Fox2Flight.h` 112 | `resolve` when `structuralGPublished` is false | airframe cap |
 | `kAim9bStructuralG` | 10 | g | `Fox2Flight.h` 42 | AIM-9B only | published cap |
 | `kAim9bCnMax` | 5.49 | body CN | `Fox2Flight.h` 41 | shape-coefficient rounds | CN inverted from 4.2 g at 50,000 ft, Mach 2.3 |
-| `kAim9bStructuralDynamicPressure` | 1.02e5 | Pa | `Fox2Flight.h` 337 | `cnMaxForStructuralG` | q where that CN hits 10 g |
+| `kAim9bStructuralDynamicPressure` | 1.02e5 | Pa | `Fox2Flight.h` | `cnMaxForStructuralG` | AIM-9B q where CN 5.49 hits 10 g. Not reused to invent another round's CN. |
 | `kGravity` | 9.80665 | m/s² | `Fox2Flight.h` 12; also `PhysicsObject.cpp` 8 | g caps, Isp | standard gravity |
 | engine gravity | 9.81 | m/s² | `PhysicsEngine.cpp` 39; JSON line 6 | `Gravity` | weight, direction `(0,-1,0)` (`Gravity.h` 23) |
 
@@ -168,31 +168,31 @@ Catalog rounds that change the seeker or the g cap (all other fields are the fam
 | `r-3s` | 75.3 kg, 2.838 m, 0.127 m | rear through the beam (forward of the beam is dark) | gimbal 28°, IFOV 3.5°, track 180°/s | shape CN, cap 30 g | inhibit 0.6 s, guidance 21 s, destruct 22 s unpublished, arm 0.4 s after burnout, proximity 9 m | no (290–323) |
 | `r-13m` | 90 kg, span 0.632 m, length 2.87 m | rear hemisphere | gimbal 40° unpublished, track 180 | shape CN, cap 30 g | guidance and destruct 55 s, inferred arm 150 m | no (937–938) |
 | `r-13m1` | 90.6 kg, span 0.651 m | rear hemisphere | same | same | no 55 s timer, inferred arm 150 m | no (939–940) |
-| `r-60` | 43.5 kg, 2.096 m, 0.120 m, span 0.390 m | rear hemisphere | cue 12° published, gimbal 35° unpublished, track 35°/s | sized to 47 g | guidance 24 s, destruct 25 s, inferred arm 250 m | no (353–387) |
-| `r-60m` | 44 kg, 2.138 m | all-aspect | cue 20°, gimbal 35° unpublished, track 180 | sized to 47 g | arm 150 m | no |
+| `r-60` | 43.5 kg, 2.096 m, 0.120 m, span 0.390 m | rear hemisphere | cue 12° published, gimbal 35° unpublished, track 35°/s | shape CN, published cap 47 g | guidance 24 s, destruct 25 s, inferred arm 250 m | no |
+| `r-60m` | 44 kg, 2.138 m | all-aspect | cue 20°, gimbal 35° unpublished, track 180 | shape CN, published cap 47 g | arm 150 m | no |
 | `r-73` | 105 kg, 2.90 m, 0.170 m, span 0.510 m | all-aspect, IRCCM none, lock after launch | cue 45°, gimbal 75°, track 60°/s | shape CN, published cap 40 g | inferred arm 300 m, proximity 3.5 m, tail gate 0 | jet tab (390–437, call 943–944) |
 | `r-73m` | 110 kg, same dimensions | kinematic | cue 45°, gimbal 75°, track 180 | same 40 g | arm 300 m, tail gate 0 | jet tab (945–948) |
 | `rvv-md` | 106 kg, 2.92 m, 0.170 m | kinematic, lock after launch | cue 60°, gimbal 75°, track 180 | shape CN, cap 30 g because g is not published | arm 300 m, `tailAcquisitionM = 10000/sqrt(0.2)` | jet tab (949–952) |
-| `r-27t` | 245 kg, 3.80 m, 0.230 m, span 0.77 m | all-aspect, lock before launch | cue 55° published, gimbal 55° unpublished, track 180 | sized to 8 g | inferred arm 500 m | no (439–474) |
+| `r-27t` | 245 kg, 3.80 m, 0.230 m, span 0.77 m | all-aspect, lock before launch | cue 55° published, gimbal 55° unpublished, track 180 | shape CN, published cap 8 g | inferred arm 500 m | no |
 | `r-27et` | 343 kg, 4.50 m, 0.260 m, span 0.80 m | all-aspect | cue 55° not published, gimbal 55° | shape CN, cap 30 g | arm 500 m | no |
-| `magic-1` | 89 kg, 2.75 m, 0.157 m, span 0.66 m | rear cone 70° half-angle, no IRCCM | gimbal 30°, track 180 | sized to 35 g | arm time 1.8 s, destruct 26 s, inferred arm 300 m | no (477–518) |
-| `magic-2` | same geometry | all-aspect, rise | gimbal 30° | sized to 50 g | inferred arm 150 m; 1.8 s and 26 s are not copied | no |
+| `magic-1` | 89 kg, 2.75 m, 0.157 m, span 0.66 m | rear cone 70° half-angle, no IRCCM | gimbal 30°, track 180 | shape CN, published cap 35 g | arm time 1.8 s, destruct 26 s, inferred arm 300 m | no |
+| `magic-2` | same geometry | all-aspect, rise | gimbal 30° | shape CN, published cap 50 g | inferred arm 150 m; 1.8 s and 26 s are not copied | no |
 | `iris-t` | 87.4 kg, 2.936 m, 0.127 m, span 0.447 m | all-aspect, imaging, lock after launch, rear hemisphere | gimbal 90°, track 180 | shape CN, published cap 60 g | inferred arm 150 m | jet vane (521–549) |
-| `asraam` | 88 kg, 2.90 m, 0.166 m, span 0.45 m | all-aspect, imaging, lock after launch, rear hemisphere | gimbal 90°, track 180 | sized to 50 g | inferred arm 300 m, reduced smoke | no (552–579) |
-| `mica-ir` | 112 kg, 3.10 m, 0.160 m, span 0.480 m | all-aspect, imaging, lock after launch, rear hemisphere | gimbal 60° unpublished, track 180 | sized to 50 g | arm 500 m published, reduced smoke | jet vane (582–610) |
-| `shafrir-2` | 94 kg, 2.60 m, 0.160 m, span 0.55 m | rear hemisphere | gimbal 10° | shape CN, cap 30 g | inferred arm 600 m | no (613–632) |
-| `python-3` | 120 kg, 2.95 m, 0.160 m, span 0.86 m | all-aspect, lock before launch | cue 30°, gimbal 40° | sized to 40 g | inferred arm 500 m | no (635–657) |
-| `python-4` | 105 kg, 3.10 m, 0.160 m, span 0.64 m | all-aspect, kinematic | gimbal 60° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (660–683) |
-| `python-5` | same geometry | imaging, lock after launch, rear hemisphere | gimbal 90° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (686–712) |
-| `pl-5eii` | 83 kg, 2.893 m, 0.127 m, span 0.617 m | all-aspect, kinematic | gimbal 40° unpublished | sized to 35 g | tail gate 16000 m, inferred arm 150 m | no (715–739) |
-| `pl-8` | 115 kg, 2.90 m, diameter 0.160 m flagged assumed | rear hemisphere | gimbal 40° unpublished | sized to 38 g | inferred arm 150 m | no (742–761) |
-| `pl-9c` | 115 kg, 2.992 m, 0.157 m, span 0.856 m | all-aspect, kinematic | cue 40°, gimbal 40° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (764–788) |
-| `pl-10` | 105 kg, 3.00 m, 0.160 m | all-aspect, imaging, lock after launch, not full sphere | gimbal 90° unpublished | shape CN, published cap 60 g | inferred arm 150 m | jet vane (791–816) |
-| `aam-3` | 91 kg, 3.10 m, 0.127 m, span 0.64 m | all-aspect, kinematic | gimbal 40° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (819–842) |
-| `aam-5` | 95 kg, 3.105 m, 0.130 m, span 0.412 m | all-aspect, imaging, lock after launch | gimbal 60° unpublished | shape CN, cap 30 g | inferred arm 150 m | jet vane (845–869) |
-| `a-darter` | 93 kg, 2.98 m, 0.166 m, span 0.488 m | all-aspect, imaging, lock after launch, not full sphere | gimbal 90°, track 120°/s | aero CN sized to 50 g; burn cap 100 g; coast cap 50 g (`aeroStructuralG`, `coastStructuralG`) | inferred arm 150 m, reduced smoke | jet vane (872–903) |
+| `asraam` | 88 kg, 2.90 m, 0.166 m, span 0.45 m | all-aspect, imaging, lock after launch, rear hemisphere | gimbal 90°, track 180 | shape CN, published cap 50 g | inferred arm 300 m, reduced smoke | no (552–586) |
+| `mica-ir` | 112 kg, 3.10 m, 0.160 m, span 0.480 m | all-aspect, imaging, lock after launch, rear hemisphere | gimbal 60° unpublished, track 180 | shape CN, published cap 50 g | arm 500 m published, reduced smoke | jet vane |
+| `shafrir-2` | 94 kg, 2.60 m, 0.160 m, span 0.55 m | rear hemisphere | gimbal 10° | shape CN, cap 30 g | inferred arm 600 m | no (619–638) |
+| `python-3` | 120 kg, 2.95 m, 0.160 m, span 0.86 m | all-aspect, lock before launch | cue 30°, gimbal 40° | shape CN, published cap 40 g | inferred arm 500 m | no |
+| `python-4` | 105 kg, 3.10 m, 0.160 m, span 0.64 m | all-aspect, kinematic | gimbal 60° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (666–689) |
+| `python-5` | same geometry | imaging, lock after launch, rear hemisphere | gimbal 90° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (692–718) |
+| `pl-5eii` | 83 kg, 2.893 m, 0.127 m, span 0.617 m | all-aspect, kinematic | gimbal 40° unpublished | shape CN, published cap 35 g | tail gate 16000 m, inferred arm 150 m | no |
+| `pl-8` | 115 kg, 2.90 m, diameter 0.160 m flagged assumed | rear hemisphere | gimbal 40° unpublished | shape CN, published cap 38 g | inferred arm 150 m | no |
+| `pl-9c` | 115 kg, 2.992 m, 0.157 m, span 0.856 m | all-aspect, kinematic | cue 40°, gimbal 40° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (770–794) |
+| `pl-10` | 105 kg, 3.00 m, 0.160 m | all-aspect, imaging, lock after launch, not full sphere | gimbal 90° unpublished | shape CN, published cap 60 g | inferred arm 150 m | jet vane (797–822) |
+| `aam-3` | 91 kg, 3.10 m, 0.127 m, span 0.64 m | all-aspect, kinematic | gimbal 40° unpublished | shape CN, cap 30 g | inferred arm 150 m | no (825–848) |
+| `aam-5` | 95 kg, 3.105 m, 0.130 m, span 0.412 m | all-aspect, imaging, lock after launch | gimbal 60° unpublished | shape CN, cap 30 g | inferred arm 150 m | jet vane (851–875) |
+| `a-darter` | 93 kg, 2.98 m, 0.166 m, span 0.488 m | all-aspect, imaging, lock after launch, not full sphere | gimbal 90°, track 120°/s | shape CN; burn cap 100 g; coast cap 50 g | inferred arm 150 m, reduced smoke | jet vane |
 
-`cnMaxForStructuralG` (`Fox2Flight.h` 341–348) is `structuralG * mass * 9.80665 / (1.02e5 * bodyArea)`. `resolve` uses `aeroStructuralG` when it is positive, otherwise `structuralG` (`Fox2Catalog.cpp` 1005–1008). Shape-coefficient rounds (`shapeCoefficient`, lines 26–31) keep `resolvedCnMax = 5.49` even if a later line sets a published g cap. IRIS-T, PL-10, and the R-73 family do that: CN stays 5.49 and the g number is only the acceleration cap (`Fox2Catalog.cpp` 533–535, 404–406, 801–803, 1011–1022).
+`cnMaxForStructuralG` is the algebra `structuralG * mass * 9.80665 / (1.02e5 * bodyArea)`. `resolve` does not call it. A brochure g has no published flight condition, so every round without its own measured CN keeps `resolvedCnMax = 5.49`, and the g number is only the acceleration cap.
 
 Flare body, not signature: mass 0.9 kg, `Cd` 1.1, area 0.018 m², life 4 s, eject 45 m/s, aft offset 1.2 m, lateral offset 0.8 m, lateral fraction 0.18, downward fraction 0.12, inventory 24, burst 2, interval 0.12 s, cooldown 0.9 s (`Target.h` 22–39; JSON 97–113). No Mach curve: `getAeroProfile` stays null, so drag is constant `Cd` (`Drag.cpp` 71–75; `PhysicsObject.h` 53–56).
 
