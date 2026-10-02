@@ -21,6 +21,18 @@ namespace missilesim::flight
         float angleOff = 0.0f; // rad between nose and aim
     };
 
+    // What the instructor needs from whichever airframe is flying. The caller
+    // fills rollRateLimit. The F-16 schedule is not applied to another jet.
+    struct AirframeView
+    {
+        glm::vec3 forward{0.0f, 0.0f, 1.0f};
+        glm::vec3 right{1.0f, 0.0f, 0.0f};
+        glm::vec3 up{0.0f, 1.0f, 0.0f};
+        glm::vec3 bodyRates{0.0f};
+        AirframeTelemetry telemetry;
+        float rollRateLimit = 0.0f; // rad/s
+    };
+
     // Mouse-aim "instructor" in the manner War Thunder documents it: the
     // player only says where the nose should go; the instructor flies the
     // aircraft there through the normal controls. It rolls the lift vector
@@ -36,7 +48,7 @@ namespace missilesim::flight
         // is in simulation seconds; zero clears motion and rebases the aim.
         void observeAim(const glm::vec3 &aimDirection, float sampleDeltaTime);
 
-        PilotCommand update(const F16Airframe &airframe, const InstructorInput &input, float gravity, float deltaTime);
+        PilotCommand update(const AirframeView &airframe, const InstructorInput &input, float gravity, float deltaTime);
 
         const InstructorStatus &status() const { return m_status; }
 

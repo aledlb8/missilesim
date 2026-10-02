@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <utility>
 
 using namespace missilesim::flight;
 
@@ -266,6 +267,74 @@ int main(int argc, char **argv)
                     glm::degrees(kGravity * std::sqrt(std::max(0.0f, turn.airframe().telemetry().normalLoad * turn.airframe().telemetry().normalLoad - 1.0f)) /
                                  std::max(glm::length(v), 1.0f)));
         report("sustained turn AB 3km", turn, s);
+    }
+
+    // High-speed turn: heading change, load, and alpha at the HUD's 400 m/s case.
+    if (matches(filter, "diag"))
+    {
+        const auto headingOf = [](const Jet &jet) {
+            const glm::vec3 v = jet.airframe().velocity();
+            return std::atan2(v.x, v.z);
+        };
+        const auto bankDeg = [](const Jet &jet) {
+            const auto &air = jet.airframe();
+            return glm::degrees(std::atan2(air.right().y, air.up().y));
+        };
+        const struct
+        {
+            const char *name;
+            float altitude;
+            float speed;
+        } points[] = {
+            {"250m/s 3km", 3000.0f, 250.0f},
+            {"400m/s SL", 300.0f, 400.0f},
+            {"400m/s 3km", 3000.0f, 400.0f},
+            {"400m/s 8km", 8000.0f, 400.0f},
+            {"500m/s SL", 300.0f, 500.0f},
+        };
+        const auto run = [&](Jet &jet, float seconds, const std::function<void(float, JetControls &)> &setup) {
+            float maxNz = -100.0f;
+            float maxAlpha = -100.0f;
+            for (float t = 0.0f; t < seconds; t += kFrame)
+            {
+                JetControls controls = jet.controls();
+                setup(t, controls);
+                jet.setControls(controls, kFrame);
+                jet.step(kFrame, airAt(jet.airframe().position().y), kGravity);
+                const AirframeTelemetry &tm = jet.airframe().telemetry();
+                maxNz = std::max(maxNz, tm.normalLoad);
+                maxAlpha = std::max(maxAlpha, glm::degrees(tm.alpha));
+            }
+            return std::pair<float, float>{maxNz, maxAlpha};
+        };
+        for (const auto &point : points)
+        {
+            Jet aimed = makeJet(point.altitude, point.speed);
+            const float aimStart = headingOf(aimed);
+            const auto aimPeak = run(aimed, 8.0f, [&](float, JetControls &controls) {
+                controls.instructor.aimDirection = direction(90.0f, 0.0f);
+                controls.afterburner = true;
+            });
+            const AirframeTelemetry &aimTm = aimed.airframe().telemetry();
+            std::printf("diag aim90 %-12s  dHdg %6.1f  Nz %5.2f/%5.2f  a %5.1f  bank %6.1f  V %5.0f  M %4.2f  lim %d/%d\n",
+                        point.name, glm::degrees(headingOf(aimed) - aimStart), aimTm.normalLoad, aimPeak.first,
+                        aimPeak.second, bankDeg(aimed), aimTm.airspeed, aimTm.mach,
+                        aimed.flightControl().status().loadLimited ? 1 : 0,
+                        aimed.flightControl().status().alphaLimited ? 1 : 0);
+
+            Jet banked = makeJet(point.altitude, point.speed);
+            const float bankStart = headingOf(banked);
+            const auto bankPeak = run(banked, 6.0f, [&](float t, JetControls &controls) {
+                controls.instructor.aimDirection = banked.airframe().forward();
+                controls.instructor.rollKey = t < 0.45f ? 1.0f : 0.0f;
+                controls.instructor.pitchKey = t >= 0.45f ? 1.0f : 0.0f;
+                controls.afterburner = true;
+            });
+            const AirframeTelemetry &bankTm = banked.airframe().telemetry();
+            std::printf("diag bank+pull %-12s  dHdg %6.1f  Nz %5.2f/%5.2f  a %5.1f  bank %6.1f  V %5.0f  M %4.2f\n",
+                        point.name, glm::degrees(headingOf(banked) - bankStart), bankTm.normalLoad, bankPeak.first,
+                        bankPeak.second, bankDeg(banked), bankTm.airspeed, bankTm.mach);
+        }
     }
     return 0;
 }
