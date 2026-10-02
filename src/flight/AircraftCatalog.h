@@ -40,6 +40,13 @@ namespace missilesim::flight
         float massKg = 0.0f;
         const char *massText = "Not published";
 
+        // The mass the point-mass model flies, built the way the F-16's
+        // combat mass is: empty + half the internal fuel + two short-range
+        // missiles + the pilot. A published brochure mass (above) is often a
+        // maximum or an empty weight and is not flown. 0 falls back to massKg.
+        float flyingMassKg = 0.0f;
+        const char *flyingMassText = "";
+
         bool militaryPublished = false;
         float militaryThrustN = 0.0f;
         const char *militaryText = "Not published";

@@ -215,6 +215,11 @@ namespace
             formatMeasure(line, sizeof(line), "%.0f kg stand-in", missilesim::flight::kStandInMassKg);
             fox2Readout("Mass", line, false);
         }
+        if (card.flyingMassKg > 0.0f)
+        {
+            // What the flight model flies: empty + half fuel + 2 missiles + pilot.
+            fox2Readout("Flying mass", card.flyingMassText, card.status != missilesim::flight::CardStatus::Insufficient);
+        }
         const bool thrustStandIn = !card.tableModel && card.maxThrustN <= 0.0f && card.militaryThrustN <= 0.0f;
         if (thrustStandIn)
         {

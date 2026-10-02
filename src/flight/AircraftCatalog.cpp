@@ -11,6 +11,16 @@ namespace
     constexpr float kLbf = kPound * kGravity;
     constexpr float kKnot = 1852.0f / 3600.0f;
     constexpr float kFoot2 = 0.09290304f;
+    // TS-1 / Jet A class kerosene, for a fuel load printed only in litres.
+    constexpr float kKeroseneKgPerLitre = 0.78f;
+
+    // The F-16's combat-mass definition (src/flight/Jet.h), applied to every
+    // card: empty + half the internal fuel + two 186 lb short-range
+    // missiles + a 200 lb pilot.
+    constexpr float combatMass(float emptyKg, float internalFuelKg)
+    {
+        return emptyKg + 0.5f * internalFuelKg + 2.0f * 186.0f * kPound + 200.0f * kPound;
+    }
 
     AircraftCard f16()
     {
@@ -54,6 +64,8 @@ namespace
         card.massPublished = true;
         card.massKg = 31700.0f * kPound;
         card.massText = "31,700 lb";
+        card.flyingMassKg = combatMass(29000.0f * kPound, 13455.0f * kPound);
+        card.flyingMassText = "16.5 t: 29,000 lb empty + half of 13,455 lb internal fuel (Wikipedia F-15C), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 6070.0f * kGravity;
         card.militaryText = "6,070 kgf each, War Thunder";
@@ -63,8 +75,10 @@ namespace
         card.areaPublished = true;
         card.wingAreaM2 = 19690.0f / 349.0f;
         card.areaText = "56.42 m2, War Thunder";
+        // +9: the public F-15C figure (its overload warning lets the pilot fly
+        // to 9 g at all weights). War Thunder's +12 is not flown over it.
         card.positiveGPublished = true;
-        card.positiveG = 12.0f;
+        card.positiveG = 9.0f;
         card.negativeGPublished = true;
         card.negativeG = -4.0f;
         card.speedPublished = true;
@@ -72,7 +86,7 @@ namespace
         card.seaLevelSpeedMps = 1629.0f / 3.6f;
         card.speedText = "1,629 km/h IAS limit, War Thunder";
         card.note = "USAF fact-sheet weight 31,700 lb. Museum F100-PW-220, 23,770 lb with afterburner, each engine. "
-                    "War Thunder F-15C MSIP II, same F100-PW-220: stationary military 6,070 kgf each, wing 56.42 m2 from 349 kg/m2 at full internal fuel, load about -4 / +12, indicated-airspeed limit 1,629 km/h. "
+                    "War Thunder F-15C MSIP II, same F100-PW-220: stationary military 6,070 kgf each, wing 56.42 m2 from 349 kg/m2 at full internal fuel, load about -4 / +12 (+9 is flown, the public figure), indicated-airspeed limit 1,629 km/h. "
                     "The stat card's 2,506 km/h is at 10,668 m and is not the sea-level drag speed.";
         return card;
     }
@@ -88,6 +102,8 @@ namespace
         card.massPublished = true;
         card.massKg = 66000.0f * kPound;
         card.massText = "66,000 lb maximum takeoff";
+        card.flyingMassKg = combatMass(30564.0f * kPound, 14460.0f * kPound);
+        card.flyingMassText = "17.4 t: 30,564 lb empty (NAN) + half of 14,460 lb internal fuel (NTSP), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 6030.0f * kGravity;
         card.militaryText = "6,030 kgf each, War Thunder";
@@ -97,8 +113,10 @@ namespace
         card.areaPublished = true;
         card.wingAreaM2 = 500.0f * kFoot2;
         card.areaText = "500 ft2 approximate";
+        // +7.5: the public F/A-18E design load factor (FY2012 SAR, via
+        // Wikipedia). War Thunder's +11 is not flown over it.
         card.positiveGPublished = true;
-        card.positiveG = 11.0f;
+        card.positiveG = 7.5f;
         card.negativeGPublished = true;
         card.negativeG = -5.0f;
         card.speedPublished = true;
@@ -108,7 +126,7 @@ namespace
         card.note = "Maximum takeoff 66,000 lb, not a combat weight. NAVAIR 22,000 lb static per engine. "
                     "Afterburner is not stated on that row, so it stays the ceiling. Wing area is the Naval Aviation News 500 ft2, approximate. "
                     "War Thunder's F/A-18E, fully modified, military 6,030 kgf each. Its afterburner figure is lower than the NAVAIR row, so it is not used. "
-                    "Load is about -5 / +11 and the indicated-airspeed limit is 1,497 km/h. Its wing loading matches this area.";
+                    "Load is about -5 / +11 there; +7.5, the public design load factor, is flown. The indicated-airspeed limit is 1,497 km/h. Its wing loading matches this area.";
         return card;
     }
 
@@ -123,6 +141,8 @@ namespace
         card.massPublished = true;
         card.massKg = 83500.0f * kPound;
         card.massText = "83,500 lb maximum takeoff";
+        card.flyingMassKg = combatMass(43340.0f * kPound, 18000.0f * kPound);
+        card.flyingMassText = "24.0 t: 43,340 lb empty (Lockheed) + half of 18,000 lb internal fuel (USAF), 2 missiles, pilot";
         card.maxThrustN = 2.0f * 35000.0f * kLbf;
         card.maxText = "35,000 lb class each";
         card.areaPublished = true;
@@ -144,6 +164,8 @@ namespace
         card.massPublished = true;
         card.massKg = 29300.0f * kPound;
         card.massText = "29,300 lb empty";
+        card.flyingMassKg = combatMass(29300.0f * kPound, 18250.0f * kPound);
+        card.flyingMassText = "17.7 t: 29,300 lb empty + half of 18,250 lb internal fuel (Lockheed), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 25000.0f * kLbf;
         card.militaryText = "25,000 lbf";
@@ -171,6 +193,8 @@ namespace
         card.massPublished = true;
         card.massKg = 16500.0f;
         card.massText = "16,500 kg maximum takeoff";
+        card.flyingMassKg = combatMass(8000.0f, 3400.0f);
+        card.flyingMassText = "10.0 t: 8,000 kg empty + half of 3,400 kg internal fuel (Saab), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 6060.0f * kGravity;
         card.militaryText = "6,060 kgf, War Thunder";
@@ -204,6 +228,8 @@ namespace
         card.massPublished = true;
         card.massKg = 11340.0f + 4650.0f;
         card.massText = "15,990 kg War Thunder, with fuel";
+        card.flyingMassKg = combatMass(11000.0f, 4650.0f);
+        card.flyingMassText = "13.6 t: 11,000 kg basic mass empty (Eurofighter) + half of 4,650 kg fuel (War Thunder), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 60000.0f;
         card.militaryText = "60 kN each";
@@ -237,6 +263,8 @@ namespace
         card.massPublished = true;
         card.massKg = 24500.0f;
         card.massText = "24.5 t maximum";
+        card.flyingMassKg = combatMass(10000.0f, 4700.0f);
+        card.flyingMassText = "12.6 t: 10 t empty (Dassault, C row) + half of 4.7 t internal fuel, 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 4900.0f * kGravity;
         card.militaryText = "4,900 kgf each, War Thunder";
@@ -271,6 +299,8 @@ namespace
         card.massPublished = true;
         card.massKg = 15600.0f;
         card.massText = "15,600 kg normal takeoff";
+        card.flyingMassKg = combatMass(11200.0f, 4540.0f * kKeroseneKgPerLitre);
+        card.flyingMassText = "13.2 t: 11,200 kg empty + half of 4,540 L internal fuel at 0.78 kg/L (museum 9-13 card), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 5040.0f * kGravity;
         card.militaryText = "5,040 kgf each";
@@ -304,6 +334,8 @@ namespace
         card.massPublished = true;
         card.massKg = 23430.0f;
         card.massText = "23,430 kg normal takeoff";
+        card.flyingMassKg = combatMass(16300.0f, 9400.0f);
+        card.flyingMassText = "21.3 t: 16,300 kg empty (Su-27P(S)) + half of 9,400 kg internal fuel (Sukhoi), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 7670.0f * kGravity;
         card.militaryText = "7,670 kgf each";
@@ -338,6 +370,8 @@ namespace
         card.massPublished = true;
         card.massKg = 25300.0f;
         card.massText = "25,300 kg normal takeoff";
+        card.flyingMassKg = combatMass(19000.0f, 11500.0f);
+        card.flyingMassText = "25.0 t: 19,000 kg empty (Butowski) + half of 11,500 kg internal fuel (KnAAPO), 2 missiles, pilot";
         card.militaryPublished = true;
         card.militaryThrustN = 2.0f * 8800.0f * kGravity;
         card.militaryText = "8,800 kgf each";
@@ -367,6 +401,8 @@ namespace
         card.massPublished = true;
         card.massKg = 26700.0f;
         card.massText = "26,700 kg normal takeoff";
+        card.flyingMassKg = combatMass(18500.0f, 9700.0f);
+        card.flyingMassText = "23.6 t: 18,500 kg empty + half of 9,700 kg internal fuel (open press, Su-57E), 2 missiles, pilot";
         card.speedPublished = true;
         card.speedEquality = true;
         card.seaLevelSpeedMps = 1350.0f / 3.6f;
@@ -384,6 +420,10 @@ namespace
         card.family = "China";
         card.status = CardStatus::Insufficient;
         card.flyable = true;
+        // Not an official figure: the one printed mass with a combat
+        // condition, Tsinghua's air-combat weight. War Thunder has no J-20A.
+        card.flyingMassKg = 25000.0f;
+        card.flyingMassText = "25 t air-combat weight (Tsinghua, secondary)";
         card.note = "No published mass, thrust, area, load, or speed. A labeled stand-in flies so the choice is not the F-16. "
                     "None of those stand-in numbers is a J-20 figure. War Thunder has no J-20A.";
         return card;
