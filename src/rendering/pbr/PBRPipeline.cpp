@@ -218,6 +218,7 @@ void PBRPipeline::resize(int width, int height)
 
 void PBRPipeline::setSkybox(const std::string &skyboxName, int resolution)
 {
+    m_proceduralSky = false;
     m_skybox.setup(skyboxName, true, static_cast<unsigned int>(resolution), m_assetDir);
 
     // Set up capture FBO for IBL
@@ -225,8 +226,41 @@ void PBRPipeline::setSkybox(const std::string &skyboxName, int resolution)
     m_captureFBO.bind();
 
     // Convert equirectangular → cubemap
+    m_fillCubeMapShader.use();
+    m_fillCubeMapShader.setBool("proceduralSky", false);
     m_skybox.fillCubeMapWithTexture(m_fillCubeMapShader);
 
+    rebuildLighting();
+    std::cout << "PBR: Skybox '" << skyboxName << "' loaded with IBL maps." << std::endl;
+}
+
+void PBRPipeline::setProceduralSky(int resolution)
+{
+    m_proceduralSky = true;
+    m_skyResolution = resolution;
+    m_skybox.setupProcedural(static_cast<unsigned int>(resolution));
+    m_captureFBO.setupFrameBuffer(resolution, resolution);
+    refreshSky();
+    std::cout << "PBR: Procedural sky with IBL maps." << std::endl;
+}
+
+void PBRPipeline::refreshSky()
+{
+    if (!m_proceduralSky)
+    {
+        return;
+    }
+    m_captureFBO.resizeFrameBuffer(m_skyResolution, m_skyResolution);
+    m_captureFBO.bind();
+    m_fillCubeMapShader.use();
+    m_fillCubeMapShader.setBool("proceduralSky", true);
+    bindSkyUniforms(m_fillCubeMapShader);
+    m_skybox.fillCubeMapWithTexture(m_fillCubeMapShader);
+    rebuildLighting();
+}
+
+void PBRPipeline::rebuildLighting()
+{
     // Generate irradiance map (diffuse IBL)
     unsigned int irradianceRes = 32;
     m_irradianceMap.generateCubeMap(irradianceRes, irradianceRes, CubeMapType::HDR);
@@ -242,34 +276,33 @@ void PBRPipeline::setSkybox(const std::string &skyboxName, int resolution)
                                        m_captureFBO.rbo(),
                                        m_preFilterShader);
 
-    // Generate BRDF LUT
-    unsigned int brdfRes = 512;
-    if (m_brdfLUTTexture != 0)
-        glDeleteTextures(1, &m_brdfLUTTexture);
+    // The BRDF LUT does not depend on the sky: build it once.
+    if (m_brdfLUTTexture == 0)
+    {
+        unsigned int brdfRes = 512;
+        glGenTextures(1, &m_brdfLUTTexture);
+        glBindTexture(GL_TEXTURE_2D, m_brdfLUTTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, brdfRes, brdfRes, 0, GL_RG, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    glGenTextures(1, &m_brdfLUTTexture);
-    glBindTexture(GL_TEXTURE_2D, m_brdfLUTTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, brdfRes, brdfRes, 0, GL_RG, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    m_captureFBO.resizeFrameBuffer(brdfRes, brdfRes);
-    m_captureFBO.bind();
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           m_brdfLUTTexture, 0);
-    glViewport(0, 0, brdfRes, brdfRes);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    m_brdfIntegralShader.use();
-    m_canvas.draw();
+        m_captureFBO.resizeFrameBuffer(brdfRes, brdfRes);
+        m_captureFBO.bind();
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                               m_brdfLUTTexture, 0);
+        glViewport(0, 0, brdfRes, brdfRes);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        m_brdfIntegralShader.use();
+        m_canvas.draw();
+    }
 
     // Restore viewport
     glViewport(0, 0, m_width, m_height);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     m_skyboxReady = true;
-    std::cout << "PBR: Skybox '" << skyboxName << "' loaded with IBL maps." << std::endl;
 }
 
 void PBRPipeline::setDirectionalLight(const DirectionalLight &light)
@@ -310,9 +343,10 @@ void PBRPipeline::submitLegacyMesh(GLuint vao, GLsizei indexCount,
                                     const glm::mat4 &modelMatrix,
                                     const glm::vec3 &albedo,
                                     float metallic, float roughness,
-                                    bool useVertexColor, bool useVertexMaterial)
+                                    bool useVertexColor, bool useVertexMaterial,
+                                    Surface surface)
 {
-    m_legacyDrawCalls.push_back({vao, indexCount, modelMatrix, albedo, metallic, roughness, useVertexColor, useVertexMaterial});
+    m_legacyDrawCalls.push_back({vao, indexCount, modelMatrix, albedo, metallic, roughness, useVertexColor, useVertexMaterial, surface});
 }
 
 // ===========================================================================
@@ -331,6 +365,10 @@ void PBRPipeline::executeRenderPass()
 
     if (m_skyboxReady)
         renderSkybox();
+
+    // Water goes over the finished opaque scene so its shallows can blend
+    // with the bed beneath.
+    waterPass();
 
     // MSAA resolve: blit multisampled → resolve FBO
     m_multisampledFBO.blitTo(m_resolveFBO,
@@ -367,7 +405,7 @@ void PBRPipeline::shadowPass()
         // instead of a fixed box pinned to the world origin. Snap the centre to
         // shadow-texel steps to stop the shadow edges crawling as we move.
         const float texelWorld = (2.0f * boxSize) / static_cast<float>(m_dirLight.shadowRes);
-        glm::vec3 focus(m_cameraPos.x, 0.0f, m_cameraPos.z);
+        glm::vec3 focus(m_cameraPos.x, std::max(m_cameraPos.y - 200.0f, 0.0f), m_cameraPos.z);
         focus.x = std::floor(focus.x / texelWorld) * texelWorld;
         focus.z = std::floor(focus.z / texelWorld) * texelWorld;
 
@@ -403,6 +441,10 @@ void PBRPipeline::shadowPass()
         }
         for (auto &dc : m_legacyDrawCalls)
         {
+            if (dc.surface == Surface::Water)
+            {
+                continue;
+            }
             m_dirShadowShader.setMat4("lightSpaceMatrix", VP * dc.modelMatrix);
             glBindVertexArray(dc.vao);
             glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
@@ -437,6 +479,10 @@ void PBRPipeline::depthPrePass()
 
     for (auto &dc : m_legacyDrawCalls)
     {
+        if (dc.surface == Surface::Water)
+        {
+            continue;
+        }
         glm::mat4 MVP = VP * dc.modelMatrix;
         m_depthPassShader.setMat4("MVP", MVP);
         m_depthPassShader.setBool("alphaTest", false);
@@ -539,21 +585,16 @@ void PBRPipeline::mainShadingPass()
     {
         m_pbrSimpleShader.use();
         bindPBRUniforms(m_pbrSimpleShader);
+        bindSkyUniforms(m_pbrSimpleShader);
+        bindTerrainUniforms(m_pbrSimpleShader);
         m_pbrSimpleShader.setBool("IBL", m_skyboxReady);
 
         for (auto &dc : m_legacyDrawCalls)
         {
-            glm::mat4 MVP = VP * dc.modelMatrix;
-            m_pbrSimpleShader.setMat4("MVP", MVP);
-            m_pbrSimpleShader.setMat4("M", dc.modelMatrix);
-            m_pbrSimpleShader.setVec3("u_albedo", dc.albedo);
-            m_pbrSimpleShader.setFloat("u_metallic", dc.metallic);
-            m_pbrSimpleShader.setFloat("u_roughness", dc.roughness);
-            m_pbrSimpleShader.setBool("u_useVertexColor", dc.useVertexColor);
-            m_pbrSimpleShader.setBool("u_useVertexMaterial", dc.useVertexMaterial);
-
-            glBindVertexArray(dc.vao);
-            glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
+            if (dc.surface != Surface::Water)
+            {
+                drawLegacy(dc, VP);
+            }
         }
     }
 
@@ -574,10 +615,90 @@ void PBRPipeline::renderSkybox()
     glm::mat4 VPCubeMap = m_projectionMatrix * viewNoTranslation;
 
     m_skyboxShader.use();
-    m_skyboxShader.setVec3("sunDirection", glm::normalize(m_dirLight.direction));
-    m_skyboxShader.setVec3("sunColor", m_dirLight.strength * m_dirLight.color);
+    bindSkyUniforms(m_skyboxShader);
 
     m_skybox.draw(m_skyboxShader, VPCubeMap);
+}
+
+void PBRPipeline::drawLegacy(const LegacyDrawCall &dc, const glm::mat4 &VP)
+{
+    glm::mat4 MVP = VP * dc.modelMatrix;
+    m_pbrSimpleShader.setMat4("MVP", MVP);
+    m_pbrSimpleShader.setMat4("M", dc.modelMatrix);
+    m_pbrSimpleShader.setVec3("u_albedo", dc.albedo);
+    m_pbrSimpleShader.setFloat("u_metallic", dc.metallic);
+    m_pbrSimpleShader.setFloat("u_roughness", dc.roughness);
+    m_pbrSimpleShader.setBool("u_useVertexColor", dc.useVertexColor);
+    m_pbrSimpleShader.setBool("u_useVertexMaterial", dc.useVertexMaterial);
+    m_pbrSimpleShader.setInt("u_surface", static_cast<int>(dc.surface));
+
+    glBindVertexArray(dc.vao);
+    glDrawElements(GL_TRIANGLES, dc.indexCount, GL_UNSIGNED_INT, nullptr);
+}
+
+void PBRPipeline::waterPass()
+{
+    const bool anyWater = std::any_of(m_legacyDrawCalls.begin(), m_legacyDrawCalls.end(),
+                                      [](const LegacyDrawCall &dc) { return dc.surface == Surface::Water; });
+    if (!anyWater)
+    {
+        return;
+    }
+
+    glm::mat4 VP = m_projectionMatrix * m_viewMatrix;
+    m_pbrSimpleShader.use();
+    bindPBRUniforms(m_pbrSimpleShader);
+    bindSkyUniforms(m_pbrSimpleShader);
+    bindTerrainUniforms(m_pbrSimpleShader);
+    m_pbrSimpleShader.setBool("IBL", m_skyboxReady);
+
+    // Blend over the bed; write depth so effects drawn later sit on the
+    // surface. A small offset toward the camera keeps the water ahead of a
+    // bed that lies just beneath it at long range; the shader discards
+    // where the land is above the water, so the offset never floods a shore.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -4.0f);
+
+    for (const auto &dc : m_legacyDrawCalls)
+    {
+        if (dc.surface == Surface::Water)
+        {
+            drawLegacy(dc, VP);
+        }
+    }
+
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glDisable(GL_BLEND);
+    glDepthFunc(GL_LESS);
+    glBindVertexArray(0);
+}
+
+void PBRPipeline::bindSkyUniforms(Shader &shader)
+{
+    shader.setVec3("skySunDirection", glm::normalize(m_dirLight.direction));
+    shader.setVec3("skySunColor", m_dirLight.strength * m_dirLight.color);
+    shader.setVec3("skyHorizonColor", m_fogColor);
+    shader.setFloat("skyTime", m_time);
+}
+
+void PBRPipeline::bindTerrainUniforms(Shader &shader)
+{
+    constexpr unsigned int heightmapUnit = 9; // after the shadow (5) and IBL (6-8) units
+    glActiveTexture(GL_TEXTURE0 + heightmapUnit);
+    glBindTexture(GL_TEXTURE_2D, m_terrainSurface.heightmap);
+    shader.setInt("u_heightmap", static_cast<int>(heightmapUnit));
+    shader.setBool("u_hasHeightmap", m_terrainSurface.heightmap != 0);
+    shader.setVec2("u_heightmapOrigin", m_terrainSurface.origin);
+    shader.setFloat("u_heightmapSize", m_terrainSurface.size);
+    shader.setFloat("u_outerBed", m_terrainSurface.outerBed);
+    shader.setBool("u_hasWater", m_terrainSurface.hasWater);
+    shader.setFloat("u_waterLevel", m_terrainSurface.waterLevel);
+    shader.setFloat("u_snowLine", m_terrainSurface.snowLine);
+    shader.setFloat("u_time", m_time);
 }
 
 // ===========================================================================

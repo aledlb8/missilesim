@@ -96,6 +96,24 @@ sim::CustomRoundSpec Application::customRoundSpec() const
 
 // ---- Engagement lifecycle ------------------------------------------------------
 
+void Application::selectTerrain(missilesim::sim::TerrainKind kind)
+{
+    m_terrainKind = kind;
+    if (!m_world || m_world->terrain().kind() == kind)
+    {
+        return;
+    }
+    missilesim::sim::TerrainConfig terrain = m_simulationConfig.terrain;
+    terrain.kind = kind;
+    m_world->setTerrain(terrain);
+    if (m_renderer)
+    {
+        m_renderer->setTerrain(m_world->sharedTerrain());
+    }
+    // Aircraft placed over the old ground would be inside the new one.
+    restartWorld();
+}
+
 void Application::restartWorld()
 {
     if (!m_world)

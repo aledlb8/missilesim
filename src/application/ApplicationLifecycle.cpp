@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -55,6 +56,7 @@ void Application::applySimulationConfigDefaults()
     m_groundRestitution = config.environment.groundRestitution;
     m_savedGravity = config.environment.gravity;
     m_savedAirDensity = config.environment.seaLevelAirDensity;
+    m_terrainKind = config.terrain.kind;
 
     m_showTrajectory = config.visualization.showTrajectory;
     m_showTargetInfo = config.visualization.showTargetInfo;
@@ -210,6 +212,13 @@ void Application::initialize()
         m_world->physics().setGroundRestitution(m_groundRestitution);
         m_world->physics().setGravity(m_savedGravity);
         m_world->physics().setAirDensity(m_savedAirDensity);
+        if (m_world->terrain().kind() != m_terrainKind)
+        {
+            missilesim::sim::TerrainConfig terrain = m_simulationConfig.terrain;
+            terrain.kind = m_terrainKind;
+            m_world->setTerrain(terrain);
+        }
+        m_renderer->setTerrain(m_world->sharedTerrain());
         m_renderer->setCameraFOV(m_savedCameraFOV);
         m_renderer->setCameraSpeed(m_savedCameraSpeed);
 
@@ -228,7 +237,6 @@ void Application::initialize()
             m_renderer->setCameraSpeed(m_savedCameraSpeed);
         }
 
-        updateEnvironmentScale();
         m_lastSettingsSnapshot = buildSettingsSnapshot();
         m_initialized = true;
     }
@@ -327,6 +335,11 @@ void Application::run()
         m_renderer->setViewportSize(width, height);
 
         auto lastTime = std::chrono::high_resolution_clock::now();
+        const char *frameStatsFlag = std::getenv("MISSILESIM_FRAME_STATS");
+        const bool frameStats = frameStatsFlag != nullptr && frameStatsFlag[0] != '\0' && frameStatsFlag[0] != '0';
+        float frameStatSeconds = 0.0f;
+        float frameStatWorst = 0.0f;
+        int frameStatCount = 0;
 
         // Main loop
         while (!glfwWindowShouldClose(m_window))
@@ -362,6 +375,24 @@ void Application::run()
                 }
 
                 m_lastFrameDeltaTime = deltaTime;
+
+                // MISSILESIM_FRAME_STATS=1 prints the frame-time spread every five
+                // seconds: a quick check for hitches without a profiler.
+                if (frameStats)
+                {
+                    frameStatSeconds += deltaTime;
+                    frameStatWorst = std::max(frameStatWorst, deltaTime);
+                    ++frameStatCount;
+                    if (frameStatSeconds >= 5.0f)
+                    {
+                        std::cout << "Frames: " << frameStatCount << " in " << frameStatSeconds << " s, mean "
+                                  << 1000.0f * frameStatSeconds / static_cast<float>(frameStatCount) << " ms, worst "
+                                  << 1000.0f * frameStatWorst << " ms" << std::endl;
+                        frameStatSeconds = 0.0f;
+                        frameStatWorst = 0.0f;
+                        frameStatCount = 0;
+                    }
+                }
 
                 // Process input
                 try
@@ -533,7 +564,6 @@ void Application::render()
         updateAudioFrame(m_lastFrameDeltaTime);
         m_renderer->beginSceneFrame(glm::vec3(0.58f, 0.69f, 0.82f));
         m_renderer->clearDebugPrimitives();
-        updateEnvironmentScale();
         m_renderer->renderEnvironment();
 
         // Loaded rounds on their rails or in the cell, then every shot in the

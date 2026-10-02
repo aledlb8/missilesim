@@ -717,6 +717,14 @@ void Application::setupUI()
         {
             physics()->setAirDensity(airDensity);
         }
+        int terrainIndex = m_terrainKind == missilesim::sim::TerrainKind::Flat ? 1 : 0;
+        const char *const terrainNames[] = {"MOUNTAINS", "FLAT"};
+        if (ui::segmentedRow("Terrain", &terrainIndex, terrainNames, 2,
+                             "Mountains: a valley ringed by peaks, a lake and the sea beyond. Land and water are "
+                             "solid to every aircraft and round. Changing it restarts the engagement."))
+        {
+            selectTerrain(terrainIndex == 1 ? missilesim::sim::TerrainKind::Flat : missilesim::sim::TerrainKind::Mountains);
+        }
         if (ui::toggleRow("Ground collision", &m_groundEnabled))
         {
             physics()->setGroundEnabled(m_groundEnabled);
@@ -734,11 +742,6 @@ void Application::setupUI()
         ui::toggleRow("Intercept point", &m_showInterceptPoint);
         ui::toggleRow("Target labels", &m_showTargetInfo);
         ui::toggleRow("Seeker x-ray", &m_seekerXrayEnabled, "Marks what the seeker is tracking, through terrain, once in flight.");
-        bool guides = m_renderer->getWorldGuidesEnabled();
-        if (ui::toggleRow("Airspace guides", &guides, "Range rings, the airspace boundary and corner beacons."))
-        {
-            m_renderer->setWorldGuidesEnabled(guides);
-        }
 
         ui::sectionLabel("CAMERA");
         float cameraSpeed = m_renderer->getCameraSpeed();

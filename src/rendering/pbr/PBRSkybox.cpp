@@ -106,6 +106,18 @@ void Skybox::setup(const std::string &skyboxName,
 // fillCubeMapWithTexture
 // ---------------------------------------------------------------------------
 
+void Skybox::setupProcedural(unsigned int resolution)
+{
+    m_resolution = resolution;
+    if (m_equirectangularMapID != 0)
+    {
+        glDeleteTextures(1, &m_equirectangularMapID);
+        m_equirectangularMapID = 0;
+    }
+    m_skyBoxCubeMap.generateCubeMap(resolution, resolution, CubeMapType::HDR);
+    m_cube.setup();
+}
+
 void Skybox::fillCubeMapWithTexture(Shader &transformShader)
 {
     m_skyBoxCubeMap.equiRectangularToCubeMap(m_equirectangularMapID,

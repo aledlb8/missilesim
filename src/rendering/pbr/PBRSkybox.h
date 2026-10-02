@@ -33,6 +33,10 @@ public:
                unsigned int resolution,
                const std::filesystem::path &assetDir);
 
+    /// Allocate the environment cubemap without an image; the procedural
+    /// sky is drawn into it with fillCubeMapWithTexture.
+    void setupProcedural(unsigned int resolution);
+
     /// Convert the loaded equirectangular texture into the cubemap.
     void fillCubeMapWithTexture(Shader &transformShader);
 

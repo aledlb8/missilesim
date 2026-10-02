@@ -1,9 +1,11 @@
 #include "Renderer.h"
 #include "SceneEffects.h"
+#include "pbr/PBRPipeline.h"
 
 #include "../objects/Missile.h"
 #include "../objects/PhysicsObject.h"
 #include "../objects/Target.h"
+#include "../sim/Terrain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -567,55 +569,242 @@ void Renderer::createFloor()
     m_floorVertices.clear();
     m_floorIndices.clear();
 
-    const float size = m_groundHalfExtent * 2.0f;
-    const int gridSize = std::clamp(static_cast<int>(size / 80.0f), 64, 128);
-    const float cellSize = size / gridSize;
     const glm::vec3 scrubColor(0.30f, 0.34f, 0.26f);
     const glm::vec3 dryGrassColor(0.42f, 0.39f, 0.26f);
     const glm::vec3 distantEarthColor(0.26f, 0.28f, 0.23f);
+    const glm::vec3 rockColor(0.40f, 0.38f, 0.34f);
+    const glm::vec3 crestColor(0.47f, 0.45f, 0.36f);
 
-    for (int z = 0; z <= gridSize; z++)
+    auto groundColor = [&](float xPos, float zPos, float fadeExtent)
     {
-        for (int x = 0; x <= gridSize; x++)
+        const float radialT = glm::clamp(glm::length(glm::vec2(xPos, zPos)) / fadeExtent, 0.0f, 1.0f);
+
+        const float broadNoise = 0.5f + 0.5f * std::sin(xPos * 0.0034f + std::cos(zPos * 0.0017f) * 1.4f);
+        const float grassNoise = 0.5f + 0.5f * std::sin(xPos * 0.019f) * std::cos(zPos * 0.014f);
+        glm::vec3 color = glm::mix(scrubColor, dryGrassColor, broadNoise * 0.65f + grassNoise * 0.25f);
+        color = glm::mix(color, distantEarthColor, radialT * 0.55f);
+
+        // Natural terrain mottling only - no runway/service-lane pavement,
+        // which formed a dark cross across the launch site.
+        const float mottling = 0.5f + 0.5f * std::sin((xPos - zPos) * 0.006f);
+        return glm::mix(color, glm::vec3(0.22f, 0.27f, 0.21f), mottling * 0.16f);
+    };
+
+    const missilesim::sim::Terrain *terrain = m_terrain.get();
+    const float baseHeight = terrain != nullptr ? terrain->baseHeight() : 0.0f;
+
+    if (terrain == nullptr || terrain->isFlat())
+    {
+        const float size = m_groundHalfExtent * 2.0f;
+        const int gridSize = std::clamp(static_cast<int>(size / 80.0f), 64, 128);
+        const float cellSize = size / gridSize;
+
+        for (int z = 0; z <= gridSize; z++)
         {
-            const float xPos = -size / 2.0f + x * cellSize;
-            const float zPos = -size / 2.0f + z * cellSize;
-            const float radialT = glm::clamp(glm::length(glm::vec2(xPos, zPos)) / (size * 0.5f), 0.0f, 1.0f);
+            for (int x = 0; x <= gridSize; x++)
+            {
+                const float xPos = -size / 2.0f + x * cellSize;
+                const float zPos = -size / 2.0f + z * cellSize;
+                m_floorVertices.push_back({{xPos, baseHeight, zPos},
+                                           {0.0f, 1.0f, 0.0f},
+                                           groundColor(xPos, zPos, size * 0.5f)});
+            }
+        }
 
-            const float broadNoise = 0.5f + 0.5f * std::sin(xPos * 0.0034f + std::cos(zPos * 0.0017f) * 1.4f);
-            const float grassNoise = 0.5f + 0.5f * std::sin(xPos * 0.019f) * std::cos(zPos * 0.014f);
-            glm::vec3 color = glm::mix(scrubColor, dryGrassColor, broadNoise * 0.65f + grassNoise * 0.25f);
-            color = glm::mix(color, distantEarthColor, radialT * 0.55f);
+        for (int z = 0; z < gridSize; z++)
+        {
+            for (int x = 0; x < gridSize; x++)
+            {
+                unsigned int topLeft = z * (gridSize + 1) + x;
+                unsigned int topRight = topLeft + 1;
+                unsigned int bottomLeft = (z + 1) * (gridSize + 1) + x;
+                unsigned int bottomRight = bottomLeft + 1;
 
-            // Natural terrain mottling only - no runway/service-lane pavement,
-            // which formed a dark cross across the launch site.
-            const float mottling = 0.5f + 0.5f * std::sin((xPos - zPos) * 0.006f);
-            color = glm::mix(color, glm::vec3(0.22f, 0.27f, 0.21f), mottling * 0.16f);
+                m_floorIndices.push_back(topLeft);
+                m_floorIndices.push_back(bottomLeft);
+                m_floorIndices.push_back(bottomRight);
 
-            m_floorVertices.push_back({{xPos, 0.0f, zPos},
-                                       {0.0f, 1.0f, 0.0f},
-                                       color});
+                m_floorIndices.push_back(topLeft);
+                m_floorIndices.push_back(bottomRight);
+                m_floorIndices.push_back(topRight);
+            }
+        }
+        return;
+    }
+
+    // Heightfield: one vertex per terrain sample, and the same diagonal split
+    // Terrain::heightAt interpolates on, so the drawn triangles are the
+    // collision triangles. Normals are smoothed for shading only.
+    const int cells = terrain->gridCells();
+    const float cell = terrain->cellSize();
+    const float origin = terrain->gridOrigin();
+    const float domainHalf = -origin;
+    const float fadeExtent = std::max(m_groundHalfExtent, domainHalf);
+    const float relief = std::max(terrain->maxHeight() - baseHeight, 1.0f);
+    auto sampleClamped = [&](int i, int j)
+    {
+        return terrain->sample(std::clamp(i, 0, cells), std::clamp(j, 0, cells));
+    };
+
+    for (int j = 0; j <= cells; ++j)
+    {
+        for (int i = 0; i <= cells; ++i)
+        {
+            const float xPos = origin + static_cast<float>(i) * cell;
+            const float zPos = origin + static_cast<float>(j) * cell;
+            const float height = terrain->sample(i, j);
+            const float slopeX = (sampleClamped(i + 1, j) - sampleClamped(i - 1, j)) / (2.0f * cell);
+            const float slopeZ = (sampleClamped(i, j + 1) - sampleClamped(i, j - 1)) / (2.0f * cell);
+            const glm::vec3 normal = glm::normalize(glm::vec3(-slopeX, 1.0f, -slopeZ));
+
+            glm::vec3 color = groundColor(xPos, zPos, fadeExtent);
+            const float steepness = glm::clamp((1.0f - normal.y) * 6.0f, 0.0f, 1.0f);
+            const float elevation = glm::clamp((height - baseHeight) / relief, 0.0f, 1.0f);
+            color = glm::mix(color, crestColor, elevation * elevation * 0.45f);
+            color = glm::mix(color, rockColor, steepness * 0.7f);
+            m_floorVertices.push_back({{xPos, height, zPos}, normal, color});
+        }
+    }
+    for (int j = 0; j < cells; ++j)
+    {
+        for (int i = 0; i < cells; ++i)
+        {
+            for (const auto &corner : missilesim::sim::Terrain::kCellTriangles)
+            {
+                m_floorIndices.push_back(static_cast<unsigned int>((j + corner[1]) * (cells + 1) + (i + corner[0])));
+            }
         }
     }
 
-    for (int z = 0; z < gridSize; z++)
+    // Past the grid of a terrain with water lies open sea: the water plane
+    // covers it. A dry terrain continues as a flat skirt at the base height
+    // out to the rendered ground extent, in four strips.
+    const float outer = m_groundHalfExtent;
+    if (terrain->hasWater() || outer <= domainHalf + 1.0f)
     {
-        for (int x = 0; x < gridSize; x++)
+        return;
+    }
+    auto addStrip = [&](float x0, float x1, float z0, float z1)
+    {
+        const int nx = std::max(1, static_cast<int>(std::ceil((x1 - x0) / 240.0f)));
+        const int nz = std::max(1, static_cast<int>(std::ceil((z1 - z0) / 240.0f)));
+        const unsigned int first = static_cast<unsigned int>(m_floorVertices.size());
+        for (int b = 0; b <= nz; ++b)
         {
-            unsigned int topLeft = z * (gridSize + 1) + x;
-            unsigned int topRight = topLeft + 1;
-            unsigned int bottomLeft = (z + 1) * (gridSize + 1) + x;
-            unsigned int bottomRight = bottomLeft + 1;
+            for (int a = 0; a <= nx; ++a)
+            {
+                const float xPos = x0 + (x1 - x0) * static_cast<float>(a) / static_cast<float>(nx);
+                const float zPos = z0 + (z1 - z0) * static_cast<float>(b) / static_cast<float>(nz);
+                m_floorVertices.push_back({{xPos, baseHeight, zPos}, {0.0f, 1.0f, 0.0f}, groundColor(xPos, zPos, fadeExtent)});
+            }
+        }
+        for (int b = 0; b < nz; ++b)
+        {
+            for (int a = 0; a < nx; ++a)
+            {
+                const unsigned int topLeft = first + static_cast<unsigned int>(b * (nx + 1) + a);
+                const unsigned int topRight = topLeft + 1;
+                const unsigned int bottomLeft = first + static_cast<unsigned int>((b + 1) * (nx + 1) + a);
+                const unsigned int bottomRight = bottomLeft + 1;
+                m_floorIndices.push_back(topLeft);
+                m_floorIndices.push_back(bottomLeft);
+                m_floorIndices.push_back(bottomRight);
+                m_floorIndices.push_back(topLeft);
+                m_floorIndices.push_back(bottomRight);
+                m_floorIndices.push_back(topRight);
+            }
+        }
+    };
+    addStrip(-outer, outer, -outer, -domainHalf);
+    addStrip(-outer, outer, domainHalf, outer);
+    addStrip(-outer, -domainHalf, -domainHalf, domainHalf);
+    addStrip(domainHalf, outer, -domainHalf, domainHalf);
+}
 
-            m_floorIndices.push_back(topLeft);
-            m_floorIndices.push_back(bottomLeft);
-            m_floorIndices.push_back(bottomRight);
-
-            m_floorIndices.push_back(topLeft);
-            m_floorIndices.push_back(bottomRight);
-            m_floorIndices.push_back(topRight);
+void Renderer::createWaterMesh()
+{
+    // A grid rather than one quad keeps the interpolated world position
+    // accurate for the wave and fog maths across tens of kilometres.
+    const int cells = 64;
+    const float half = m_sceneFarPlane;
+    const float cell = 2.0f * half / static_cast<float>(cells);
+    std::vector<Vertex> vertices;
+    std::vector<unsigned int> indices;
+    vertices.reserve(static_cast<std::size_t>(cells + 1) * (cells + 1));
+    for (int j = 0; j <= cells; ++j)
+    {
+        for (int i = 0; i <= cells; ++i)
+        {
+            vertices.push_back({{-half + static_cast<float>(i) * cell, 0.0f, -half + static_cast<float>(j) * cell},
+                                {0.0f, 1.0f, 0.0f},
+                                glm::vec3(1.0f)});
         }
     }
+    for (int j = 0; j < cells; ++j)
+    {
+        for (int i = 0; i < cells; ++i)
+        {
+            for (const auto &corner : missilesim::sim::Terrain::kCellTriangles)
+            {
+                indices.push_back(static_cast<unsigned int>((j + corner[1]) * (cells + 1) + (i + corner[0])));
+            }
+        }
+    }
+
+    glGenVertexArrays(1, &m_waterVAO);
+    glGenBuffers(1, &m_waterVBO);
+    glGenBuffers(1, &m_waterEBO);
+    glBindVertexArray(m_waterVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_waterVBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_waterEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, position));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, normal));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, color));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, metalRoughness));
+    glEnableVertexAttribArray(3);
+    glBindVertexArray(0);
+    m_waterIndexCount = static_cast<GLsizei>(indices.size());
+}
+
+void Renderer::uploadTerrainSurface()
+{
+    if (!isPBRActive())
+    {
+        return;
+    }
+    pbr::TerrainSurface surface;
+    const missilesim::sim::Terrain *terrain = m_terrain.get();
+    if (terrain != nullptr && terrain->gridCells() > 0)
+    {
+        const int samples = terrain->gridCells() + 1;
+        if (m_heightmapTexture == 0)
+        {
+            glGenTextures(1, &m_heightmapTexture);
+        }
+        glBindTexture(GL_TEXTURE_2D, m_heightmapTexture);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, samples, samples, 0, GL_RED, GL_FLOAT, terrain->samples().data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        surface.heightmap = m_heightmapTexture;
+        surface.origin = glm::vec2(terrain->gridOrigin());
+        surface.size = terrain->cellSize() * static_cast<float>(terrain->gridCells());
+    }
+    if (terrain != nullptr)
+    {
+        surface.outerBed = terrain->outerBedHeight();
+        surface.hasWater = terrain->hasWater();
+        surface.waterLevel = terrain->hasWater() ? terrain->waterLevel() : terrain->baseHeight();
+    }
+    m_pbrPipeline->setTerrainSurface(surface);
 }
 
 void Renderer::uploadFloorMesh()

@@ -170,11 +170,6 @@ bool Application::loadSettings()
     m_invertMouseY = readBool("invert_mouse_y", m_invertMouseY);
     m_cameraSmoothing = std::clamp(readFloat("camera_smoothing", m_cameraSmoothing), 3.0f, 40.0f);
 
-    if (m_renderer)
-    {
-        m_renderer->setWorldGuidesEnabled(
-            readBool("world_guides_enabled", m_renderer->getWorldGuidesEnabled()));
-    }
 
     // Graphics settings: apply straight to the live renderer (created before
     // loadSettings runs), using its current values as fallbacks.
@@ -223,6 +218,15 @@ bool Application::loadSettings()
     const std::string aircraftId = readString("aircraft_id", m_aircraftId);
     const missilesim::flight::AircraftCard *aircraft = missilesim::flight::findAircraft(aircraftId.c_str());
     m_aircraftId = aircraft != nullptr && aircraft->flyable ? aircraft->id : missilesim::flight::defaultAircraftId();
+    // The player chooses mountains or flat ground; the ridge is a test
+    // fixture, so a saved "ridge" falls back to the configured scenery.
+    const std::string terrainName = readString("terrain", missilesim::sim::terrainKindName(m_terrainKind));
+    missilesim::sim::TerrainKind savedTerrain = m_terrainKind;
+    if (missilesim::sim::parseTerrainKind(terrainName.c_str(), savedTerrain) &&
+        savedTerrain != missilesim::sim::TerrainKind::Ridge)
+    {
+        m_terrainKind = savedTerrain;
+    }
     const std::string playerRole = readString("player_role", "sam");
     if (playerRole == "fighter")
     {
@@ -298,8 +302,6 @@ std::string Application::buildSettingsSnapshot() const
     output << "target_max_speed=" << m_targetAIConfig.maxSpeed << "\n";
     output << "camera_fov=" << cameraFOV << "\n";
     output << "camera_speed=" << cameraSpeed << "\n";
-    output << "world_guides_enabled="
-           << formatBoolValue(m_renderer ? m_renderer->getWorldGuidesEnabled() : false) << "\n";
     output << "display_mode=" << displayModeName(m_displayMode) << "\n";
     output << "vsync=" << formatBoolValue(m_vsyncEnabled) << "\n";
     output << "ui_scale=" << m_uiScale << "\n";
@@ -308,6 +310,7 @@ std::string Application::buildSettingsSnapshot() const
     output << "player_role=" << (m_playerRole == PlayerRole::Fighter ? "fighter" : "sam") << "\n";
     output << "fox2_id=" << m_fox2Id << "\n";
     output << "aircraft_id=" << m_aircraftId << "\n";
+    output << "terrain=" << missilesim::sim::terrainKindName(m_terrainKind) << "\n";
 
     if (m_renderer && m_renderer->hasPBR())
     {

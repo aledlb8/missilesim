@@ -6,6 +6,7 @@
 #include "../objects/Missile.h"
 #include "../objects/PhysicsObject.h"
 #include "../objects/Target.h"
+#include "../sim/Terrain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -326,7 +327,7 @@ void Renderer::renderFloor()
     {
         m_pbrPipeline->submitLegacyMesh(
             m_floorVAO, static_cast<GLsizei>(m_floorIndices.size()), model,
-            glm::vec3(1.0f), 0.0f, 0.86f, true);
+            glm::vec3(1.0f), 0.0f, 0.86f, true, false, pbr::Surface::Terrain);
         return;
     }
 
@@ -352,94 +353,26 @@ void Renderer::renderFloor()
     glBindVertexArray(0);
 }
 
+void Renderer::renderWater()
+{
+    if (!isPBRActive() || !m_terrain || !m_terrain->hasWater() || m_waterVAO == 0)
+    {
+        return;
+    }
+    // The plane follows the camera in whole steps so it always reaches the
+    // horizon; the shader works in world space, so the waves never slide.
+    const float step = 1000.0f;
+    const glm::vec3 centre(std::floor(m_cameraPosition.x / step) * step, m_terrain->waterLevel(),
+                           std::floor(m_cameraPosition.z / step) * step);
+    const glm::mat4 model = glm::translate(glm::mat4(1.0f), centre);
+    m_pbrPipeline->submitLegacyMesh(m_waterVAO, m_waterIndexCount, model, glm::vec3(1.0f), 0.0f, 0.05f, false, false,
+                                    pbr::Surface::Water);
+}
+
 void Renderer::renderEnvironment()
 {
     renderFloor();
-    if (m_worldGuidesEnabled)
-    {
-        renderWorldGuides();
-    }
-}
-
-void Renderer::renderWorldGuides()
-{
-    const float guideY = 0.08f;
-    const float airspaceHalfExtent = m_airspaceHalfExtent;
-    const float beaconHeight = m_airspaceHeight;
-    const float ringStep = glm::clamp(m_airspaceHalfExtent * 0.25f, 160.0f, 2500.0f);
-    const int ringCount = std::max(3, std::min(5, static_cast<int>(airspaceHalfExtent / ringStep)));
-
-    const glm::vec3 guideColor(0.50f, 0.60f, 0.68f);
-    const glm::vec3 beaconColor(0.72f, 0.78f, 0.86f);
-
-    for (int ringIndex = 1; ringIndex <= ringCount; ++ringIndex)
-    {
-        const float radius = std::min(ringStep * ringIndex, airspaceHalfExtent * 0.92f);
-        const float ringTint = static_cast<float>(ringIndex) / static_cast<float>(ringCount + 1);
-        const glm::vec3 ringColor = glm::mix(glm::vec3(0.40f, 0.48f, 0.54f), glm::vec3(0.56f, 0.64f, 0.72f), ringTint);
-        renderGroundCircle(radius, ringColor, 48);
-    }
-
-    // A small launch-point marker at the origin (the runway/pad markings were
-    // removed - they formed a cross across the launch site).
-    renderPoint(glm::vec3(0.0f, 0.18f, 0.0f), glm::vec3(0.98f, 0.82f, 0.30f), 6.0f);
-
-    const glm::vec3 corners[4] = {
-        glm::vec3(-airspaceHalfExtent, 0.0f, -airspaceHalfExtent),
-        glm::vec3(airspaceHalfExtent, 0.0f, -airspaceHalfExtent),
-        glm::vec3(airspaceHalfExtent, 0.0f, airspaceHalfExtent),
-        glm::vec3(-airspaceHalfExtent, 0.0f, airspaceHalfExtent)};
-
-    for (int i = 0; i < 4; ++i)
-    {
-        const glm::vec3 currentGround = corners[i] + glm::vec3(0.0f, guideY, 0.0f);
-        const glm::vec3 nextGround = corners[(i + 1) % 4] + glm::vec3(0.0f, guideY, 0.0f);
-        const glm::vec3 currentTop = corners[i] + glm::vec3(0.0f, beaconHeight, 0.0f);
-        const glm::vec3 nextTop = corners[(i + 1) % 4] + glm::vec3(0.0f, beaconHeight, 0.0f);
-
-        renderLine(currentGround, nextGround, guideColor);
-        renderLine(currentTop, nextTop, glm::vec3(0.56f, 0.64f, 0.72f));
-        renderAirspaceBeacon(corners[i], beaconHeight, beaconColor);
-    }
-
-    renderLine(glm::vec3(-airspaceHalfExtent, beaconHeight, -airspaceHalfExtent),
-               glm::vec3(airspaceHalfExtent, beaconHeight, airspaceHalfExtent),
-               glm::vec3(0.42f, 0.50f, 0.58f));
-    renderLine(glm::vec3(airspaceHalfExtent, beaconHeight, -airspaceHalfExtent),
-               glm::vec3(-airspaceHalfExtent, beaconHeight, airspaceHalfExtent),
-               glm::vec3(0.42f, 0.50f, 0.58f));
-}
-
-void Renderer::renderGroundCircle(float radius, const glm::vec3 &color, int segments)
-{
-    const float guideY = 0.08f;
-    const float angleStep = glm::two_pi<float>() / static_cast<float>(segments);
-
-    for (int i = 0; i < segments; ++i)
-    {
-        float startAngle = angleStep * static_cast<float>(i);
-        float endAngle = angleStep * static_cast<float>(i + 1);
-        glm::vec3 start(radius * cos(startAngle), guideY, radius * sin(startAngle));
-        glm::vec3 end(radius * cos(endAngle), guideY, radius * sin(endAngle));
-        renderLine(start, end, color);
-    }
-}
-
-void Renderer::renderAirspaceBeacon(const glm::vec3 &basePosition, float height, const glm::vec3 &color)
-{
-    const glm::vec3 base = basePosition + glm::vec3(0.0f, 0.08f, 0.0f);
-    const glm::vec3 top = basePosition + glm::vec3(0.0f, height, 0.0f);
-    renderLine(base, top, color);
-
-    const glm::vec3 tickColor = glm::mix(color, glm::vec3(1.0f, 1.0f, 1.0f), 0.15f);
-    const float tickStep = glm::clamp(height * 0.25f, 55.0f, 1200.0f);
-    const float tickHalfSpan = glm::clamp(m_airspaceHalfExtent * 0.02f, 8.0f, 65.0f);
-    for (float altitude = tickStep; altitude < height; altitude += tickStep)
-    {
-        const glm::vec3 tickCenter = basePosition + glm::vec3(0.0f, altitude, 0.0f);
-        renderLine(tickCenter - glm::vec3(tickHalfSpan, 0.0f, 0.0f), tickCenter + glm::vec3(tickHalfSpan, 0.0f, 0.0f), tickColor);
-        renderLine(tickCenter - glm::vec3(0.0f, 0.0f, tickHalfSpan), tickCenter + glm::vec3(0.0f, 0.0f, tickHalfSpan), tickColor);
-    }
+    renderWater();
 }
 
 void Renderer::renderExplosion(const glm::vec3 &position, float size)

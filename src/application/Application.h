@@ -204,7 +204,6 @@ private:
     void updateCursorCapture();
     void resetAimCamera();
     const char *getCameraModeLabel() const;
-    void updateEnvironmentScale();
     float computeEngagementRadius() const;
     std::string buildSettingsSnapshot() const;
     bool loadSettings();
@@ -233,6 +232,9 @@ private:
 
     // Engagement lifecycle
     void restartWorld();
+    // Rebuilds the terrain from the config with this kind, hands it to the
+    // renderer and, when it changed, restarts the engagement on it.
+    void selectTerrain(missilesim::sim::TerrainKind kind);
     void resetTargets();
 
     // Missile functions
@@ -407,6 +409,7 @@ private:
     // SAM keeps the custom round. Fighter carries catalog Fox 2s on the wingtips.
     PlayerRole m_playerRole = PlayerRole::Sam;
     std::string m_fox2Id = "custom";
+    missilesim::sim::TerrainKind m_terrainKind = missilesim::sim::TerrainKind::Flat;
     std::string m_aircraftId = "f-16c-block-50";
 
     // Seeds each engagement's simulation (the seed is shown in telemetry).

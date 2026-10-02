@@ -296,7 +296,7 @@ void Application::updateTitleCamera(float deltaTime)
                                worldUp * (distance * 0.18f);
     if (physics())
     {
-        cameraPosition.y = std::max(cameraPosition.y, physics()->getGroundLevel() + 6.0f);
+        cameraPosition.y = std::max(cameraPosition.y, physics()->getTerrain().heightAt(cameraPosition) + 6.0f);
     }
 
     // Compose the aircraft on the right third, clear of the menu on the left.
@@ -738,12 +738,6 @@ void Application::renderSettingsPage(SettingsPage page)
             m_renderer->setSunOrientation(azimuth, elevation, intensity);
         }
 
-        ui::sectionLabel("WORLD");
-        bool guides = m_renderer->getWorldGuidesEnabled();
-        if (ui::toggleRow("Airspace guides", &guides, "Range rings, the airspace boundary and corner beacons."))
-        {
-            m_renderer->setWorldGuidesEnabled(guides);
-        }
         break;
     }
     case SettingsPage::Audio:

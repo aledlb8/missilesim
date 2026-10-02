@@ -35,7 +35,11 @@ Shader &Shader::operator=(Shader &&other) noexcept
     return *this;
 }
 
-static bool readFile(const std::filesystem::path &path, std::string &out)
+// Reads a shader source, replacing each line of the form
+//   #include "name.glsl"
+// with that file (resolved beside the including file). Shared GLSL such as
+// the procedural sky lives in one place this way.
+static bool readFile(const std::filesystem::path &path, std::string &out, int depth = 0)
 {
     std::ifstream file(path);
     if (!file.good())
@@ -43,8 +47,31 @@ static bool readFile(const std::filesystem::path &path, std::string &out)
         std::cerr << "PBR: Cannot find shader file: " << path << std::endl;
         return false;
     }
+    if (depth > 4)
+    {
+        std::cerr << "PBR: Shader includes nest too deeply at " << path << std::endl;
+        return false;
+    }
+
     std::stringstream ss;
-    ss << file.rdbuf();
+    std::string line;
+    while (std::getline(file, line))
+    {
+        const std::size_t directive = line.find("#include");
+        const std::size_t open = line.find('"', directive == std::string::npos ? 0 : directive);
+        const std::size_t close = open == std::string::npos ? std::string::npos : line.find('"', open + 1);
+        if (directive != std::string::npos && line.find_first_not_of(" \t") == directive && close != std::string::npos)
+        {
+            std::string included;
+            if (!readFile(path.parent_path() / line.substr(open + 1, close - open - 1), included, depth + 1))
+            {
+                return false;
+            }
+            ss << included << '\n';
+            continue;
+        }
+        ss << line << '\n';
+    }
     out = ss.str();
     return true;
 }
@@ -154,6 +181,10 @@ void Shader::setInt(const std::string &name, int value) const
 void Shader::setFloat(const std::string &name, float value) const
 {
     glUniform1f(glGetUniformLocation(m_id, name.c_str()), value);
+}
+void Shader::setVec2(const std::string &name, const glm::vec2 &vec) const
+{
+    glUniform2fv(glGetUniformLocation(m_id, name.c_str()), 1, &vec[0]);
 }
 void Shader::setVec3(const std::string &name, const glm::vec3 &vec) const
 {

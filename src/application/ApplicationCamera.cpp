@@ -71,43 +71,6 @@ float Application::computeEngagementRadius() const
     return engagementRadius;
 }
 
-void Application::updateEnvironmentScale()
-{
-    if (!m_renderer)
-    {
-        return;
-    }
-
-    const float engagementRadius = computeEngagementRadius();
-    float maxAltitude = std::max(320.0f, glm::clamp(m_targetAIConfig.preferredDistance * 0.22f, 180.0f, 900.0f));
-
-    if (const Missile *missile = focusMissile())
-    {
-        maxAltitude = std::max(maxAltitude, missile->getPosition().y + 150.0f);
-    }
-
-    const Fighter *jet = fighter();
-    if (m_playerRole == PlayerRole::Fighter && jet)
-    {
-        maxAltitude = std::max(maxAltitude, jet->getPosition().y + 150.0f);
-    }
-
-    for (const auto &target : targets())
-    {
-        if (!target->isActive())
-        {
-            continue;
-        }
-
-        maxAltitude = std::max(maxAltitude, target->getPosition().y + std::max(120.0f, m_targetAIConfig.preferredDistance * 0.18f));
-    }
-
-    const float airspaceHalfExtent = std::max(600.0f, engagementRadius * 1.35f);
-    const float groundHalfExtent = std::max(1200.0f, airspaceHalfExtent * 2.4f);
-    const float airspaceHeight = std::max(320.0f, std::max(maxAltitude * 1.6f, engagementRadius * 0.45f));
-    m_renderer->setEnvironmentMetrics(groundHalfExtent, airspaceHalfExtent, airspaceHeight);
-}
-
 void Application::frameEngagementCamera()
 {
     if (!m_renderer)
