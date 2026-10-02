@@ -31,6 +31,7 @@ void Renderer::beginSceneFrame(const glm::vec3 &clearColor)
     {
         // PBR mode: store camera state; actual rendering is deferred to executeRenderPass
         m_pbrPipeline->beginFrame(buildViewMatrix(), buildProjectionMatrix(), m_cameraPosition);
+        m_pbrPipeline->setTime(std::chrono::duration<float>(std::chrono::steady_clock::now() - m_startTime).count());
 
         // SceneEffects still needs camera for particle rendering
         if (m_sceneEffects)

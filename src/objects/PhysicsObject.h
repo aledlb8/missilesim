@@ -4,6 +4,7 @@
 #include <string>
 
 #include "physics/Aerodynamics.h"
+#include "sim/EntityId.h"
 
 class PhysicsObject
 {
@@ -73,6 +74,11 @@ public:
     // Object type for rendering and other systems
     virtual std::string getType() const { return "PhysicsObject"; }
 
+    // Identity assigned by sim::World when the object enters the simulation
+    // (none while it only exists as a loaded, unfired round).
+    missilesim::sim::EntityId getEntityId() const { return m_entityId; }
+    void setEntityId(missilesim::sim::EntityId id) { m_entityId = id; }
+
     // Render interpolation ("Fix Your Timestep", Glenn Fiedler). Physics runs
     // in fixed steps that do not line up with frames; drawing the raw state
     // makes motion judder (a frame may see zero, one or two steps). The
@@ -95,4 +101,5 @@ protected:
     glm::vec3 m_forces;           // Accumulated forces for this frame
     float m_mass;                 // Mass in kg
     float m_maxLoadFactorG = 0.0f; // Structural load-factor limit in g (0 = unlimited)
+    missilesim::sim::EntityId m_entityId;
 };

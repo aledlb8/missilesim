@@ -19,11 +19,43 @@ namespace missilesim::sim
 
         constexpr float kLargeFiniteExtent = 1000000.0f;
 
+        // Collects the fields that were present but unusable while one file is
+        // parsed, so a mistyped or out-of-range value is reported instead of
+        // silently replaced. Parsing is single-threaded and scoped by
+        // DiagnosticsScope.
+        thread_local std::vector<std::string> *g_warnings = nullptr;
+
+        struct DiagnosticsScope
+        {
+            explicit DiagnosticsScope(std::vector<std::string> &warnings) { g_warnings = &warnings; }
+            ~DiagnosticsScope() { g_warnings = nullptr; }
+            DiagnosticsScope(const DiagnosticsScope &) = delete;
+            DiagnosticsScope &operator=(const DiagnosticsScope &) = delete;
+        };
+
+        void warn(const std::string &message)
+        {
+            if (g_warnings != nullptr)
+            {
+                g_warnings->push_back(message);
+            }
+        }
+
+        void warnWrongType(const char *key, const char *expected)
+        {
+            warn(std::string("'") + key + "' is not " + expected + "; the default is used.");
+        }
+
         const Json *findObject(const Json &object, const char *key)
         {
             const auto found = object.find(key);
-            if (found == object.end() || !found->is_object())
+            if (found == object.end())
             {
+                return nullptr;
+            }
+            if (!found->is_object())
+            {
+                warnWrongType(key, "an object");
                 return nullptr;
             }
             return &(*found);
@@ -32,8 +64,13 @@ namespace missilesim::sim
         bool readBool(const Json &object, const char *key, bool fallback)
         {
             const auto found = object.find(key);
-            if (found == object.end() || !found->is_boolean())
+            if (found == object.end())
             {
+                return fallback;
+            }
+            if (!found->is_boolean())
+            {
+                warnWrongType(key, "true or false");
                 return fallback;
             }
             return found->get<bool>();
@@ -42,11 +79,23 @@ namespace missilesim::sim
         int readInt(const Json &object, const char *key, int fallback, int minimum, int maximum)
         {
             const auto found = object.find(key);
-            if (found == object.end() || !found->is_number_integer())
+            if (found == object.end())
             {
                 return fallback;
             }
-            return std::clamp(found->get<int>(), minimum, maximum);
+            if (!found->is_number_integer())
+            {
+                warnWrongType(key, "an integer");
+                return fallback;
+            }
+            const int value = found->get<int>();
+            const int clamped = std::clamp(value, minimum, maximum);
+            if (clamped != value)
+            {
+                warn(std::string("'") + key + "' = " + std::to_string(value) + " is outside [" + std::to_string(minimum) +
+                     ", " + std::to_string(maximum) + "]; " + std::to_string(clamped) + " is used.");
+            }
+            return clamped;
         }
 
         float sanitizeFloat(double value, float fallback, float minimum, float maximum)
@@ -61,18 +110,35 @@ namespace missilesim::sim
         float readFloat(const Json &object, const char *key, float fallback, float minimum, float maximum)
         {
             const auto found = object.find(key);
-            if (found == object.end() || !found->is_number())
+            if (found == object.end())
             {
                 return fallback;
             }
-            return sanitizeFloat(found->get<double>(), fallback, minimum, maximum);
+            if (!found->is_number())
+            {
+                warnWrongType(key, "a number");
+                return fallback;
+            }
+            const double value = found->get<double>();
+            const float result = sanitizeFloat(value, fallback, minimum, maximum);
+            if (!std::isfinite(value) || static_cast<double>(result) != static_cast<double>(static_cast<float>(value)))
+            {
+                warn(std::string("'") + key + "' = " + std::to_string(value) + " is outside [" + std::to_string(minimum) +
+                     ", " + std::to_string(maximum) + "]; " + std::to_string(result) + " is used.");
+            }
+            return result;
         }
 
         std::string readString(const Json &object, const char *key, const std::string &fallback)
         {
             const auto found = object.find(key);
-            if (found == object.end() || !found->is_string())
+            if (found == object.end())
             {
+                return fallback;
+            }
+            if (!found->is_string())
+            {
+                warnWrongType(key, "a string");
                 return fallback;
             }
             return found->get<std::string>();
@@ -172,6 +238,37 @@ namespace missilesim::sim
             config.environment.seaLevelAirDensity = readFloat(*environment, "sea_level_air_density_kg_m3", config.environment.seaLevelAirDensity, 0.0f, 5.0f);
             config.environment.groundCollisionEnabled = readBool(*environment, "ground_collision_enabled", config.environment.groundCollisionEnabled);
             config.environment.groundRestitution = readFloat(*environment, "ground_restitution", config.environment.groundRestitution, 0.0f, 1.0f);
+        }
+
+        void readTerrainConfig(const Json &root, SimulationConfig &config)
+        {
+            const Json *terrain = findObject(root, "terrain");
+            if (terrain == nullptr)
+            {
+                return;
+            }
+
+            TerrainConfig &out = config.terrain;
+            const std::string kind = readString(*terrain, "kind", terrainKindName(out.kind));
+            if (!parseTerrainKind(kind.c_str(), out.kind))
+            {
+                warn("'kind' = \"" + kind + "\" is not \"mountains\", \"flat\" or \"ridge\"; " + terrainKindName(out.kind) +
+                     " is used.");
+            }
+            out.baseHeightM = readFloat(*terrain, "base_height_m", out.baseHeightM, -500.0f, 5000.0f);
+            out.apronRadiusM = readFloat(*terrain, "apron_radius_m", out.apronRadiusM, 0.0f, 3000.0f);
+            out.hillAmplitudeM = readFloat(*terrain, "hill_amplitude_m", out.hillAmplitudeM, 0.0f, 500.0f);
+            out.seed = static_cast<std::uint32_t>(readInt(*terrain, "seed", static_cast<int>(out.seed), 0, 1000000));
+            out.mountainHeightM = readFloat(*terrain, "mountain_height_m", out.mountainHeightM, 0.0f, 4000.0f);
+            out.valleyRadiusM = readFloat(*terrain, "valley_radius_m", out.valleyRadiusM, 1500.0f, 20000.0f);
+            out.coastRadiusM = readFloat(*terrain, "coast_radius_m", out.coastRadiusM, 4000.0f, 40000.0f);
+            out.waterBelowBaseM = readFloat(*terrain, "water_below_base_m", out.waterBelowBaseM, 0.1f, 50.0f);
+            out.ridgeHeightM = readFloat(*terrain, "ridge_height_m", out.ridgeHeightM, 0.0f, 2000.0f);
+            out.ridgeDistanceM = readFloat(*terrain, "ridge_distance_m", out.ridgeDistanceM, 500.0f, 15000.0f);
+            out.ridgeHalfWidthM = readFloat(*terrain, "ridge_half_width_m", out.ridgeHalfWidthM, 100.0f, 5000.0f);
+            out.ridgeBearingDeg = readFloat(*terrain, "ridge_bearing_deg", out.ridgeBearingDeg, -360.0f, 360.0f);
+            out.extentHalfM = readFloat(*terrain, "extent_half_m", out.extentHalfM, 1000.0f, 40000.0f);
+            out.cellSizeM = readFloat(*terrain, "cell_size_m", out.cellSizeM, 16.0f, 500.0f);
         }
 
         void readVisualizationConfig(const Json &root, SimulationConfig &config)
@@ -366,9 +463,10 @@ namespace missilesim::sim
                 return config;
             }
 
-            config.schemaVersion = readInt(root, "schema_version", config.schemaVersion, 1, 1);
+            config.schemaVersion = kSupportedSchemaVersion;
             config.name = readString(root, "name", config.name);
             readEnvironmentConfig(root, config);
+            readTerrainConfig(root, config);
             readVisualizationConfig(root, config);
             readCameraConfig(root, config);
             readMissileConfig(root, config);
@@ -420,6 +518,29 @@ namespace missilesim::sim
         try
         {
             const Json root = Json::parse(input);
+            if (!root.is_object())
+            {
+                result.error = "Simulation config '" + path.string() + "' is not a JSON object.";
+                return result;
+            }
+
+            // A file written for another schema is refused rather than read
+            // with guessed meanings.
+            const auto version = root.find("schema_version");
+            if (version == root.end() || !version->is_number_integer())
+            {
+                result.error = "Simulation config '" + path.string() + "' has no integer schema_version (this build reads version " +
+                               std::to_string(kSupportedSchemaVersion) + ").";
+                return result;
+            }
+            if (version->get<int>() != kSupportedSchemaVersion)
+            {
+                result.error = "Simulation config '" + path.string() + "' is schema_version " + std::to_string(version->get<int>()) +
+                               "; this build reads version " + std::to_string(kSupportedSchemaVersion) + ".";
+                return result;
+            }
+
+            const DiagnosticsScope diagnostics(result.warnings);
             result.config = parseSimulationConfig(root);
             result.loaded = true;
         }

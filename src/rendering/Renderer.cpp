@@ -52,6 +52,10 @@ Renderer::~Renderer()
     glDeleteVertexArrays(1, &m_floorVAO);
     glDeleteBuffers(1, &m_floorVBO);
     glDeleteBuffers(1, &m_floorEBO);
+    glDeleteVertexArrays(1, &m_waterVAO);
+    glDeleteBuffers(1, &m_waterVBO);
+    glDeleteBuffers(1, &m_waterEBO);
+    glDeleteTextures(1, &m_heightmapTexture);
 
     // Cleanup target resources
     glDeleteVertexArrays(1, &m_targetVAO);
@@ -135,6 +139,8 @@ void Renderer::initialize()
     glEnableVertexAttribArray(3);
 
     glBindVertexArray(0);
+
+    createWaterMesh();
 
     // Set up vertex buffers for floor
     glGenVertexArrays(1, &m_floorVAO);
@@ -262,7 +268,7 @@ void Renderer::initialize()
 
         m_pbrPipeline = std::make_unique<pbr::PBRPipeline>();
         if (m_pbrPipeline->initialize(m_viewportWidth, m_viewportHeight,
-                                       0.1f, m_sceneFarPlane, assetDir))
+                                       kNearPlane, m_sceneFarPlane, assetDir))
         {
             // Configure default directional light (sun)
             pbr::DirectionalLight sun{};
@@ -284,8 +290,10 @@ void Renderer::initialize()
             // ACES darkens midtones vs the old exponential tonemap.
             m_pbrPipeline->setExposure(1.4f);
 
-            // Load a natural open-air HDRI; urban rooftops read poorly at missile-sim scale.
-            m_pbrPipeline->setSkybox("monoLake", 512);
+            // A procedural sky: atmosphere, sun and drifting cloud, lit and
+            // reflected consistently instead of a photograph pinned behind
+            // the world.
+            m_pbrPipeline->setProceduralSky(256);
 
             std::cout << "PBR pipeline active." << std::endl;
         }
@@ -390,8 +398,16 @@ void Renderer::setSunOrientation(float azimuthDeg, float elevationDeg, float int
     // skybox disc and fog scatter every frame. The IBL environment stays
     // baked from the HDRI, which is acceptable for direct-light tuning.
     pbr::DirectionalLight &sun = m_pbrPipeline->directionalLight();
-    sun.direction = glm::normalize(direction);
-    sun.strength = std::max(intensity, 0.0f);
+    const glm::vec3 newDirection = glm::normalize(direction);
+    const float newStrength = std::max(intensity, 0.0f);
+    const bool changed = glm::length(newDirection - sun.direction) > 1.0e-4f || std::abs(newStrength - sun.strength) > 1.0e-4f;
+    sun.direction = newDirection;
+    sun.strength = newStrength;
+    // The sky's light and reflections are captured from the sky itself.
+    if (changed)
+    {
+        m_pbrPipeline->refreshSky();
+    }
 }
 
 void Renderer::getSunOrientation(float &azimuthDeg, float &elevationDeg, float &intensity) const

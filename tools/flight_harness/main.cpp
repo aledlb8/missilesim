@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace missilesim::flight;
 
@@ -174,6 +176,102 @@ int main(int argc, char **argv)
         report(c.name, jet, s);
     }
 
+    // ---- Small-input response, any card: how hard the jet reacts to a nudge
+    // of the aim. Roll acceleration and g onset are what the player feels;
+    // a real fighter needs a few tenths of a second to build either.
+    if (matches(filter, "response"))
+    {
+        std::vector<const char *> cards;
+        for (int i = 0; i < aircraftCatalogCount(); ++i)
+        {
+            if (aircraftCatalog()[i].flyable)
+            {
+                cards.push_back(aircraftCatalog()[i].id);
+            }
+        }
+        const struct
+        {
+            const char *name;
+            float azimuth, elevation;
+        } nudges[] = {{"1 right", 1.0f, 0.0f}, {"3 right", 3.0f, 0.0f}, {"3 up", 0.0f, 3.0f},   {"10 right", 10.0f, 0.0f},
+                      {"30 right", 30.0f, 0.0f}, {"30 up", 0.0f, 30.0f}, {"120 right", 120.0f, 0.0f}};
+        for (const char *card : cards)
+        {
+            for (const auto &nudge : nudges)
+            {
+                Jet jet(card);
+                jet.reset(glm::vec3(0.0f, 3000.0f, 0.0f), glm::vec3(0.0f, 0.0f, 250.0f), glm::vec3(0.0f, 0.0f, 1.0f),
+                          glm::vec3(0.0f, 1.0f, 0.0f));
+                // Settle trimmed on a level aim first, so each jet starts from
+                // its own steady nose, then nudge the aim from that nose.
+                const glm::vec3 level = direction(0.0f, 0.0f);
+                for (float t = 0.0f; t < 4.0f; t += kFrame)
+                {
+                    JetControls controls = jet.controls();
+                    controls.instructor.aimDirection = level;
+                    controls.throttle = 0.9f;
+                    jet.setControls(controls, kFrame);
+                    jet.step(kFrame, airAt(jet.position().y), kGravity);
+                }
+                const glm::vec3 nose = jet.forward();
+                const float az = glm::radians(nudge.azimuth);
+                const float el = glm::radians(nudge.elevation);
+                const glm::vec3 aim = glm::normalize(nose * (std::cos(az) * std::cos(el)) + jet.right() * (std::sin(az) * std::cos(el)) +
+                                                     jet.up() * std::sin(el));
+                float previousRoll = glm::degrees(jet.bodyRates().x);
+                float previousNz = jet.telemetry().normalLoad;
+                float peakRoll = 0.0f;
+                float peakRollAccel = 0.0f;
+                float peakOnset = 0.0f;
+                float peakNz = 0.0f;
+                float peakBank = 0.0f;
+                float settle = -1.0f;
+                float insideSince = -1.0f;
+                float worstAfter = 0.0f;
+                bool reached = false;
+                float finalOff = 0.0f;
+                for (float t = 0.0f; t < 12.0f; t += kFrame)
+                {
+                    JetControls controls = jet.controls();
+                    controls.instructor.aimDirection = aim;
+                    controls.throttle = 0.9f;
+                    jet.setControls(controls, kFrame);
+                    jet.step(kFrame, airAt(jet.position().y), kGravity);
+                    const float roll = glm::degrees(jet.bodyRates().x);
+                    const float nz = jet.telemetry().normalLoad;
+                    peakRoll = std::max(peakRoll, std::abs(roll));
+                    peakRollAccel = std::max(peakRollAccel, std::abs(roll - previousRoll) / kFrame);
+                    peakOnset = std::max(peakOnset, std::abs(nz - previousNz) / kFrame);
+                    peakNz = std::max(peakNz, nz);
+                    peakBank = std::max(peakBank, std::abs(glm::degrees(std::atan2(jet.right().y, jet.up().y))));
+                    previousRoll = roll;
+                    previousNz = nz;
+                    const float off = glm::degrees(jet.instructor().status().angleOff);
+                    finalOff = off;
+                    if (off < 0.5f)
+                    {
+                        reached = true;
+                        insideSince = insideSince < 0.0f ? t : insideSince;
+                        if (settle < 0.0f && t - insideSince >= 0.5f)
+                        {
+                            settle = insideSince;
+                        }
+                    }
+                    else
+                    {
+                        insideSince = -1.0f;
+                    }
+                    if (reached)
+                    {
+                        worstAfter = std::max(worstAfter, off);
+                    }
+                }
+                std::printf("response %-15s %-9s roll %6.1f deg/s  roll accel %7.0f deg/s2  onset %6.1f g/s  Nz %4.2f  bank %5.1f  settle %5.2fs  over %4.2f  final %5.2f\n",
+                            card, nudge.name, peakRoll, peakRollAccel, peakOnset, peakNz, peakBank, settle, worstAfter, finalOff);
+            }
+        }
+    }
+
     // ---- Tracking a steadily moving aim point (a turning target).
     if (matches(filter, "track"))
     {
@@ -266,6 +364,74 @@ int main(int argc, char **argv)
                     glm::degrees(kGravity * std::sqrt(std::max(0.0f, turn.airframe().telemetry().normalLoad * turn.airframe().telemetry().normalLoad - 1.0f)) /
                                  std::max(glm::length(v), 1.0f)));
         report("sustained turn AB 3km", turn, s);
+    }
+
+    // High-speed turn: heading change, load, and alpha at the HUD's 400 m/s case.
+    if (matches(filter, "diag"))
+    {
+        const auto headingOf = [](const Jet &jet) {
+            const glm::vec3 v = jet.airframe().velocity();
+            return std::atan2(v.x, v.z);
+        };
+        const auto bankDeg = [](const Jet &jet) {
+            const auto &air = jet.airframe();
+            return glm::degrees(std::atan2(air.right().y, air.up().y));
+        };
+        const struct
+        {
+            const char *name;
+            float altitude;
+            float speed;
+        } points[] = {
+            {"250m/s 3km", 3000.0f, 250.0f},
+            {"400m/s SL", 300.0f, 400.0f},
+            {"400m/s 3km", 3000.0f, 400.0f},
+            {"400m/s 8km", 8000.0f, 400.0f},
+            {"500m/s SL", 300.0f, 500.0f},
+        };
+        const auto run = [&](Jet &jet, float seconds, const std::function<void(float, JetControls &)> &setup) {
+            float maxNz = -100.0f;
+            float maxAlpha = -100.0f;
+            for (float t = 0.0f; t < seconds; t += kFrame)
+            {
+                JetControls controls = jet.controls();
+                setup(t, controls);
+                jet.setControls(controls, kFrame);
+                jet.step(kFrame, airAt(jet.airframe().position().y), kGravity);
+                const AirframeTelemetry &tm = jet.airframe().telemetry();
+                maxNz = std::max(maxNz, tm.normalLoad);
+                maxAlpha = std::max(maxAlpha, glm::degrees(tm.alpha));
+            }
+            return std::pair<float, float>{maxNz, maxAlpha};
+        };
+        for (const auto &point : points)
+        {
+            Jet aimed = makeJet(point.altitude, point.speed);
+            const float aimStart = headingOf(aimed);
+            const auto aimPeak = run(aimed, 8.0f, [&](float, JetControls &controls) {
+                controls.instructor.aimDirection = direction(90.0f, 0.0f);
+                controls.afterburner = true;
+            });
+            const AirframeTelemetry &aimTm = aimed.airframe().telemetry();
+            std::printf("diag aim90 %-12s  dHdg %6.1f  Nz %5.2f/%5.2f  a %5.1f  bank %6.1f  V %5.0f  M %4.2f  lim %d/%d\n",
+                        point.name, glm::degrees(headingOf(aimed) - aimStart), aimTm.normalLoad, aimPeak.first,
+                        aimPeak.second, bankDeg(aimed), aimTm.airspeed, aimTm.mach,
+                        aimed.flightControl().status().loadLimited ? 1 : 0,
+                        aimed.flightControl().status().alphaLimited ? 1 : 0);
+
+            Jet banked = makeJet(point.altitude, point.speed);
+            const float bankStart = headingOf(banked);
+            const auto bankPeak = run(banked, 6.0f, [&](float t, JetControls &controls) {
+                controls.instructor.aimDirection = banked.airframe().forward();
+                controls.instructor.rollKey = t < 0.45f ? 1.0f : 0.0f;
+                controls.instructor.pitchKey = t >= 0.45f ? 1.0f : 0.0f;
+                controls.afterburner = true;
+            });
+            const AirframeTelemetry &bankTm = banked.airframe().telemetry();
+            std::printf("diag bank+pull %-12s  dHdg %6.1f  Nz %5.2f/%5.2f  a %5.1f  bank %6.1f  V %5.0f  M %4.2f\n",
+                        point.name, glm::degrees(headingOf(banked) - bankStart), bankTm.normalLoad, bankPeak.first,
+                        bankPeak.second, bankDeg(banked), bankTm.airspeed, bankTm.mach);
+        }
     }
     return 0;
 }

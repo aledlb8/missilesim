@@ -31,13 +31,16 @@ namespace missilesim::fox2
             spec.structuralGPublished = false;
         }
 
-        void sizedToG(Spec &spec, float structuralG)
+        // A published maximum g is the structural cap. No opened source gives
+        // the dynamic pressure at which that g is reached, so it is not inverted
+        // into a lift coefficient. Doing that at the AIM-9B 10 g corner
+        // (1.02e5 Pa) stored body CN values of about 15-27, and the CL^2
+        // induced-drag term then exceeded motor thrust in a hard turn.
+        void structuralCap(Spec &spec, float structuralG)
         {
-            spec.aeroGIsShapeCoefficient = false;
-            spec.cnOverride = 0.0f;
+            shapeCoefficient(spec);
             spec.structuralG = structuralG;
             spec.structuralGPublished = true;
-            spec.aeroStructuralG = 0.0f;
         }
 
         void inferredArm(Spec &spec, float metres)
@@ -361,7 +364,7 @@ namespace missilesim::fox2
             spec.diameterM = 0.120f;
             spec.spanM = 0.390f;
             standInMotor(spec);
-            sizedToG(spec, 47.0f);
+            structuralCap(spec, 47.0f);
             spec.aspect = mike ? AspectKind::AllAspect : AspectKind::RearHemisphere;
             spec.forwardFraction = kAllAspectForwardFraction;
             spec.cueDeg = mike ? 20.0f : 12.0f;
@@ -382,8 +385,8 @@ namespace missilesim::fox2
             spec.selfDestructS = 25.0f;
             inferredArm(spec, mike ? 150.0f : 250.0f);
             spec.card = mike
-                            ? "44 kg, length 2,138 mm, cooled seeker, cue ±20°. All-aspect at the 0.2 forward bound is optimistic at long range: no acquisition kilometres were published, and the limited front hemisphere is a close-in claim. 47 g is the Missilery overload (Weaponsystems prints 42; they are not averaged) and is not restated as an R-60M-only figure. The 35°/s track rate was the R-60 Komar and is not copied. 8 km is a high-altitude launch bracket, not a lock range. Guided flight 23–25 s is the R-60 citation; 24 s and a 25 s end are labeled, and destruct was not separate."
-                            : "43.5 kg, warhead 3 kg, length about 2,096 mm, diameter 120 mm, span 390 mm. Komar cue ±12°, track 35°/s. The 30–35° tracking-angle phrase is ambiguous, so 35° is a sim stop and not a measured half-angle. 47 g is Missilery; Weaponsystems 42 g is not averaged. No TVC. Arm 250 m is the low-altitude minimum launch range, not the 8 km high-altitude bracket. Guidance 24 s is the midpoint of the cited 23–25 s, and 25 s ends the flight because a separate destruct time was not published.";
+                            ? "44 kg, length 2,138 mm, cooled seeker, cue ±20°. All-aspect at the 0.2 forward bound is optimistic at long range: no acquisition kilometres were published, and the limited front hemisphere is a close-in claim. 47 g is the Missilery overload (Weaponsystems prints 42; they are not averaged) and is the structural cap, not a measured lift coefficient. It is not restated as an R-60M-only figure. The aero coefficient stays the AIM-9B shape coefficient. The 35°/s track rate was the R-60 Komar and is not copied. 8 km is a high-altitude launch bracket, not a lock range. Guided flight 23–25 s is the R-60 citation; 24 s and a 25 s end are labeled, and destruct was not separate."
+                            : "43.5 kg, warhead 3 kg, length about 2,096 mm, diameter 120 mm, span 390 mm. Komar cue ±12°, track 35°/s. The 30–35° tracking-angle phrase is ambiguous, so 35° is a sim stop and not a measured half-angle. 47 g is Missilery; Weaponsystems 42 g is not averaged. 47 g is the structural cap. The aero coefficient stays the AIM-9B shape coefficient. No TVC. Arm 250 m is the low-altitude minimum launch range, not the 8 km high-altitude bracket. Guidance 24 s is the midpoint of the cited 23–25 s, and 25 s ends the flight because a separate destruct time was not published.";
             return resolve(spec);
         }
 
@@ -454,7 +457,7 @@ namespace missilesim::fox2
             }
             else
             {
-                sizedToG(spec, 8.0f);
+                structuralCap(spec, 8.0f);
                 spec.motorNote = "Single-mode 230 mm motor. Thrust and burn were not published. The stand-in is a short burn on purpose: front-hemisphere advertising ranges are not tail chases and were not fitted.";
             }
             spec.hasTvc = false;
@@ -470,7 +473,7 @@ namespace missilesim::fox2
             inferredArm(spec, 500.0f);
             spec.card = extended
                             ? "343 kg, about 4.5 m, diameter 260 mm. Airforce Technology prints 0.23 m for the ET and that conflict is kept; 260 mm is the Missilery engine diameter. Span 0.80 m is the GlobalSecurity wing; 972 mm plumage is the rudder and is not used as the wing. No TVC and no loft. ±55° is the T designation and is not a separate ET measurement, so the cue is tagged. Lock before launch. Inertial midcourse is off: the sources dispute it for the infrared round."
-                            : "245 kg, 3.80 m, diameter 230 mm, warhead 39 kg. Operational load factor 8 g with canards and no TVC, so it is not an Archer. Span 0.77 m is the GlobalSecurity wing; Missilery's 972 mm plumage is the rudder. Designation ±55°. A separate gimbal stop was not published, so the stop is that designation angle. Lock before launch, no loft, no Archer g. The 8 g cap is aero and is reached only at high dynamic pressure.";
+                            : "245 kg, 3.80 m, diameter 230 mm, warhead 39 kg. Operational load factor 8 g with canards and no TVC, so it is not an Archer. Span 0.77 m is the GlobalSecurity wing; Missilery's 972 mm plumage is the rudder. Designation ±55°. A separate gimbal stop was not published, so the stop is that designation angle. Lock before launch, no loft, no Archer g. The 8 g figure is the structural cap and is reached only at high dynamic pressure. The aero coefficient stays the AIM-9B shape coefficient.";
             return resolve(spec);
         }
 
@@ -487,7 +490,7 @@ namespace missilesim::fox2
             standInMotor(spec);
             if (second)
             {
-                sizedToG(spec, 50.0f);
+                structuralCap(spec, 50.0f);
                 spec.aspect = AspectKind::AllAspect;
                 spec.forwardFraction = kAllAspectForwardFraction;
                 spec.irccm = IrccmKind::Rise;
@@ -498,7 +501,7 @@ namespace missilesim::fox2
             }
             else
             {
-                sizedToG(spec, 35.0f);
+                structuralCap(spec, 35.0f);
                 spec.aspect = AspectKind::RearCone;
                 spec.rearConeHalfAngleDeg = 70.0f;
                 spec.irccm = IrccmKind::None;
@@ -513,8 +516,8 @@ namespace missilesim::fox2
             unpublishedTrack(spec);
             spec.homing = LaunchHoming::LockBeforeLaunch;
             spec.card = second
-                            ? "All-aspect AD3633. 89 kg, 2.75 m, diameter 0.157 m and span 0.66 m are the unsplit French family table, not a Magic II-only weighing. English Magic II range 20 km and the French unsplit 15 km are not averaged. English Mach 2 conflicts with the French Mach 3 table and is not used. 50 g is the English Wikipedia airframe sentence, not a Matra load table. The 1.8 s arm and 26 s self-destruct are not copied: they were not restated for Magic II. Gimbal 30° is the English sentence and is not split by variant. No TVC. No head-on lock is removed; Magic II is all-aspect."
-                            : "Rear aspect only: any non-frontal target inside a 140° area, modeled as a 70° half-angle from the tail, not the whole rear hemisphere. No head-on lock. 89 kg / 2.75 m / 0.157 m / 0.66 m is the unsplit French family table. English length 2.72 m and range 10 km conflict with the French 2.75 m and unsplit 15 km and are not averaged. 35 g is the English Wikipedia sentence, not a Matra table. Armed 1.8 s after launch, self-destruct 26 s, minimum employment about 0.3 km used as an arm distance and not a separate fuze drawing. Gimbal 30° is not split by variant. No TVC.";
+                            ? "All-aspect AD3633. 89 kg, 2.75 m, diameter 0.157 m and span 0.66 m are the unsplit French family table, not a Magic II-only weighing. English Magic II range 20 km and the French unsplit 15 km are not averaged. English Mach 2 conflicts with the French Mach 3 table and is not used. 50 g is the English Wikipedia airframe sentence, not a Matra load table. It is the structural cap. The aero coefficient stays the AIM-9B shape coefficient. The 1.8 s arm and 26 s self-destruct are not copied: they were not restated for Magic II. Gimbal 30° is the English sentence and is not split by variant. No TVC. No head-on lock is removed; Magic II is all-aspect."
+                            : "Rear aspect only: any non-frontal target inside a 140° area, modeled as a 70° half-angle from the tail, not the whole rear hemisphere. No head-on lock. 89 kg / 2.75 m / 0.157 m / 0.66 m is the unsplit French family table. English length 2.72 m and range 10 km conflict with the French 2.75 m and unsplit 15 km and are not averaged. 35 g is the English Wikipedia sentence, not a Matra table. It is the structural cap. The aero coefficient stays the AIM-9B shape coefficient. Armed 1.8 s after launch, self-destruct 26 s, minimum employment about 0.3 km used as an arm distance and not a separate fuze drawing. Gimbal 30° is not split by variant. No TVC.";
             return resolve(spec);
         }
 
@@ -561,7 +564,13 @@ namespace missilesim::fox2
             spec.spanM = 0.45f;
             standInMotor(spec);
             spec.motorNote = "Published as dual-burn boost/sustain. The split was not published, so the flyout is one burn at the AIM-9B thrust-to-weight, not an invented sustain level. Block 6 has no published kinematic change and is not a second missile.";
-            sizedToG(spec, 50.0f);
+            // 50 g is the structural cap. sizedToG would invert it at the AIM-9B
+            // 10 g dynamic pressure (1.02e5 Pa) and store CN ≈ 19.55. That is not
+            // a measured ASRAAM coefficient, and the CL^2 induced-drag term then
+            // stops the round in a hard turn while the motor is still burning.
+            shapeCoefficient(spec);
+            spec.structuralG = 50.0f;
+            spec.structuralGPublished = true;
             spec.aspect = AspectKind::AllAspect;
             spec.forwardFraction = kAllAspectForwardFraction;
             spec.gimbalDeg = 90.0f;
@@ -575,7 +584,7 @@ namespace missilesim::fox2
             spec.rearHemisphereDesignation = true;
             spec.reducedSmoke = true;
             inferredArm(spec, 300.0f);
-            spec.card = "MBDA 88 kg, 2.9 m, 166 mm. Designation-systems 87 kg is the conflict. Span about 0.45 m. No thrust-vector control: Germany left the programme to get that, and it became IRIS-T. 50 g soon after launch is an aero figure, reached when dynamic pressure is high, not a jet-vane number. ±90° half-angle, lock after launch, including over the shoulder. Range is not fitted: designation-systems says about 15 km and probably higher; Wikipedia says 25+ km. Low-smoke is the designation-systems line; the live MBDA page does not repeat it. Minimum about 300 m is an employment figure used as the arm distance.";
+            spec.card = "MBDA 88 kg, 2.9 m, 166 mm. Designation-systems 87 kg is the conflict. Span about 0.45 m. No thrust-vector control: Germany left the programme to get that, and it became IRIS-T. 50 g soon after launch is the structural cap, reached when dynamic pressure is high, not a jet-vane number. The aero coefficient stays the AIM-9B shape coefficient, so the airframe does not pull 50 g at the dynamic pressure where an AIM-9B reaches 10 g. ±90° half-angle, lock after launch, including over the shoulder. Range is not fitted: designation-systems says about 15 km and probably higher; Wikipedia says 25+ km. Low-smoke is the designation-systems line; the live MBDA page does not repeat it. Minimum about 300 m is an employment figure used as the arm distance.";
             return resolve(spec);
         }
 
@@ -591,7 +600,7 @@ namespace missilesim::fox2
             spec.spanM = 0.480f;
             standInMotor(spec);
             spec.motorNote = "One high-impulse low-smoke solid with thrust vectoring. Dual-pulse is MICA NG, not the fielded IR round. Impulse unpublished; AIM-9B thrust-to-weight stand-in. It will not be stretched to 60 km.";
-            sizedToG(spec, 50.0f);
+            structuralCap(spec, 50.0f);
             spec.aspect = AspectKind::AllAspect;
             spec.forwardFraction = kAllAspectForwardFraction;
             spec.gimbalDeg = 60.0f;
@@ -606,7 +615,7 @@ namespace missilesim::fox2
             spec.reducedSmoke = true;
             spec.armDistanceM = 500.0f;
             spec.armDistancePublished = true;
-            spec.card = "MBDA 112 kg, 3.1 m, 160 mm. Long-chord wings, tail, and thrust vectoring. Rail launch in this sim; ejection exists but is the same inherited velocity. Family minimum 500 m. Structural 50 g. French Wikipedia also says 30 g at several tens of kilometres, which is what low dynamic pressure already does, so there is no second cap. Span 0.480 m is an unfootnoted French infobox. Gimbal was not published: 360° is the launch envelope via lock-after-launch, and 60° is an unpublished terminal basket. Midcourse is inertial toward the predicted intercept, then proportional navigation only after the seeker locks. No loft. The French IR intercept of about 60 km is not the EM 80 km figure and is not a motor fit. Mach 4 is unsplit or EM and is not imposed.";
+            spec.card = "MBDA 112 kg, 3.1 m, 160 mm. Long-chord wings, tail, and thrust vectoring. Rail launch in this sim; ejection exists but is the same inherited velocity. Family minimum 500 m. Structural cap 50 g. The aero coefficient stays the AIM-9B shape coefficient; thrust vectoring supplies the extra load during the burn. French Wikipedia also says 30 g at several tens of kilometres, which is what low dynamic pressure already does, so there is no second cap. Span 0.480 m is an unfootnoted French infobox. Gimbal was not published: 360° is the launch envelope via lock-after-launch, and 60° is an unpublished terminal basket. Midcourse is inertial toward the predicted intercept, then proportional navigation only after the seeker locks. No loft. The French IR intercept of about 60 km is not the EM 80 km figure and is not a motor fit. Mach 4 is unsplit or EM and is not imposed.";
             return resolve(spec);
         }
 
@@ -643,7 +652,7 @@ namespace missilesim::fox2
             spec.diameterM = 0.160f;
             spec.spanM = 0.86f;
             standInMotor(spec);
-            sizedToG(spec, 40.0f);
+            structuralCap(spec, 40.0f);
             spec.aspect = AspectKind::AllAspect;
             spec.forwardFraction = kAllAspectForwardFraction;
             spec.cueDeg = 30.0f;
@@ -653,7 +662,7 @@ namespace missilesim::fox2
             unpublishedTrack(spec);
             spec.homing = LaunchHoming::LockBeforeLaunch;
             inferredArm(spec, 500.0f);
-            spec.card = "WeaponSystems 120 kg and 2.95 m. FAS prints 3.00 m; that conflict is not averaged. Diameter 0.16 m, span 0.86 m, warhead 11 kg. Acquisition about 30° off boresight, in-flight tracking 40°. All-aspect, up to 40 g, no TVC. Arm 500 m is the published minimum firing range, tagged as an arm distance rather than a fuze clock. High-altitude 15 km and low-altitude 5 km are not a motor fit. Mach 3.5 is the brochure speed claim and is not imposed on the stand-in motor.";
+            spec.card = "WeaponSystems 120 kg and 2.95 m. FAS prints 3.00 m; that conflict is not averaged. Diameter 0.16 m, span 0.86 m, warhead 11 kg. Acquisition about 30° off boresight, in-flight tracking 40°. All-aspect, structural cap 40 g, no TVC. The aero coefficient stays the AIM-9B shape coefficient. Arm 500 m is the published minimum firing range, tagged as an arm distance rather than a fuze clock. High-altitude 15 km and low-altitude 5 km are not a motor fit. Mach 3.5 is the brochure speed claim and is not imposed on the stand-in motor.";
             return resolve(spec);
         }
 
@@ -723,7 +732,7 @@ namespace missilesim::fox2
             spec.diameterM = 0.127f;
             spec.spanM = 0.617f;
             standInMotor(spec);
-            sizedToG(spec, 35.0f);
+            structuralCap(spec, 35.0f);
             spec.aspect = AspectKind::AllAspect;
             spec.forwardFraction = kAllAspectForwardFraction;
             spec.gimbalDeg = 40.0f;
@@ -735,7 +744,7 @@ namespace missilesim::fox2
             spec.homing = LaunchHoming::LockBeforeLaunch;
             spec.tailAcquisitionM = 16000.0f;
             inferredArm(spec, 150.0f);
-            spec.card = "AVIC length 2,893 mm; LOEC 2009 prints 2,896 mm and they are not averaged. Diameter 127 mm, span 617 mm, 35 g. Mass was not on the AVIC card. 83 kg is a CASI figure and conflicts with other secondary masses. All-aspect, lock before launch. 16 km is a detection range, used here as the tail lock gate and not as a flight range. The PL-5E angles, 40 g, 500 m, and 14 km are not copied onto the EII. Gimbal 40° is an unpublished sim stop. Mach 3 is the card speed and is not imposed on the stand-in motor.";
+            spec.card = "AVIC length 2,893 mm; LOEC 2009 prints 2,896 mm and they are not averaged. Diameter 127 mm, span 617 mm. 35 g is the structural cap. The aero coefficient stays the AIM-9B shape coefficient. Mass was not on the AVIC card. 83 kg is a CASI figure and conflicts with other secondary masses. All-aspect, lock before launch. 16 km is a detection range, used here as the tail lock gate and not as a flight range. The PL-5E angles, 40 g, 500 m, and 14 km are not copied onto the EII. Gimbal 40° is an unpublished sim stop. Mach 3 is the card speed and is not imposed on the stand-in motor.";
             return resolve(spec);
         }
 
@@ -750,14 +759,14 @@ namespace missilesim::fox2
             spec.diameterM = 0.160f;
             spec.diameterIsAssumption = true;
             standInMotor(spec);
-            sizedToG(spec, 38.0f);
+            structuralCap(spec, 38.0f);
             spec.aspect = AspectKind::RearHemisphere;
             spec.gimbalDeg = 40.0f;
             spec.gimbalPublished = false;
             unpublishedTrack(spec);
             spec.homing = LaunchHoming::LockBeforeLaunch;
             inferredArm(spec, 150.0f);
-            spec.card = "CASI: 115 kg, 2.9 m, range 15 km. The 15 km figure is not a motor fit. CASI omitted the diameter; 160 mm is not a PL-8 measurement and is only the body area used for drag. 'Over 38 g' is modeled as 38 g. Python 3's 120 kg, 40 g, and 30°/40° seeker are not copied. Aspect was not on the CASI row, so this stays rear-aspect rather than silently inheriting Python 3. A later PL-8B helmet claim has no angle. Gimbal 40° is an unpublished sim stop. No TVC and no lock-after-launch.";
+            spec.card = "CASI: 115 kg, 2.9 m, range 15 km. The 15 km figure is not a motor fit. CASI omitted the diameter; 160 mm is not a PL-8 measurement and is only the body area used for drag. 'Over 38 g' is modeled as a 38 g structural cap. The aero coefficient stays the AIM-9B shape coefficient. Python 3's 120 kg, 40 g, and 30°/40° seeker are not copied. Aspect was not on the CASI row, so this stays rear-aspect rather than silently inheriting Python 3. A later PL-8B helmet claim has no angle. Gimbal 40° is an unpublished sim stop. No TVC and no lock-after-launch.";
             return resolve(spec);
         }
 
@@ -881,10 +890,9 @@ namespace missilesim::fox2
             spec.spanM = 0.488f;
             standInMotor(spec);
             spec.motorNote = "Smokeless propellant is published. Thrust and burn were not. AIM-9B thrust-to-weight stand-in. Jane's 23 km is not a motor fit; DefenceWeb's about 20 km is the conflict.";
-            spec.aeroGIsShapeCoefficient = false;
+            shapeCoefficient(spec);
             spec.structuralG = 100.0f;
             spec.structuralGPublished = true;
-            spec.aeroStructuralG = 50.0f;
             spec.coastStructuralG = 50.0f;
             spec.aspect = AspectKind::AllAspect;
             spec.forwardFraction = kAllAspectForwardFraction;
@@ -899,7 +907,7 @@ namespace missilesim::fox2
             spec.homing = LaunchHoming::LockAfterLaunch;
             spec.reducedSmoke = true;
             inferredArm(spec, 150.0f);
-            spec.card = "Denel and Jane's: 93 kg, 2.98 m, 166 mm. Tail span 488 mm is Jane's and is not in the three-line Denel block. 180° look is read as ±90° from the nose. Track 120°/s is published. Jane's 100 g via thrust vectoring during the burn and 50 g after: the aero coefficient is sized to 50 g, and the burn cap is 100 g. Wikipedia's 89 kg, 10 km, 8 s, and 50 g coast are not used. Airforce Technology's 90 kg, 0.16 m, and 10 km are not used. Lock after launch. The rear hemisphere beyond the 90° look was not stated, so designation stays inside that look angle. Vane angle 10° is Fleeman's sizing value, not a Denel measurement.";
+            spec.card = "Denel and Jane's: 93 kg, 2.98 m, 166 mm. Tail span 488 mm is Jane's and is not in the three-line Denel block. 180° look is read as ±90° from the nose. Track 120°/s is published. Jane's 100 g via thrust vectoring during the burn and 50 g after: the burn cap is 100 g and the coast cap is 50 g. The aero coefficient stays the AIM-9B shape coefficient, so the fins alone do not pull 50 g at the dynamic pressure where an AIM-9B reaches 10 g. Wikipedia's 89 kg, 10 km, 8 s, and 50 g coast are not used. Airforce Technology's 90 kg, 0.16 m, and 10 km are not used. Lock after launch. The rear hemisphere beyond the 90° look was not stated, so designation stays inside that look angle. Vane angle 10° is Fleeman's sizing value, not a Denel measurement.";
             return resolve(spec);
         }
 
@@ -1004,8 +1012,10 @@ namespace missilesim::fox2
         }
         else
         {
-            const float sizingG = spec.aeroStructuralG > 0.0f ? spec.aeroStructuralG : spec.structuralG;
-            spec.resolvedCnMax = cnMaxForStructuralG(sizingG, spec.massKg, spec.diameterM);
+            // No measured (g, altitude, Mach) point. A brochure g stays the
+            // acceleration cap above; it does not raise the lift coefficient.
+            spec.resolvedCnMax = kAim9bCnMax;
+            spec.aeroGIsShapeCoefficient = true;
         }
 
         // Structural caps. What the round can actually pull at a given moment

@@ -336,8 +336,10 @@ namespace missilesim::fox2
     // flight-model.md: about 1.02e5 Pa, from 10/4.2 times the 50,000 ft point.
     constexpr float kAim9bStructuralDynamicPressure = 1.02e5f;
 
-    // CN that lets a missile reach structuralG at that same dynamic pressure.
-    // Used only when a structural g was actually published. Mass is launch mass.
+    // Algebra for a g that was measured at this dynamic pressure. AIM-9B is the
+    // only round here with that measurement, and it stores 5.49 directly.
+    // Do not pass a brochure maximum g: 1.02e5 Pa is where the AIM-9B reaches
+    // 10 g, not the flight condition of any later airframe. Mass is launch mass.
     inline float cnMaxForStructuralG(float structuralG, float massKg, float diameterM)
     {
         const float area = bodyArea(diameterM);

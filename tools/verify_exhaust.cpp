@@ -144,8 +144,15 @@ void sceneChecks(bool motion) {
     Missile missile({0, 100, 0}, {0, 0, 240});
     missile.setThrustEnabled(true); missile.setThrottle(1); missile.setFuel(100);
     auto sockets = renderer.getExhaustSockets(jet);
-    require(sockets.size() == 2 && std::abs(sockets[0].radius - .267966f) < 1e-5f &&
-            std::abs(sockets[0].position.z + 4.98782f) < 1e-4f, "jet sockets match normalized outlet geometry");
+    for (const auto &socket : sockets)
+        std::cout << "Jet socket " << socket.position.x << ' ' << socket.position.y << ' '
+                  << socket.position.z << " radius " << socket.radius << '\n';
+    // Rafale C: 15.30 m length, 0.365 m outlet radius and +/-0.630 m spacing.
+    // The loader normalizes to 2 m, then ReviewTarget's scale is 5.
+    require(sockets.size() == 2 && std::abs(sockets[0].radius - .365f * 10.f / 15.30f) < 1e-5f &&
+            std::abs(sockets[0].position.z + 5.f) < 1e-4f &&
+            std::abs(glm::distance(sockets[0].position, sockets[1].position) - 1.26f * 10.f / 15.30f) < 1e-4f,
+            "Rafale sockets match normalized outlet geometry");
     jet.acceleration = {22, 0, 0};
     auto banked = renderer.getExhaustSockets(jet);
     require(std::abs(glm::length(sockets[0].position - sockets[1].position) -

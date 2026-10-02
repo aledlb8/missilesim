@@ -8,10 +8,10 @@
 
 #include <glm/gtc/quaternion.hpp>
 
-// Player fighter: the six-degree-of-freedom F-16 in src/flight (NASA TP-1538
-// data, TP-1538 fly-by-wire limits, mouse-aim instructor). Integrated by
-// Application, not by PhysicsEngine::m_objects; this class mirrors the jet's
-// state into PhysicsObject for the renderer, HUD and audio.
+// Player fighter. The mesh is always models/jet.obj. The F-16 card flies the
+// NASA TP-1538 airframe; every other card flies that card's point mass.
+// Integrated by Application, not by PhysicsEngine::m_objects; this class
+// mirrors the jet's state into PhysicsObject for the renderer, HUD and audio.
 class Fighter : public PhysicsObject
 {
 public:
@@ -20,6 +20,9 @@ public:
     static constexpr float kMaxLever = 1.1f;
 
     Fighter();
+
+    // Replaces the flight model and keeps the current position, velocity, and nose.
+    void setAircraft(const char *aircraftId);
 
     std::string getType() const override { return "Fighter"; }
     float getRadius() const { return m_radius; }
@@ -35,18 +38,18 @@ public:
     // 0..1 of military power, for plumes and the HUD bar.
     float getThrottle() const { return std::min(m_lever, 1.0f); }
     bool isAfterburner() const { return m_lever > kAfterburnerDetent + 1.0e-3f; }
-    float getEnginePower() const { return m_jet.airframe().enginePower(); }
+    float getEnginePower() const { return m_jet.enginePower(); }
 
-    glm::vec3 getNose() const { return m_jet.airframe().forward(); }
-    glm::vec3 getRight() const { return m_jet.airframe().right(); }
-    glm::vec3 getUp() const { return m_jet.airframe().up(); }
+    glm::vec3 getNose() const { return m_jet.forward(); }
+    glm::vec3 getRight() const { return m_jet.right(); }
+    glm::vec3 getUp() const { return m_jet.up(); }
     // Interpolated attitude for drawing (see PhysicsObject::setRenderBlend).
     glm::vec3 getRenderNose() const { return m_renderAttitude * glm::vec3(1.0f, 0.0f, 0.0f); }
     glm::vec3 getRenderUp() const { return m_renderAttitude * glm::vec3(0.0f, 0.0f, -1.0f); }
 
-    float getLoadFactor() const { return m_jet.airframe().telemetry().normalLoad; }
-    float getAngleOfAttack() const { return m_jet.airframe().telemetry().alpha; }
-    float getMach() const { return m_jet.airframe().telemetry().mach; }
+    float getLoadFactor() const { return m_jet.telemetry().normalLoad; }
+    float getAngleOfAttack() const { return m_jet.telemetry().alpha; }
+    float getMach() const { return m_jet.telemetry().mach; }
     const missilesim::flight::Jet &jet() const { return m_jet; }
 
     void updateFlight(float deltaTime, float density, float speedOfSound, float gravity);

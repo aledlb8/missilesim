@@ -9,6 +9,23 @@
     "ground_collision_enabled": true,
     "ground_restitution": 0.5
   },
+  "terrain": {
+    "kind": "mountains",
+    "base_height_m": 0.0,
+    "apron_radius_m": 600.0,
+    "hill_amplitude_m": 60.0,
+    "seed": 1,
+    "mountain_height_m": 2100.0,
+    "valley_radius_m": 3200.0,
+    "coast_radius_m": 12500.0,
+    "water_below_base_m": 12.0,
+    "ridge_height_m": 320.0,
+    "ridge_distance_m": 2400.0,
+    "ridge_half_width_m": 700.0,
+    "ridge_bearing_deg": 0.0,
+    "extent_half_m": 16000.0,
+    "cell_size_m": 64.0
+  },
   "visualization": {
     "show_trajectory": true,
     "show_target_info": true,

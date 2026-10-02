@@ -1,5 +1,6 @@
 #include "Target.h"
 #include "Missile.h"
+#include "sim/Terrain.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/constants.hpp>
@@ -500,8 +501,9 @@ float Target::computeDesiredSpeed(float referenceDistance) const
 
 float Target::computeDesiredAltitude(float referenceDistance, float currentSpeed) const
 {
-    const float minAltitude = std::max(m_radius + 12.0f, kMinimumAltitudeMeters);
-    const float maxAltitude = std::max(minAltitude + 120.0f, glm::clamp(m_aiConfig.preferredDistance * 0.35f, 180.0f, 700.0f));
+    const float minAltitude = std::max(m_radius + 12.0f, kMinimumAltitudeMeters) + terrainFloorAhead();
+    const float maxAltitude = std::max(minAltitude + 120.0f,
+                                       glm::clamp(m_aiConfig.preferredDistance * 0.35f, 180.0f, 700.0f) + terrainCeilingLift());
     const float minSpeed = std::max(m_aiConfig.minSpeed, kMinimumSpeedMetersPerSecond);
     const float maxSpeed = std::max(m_aiConfig.maxSpeed, minSpeed + 10.0f);
     const float midSpeed = minSpeed + ((maxSpeed - minSpeed) * 0.5f);
@@ -535,10 +537,38 @@ float Target::computeDesiredAltitude(float referenceDistance, float currentSpeed
     return glm::clamp(desiredAltitude, minAltitude, maxAltitude);
 }
 
+float Target::terrainFloorHere() const
+{
+    return m_terrain != nullptr ? m_terrain->heightAt(m_position) : 0.0f;
+}
+
+float Target::terrainFloorAhead() const
+{
+    if (m_terrain == nullptr)
+    {
+        return 0.0f;
+    }
+    // Look a few seconds down the current track so the climb starts before
+    // the slope does.
+    const glm::vec3 track(m_velocity.x, 0.0f, m_velocity.z);
+    float floor = m_terrain->heightAt(m_position);
+    for (const float seconds : {2.0f, 4.0f, 6.0f})
+    {
+        floor = std::max(floor, m_terrain->heightAt(m_position + track * seconds));
+    }
+    return floor;
+}
+
+float Target::terrainCeilingLift() const
+{
+    return m_terrain != nullptr ? std::max(m_terrain->maxHeight(), 0.0f) : 0.0f;
+}
+
 void Target::enforceAirspaceConstraint()
 {
-    const float minimumAltitude = std::max(m_radius + 2.0f, kMinimumAltitudeMeters);
-    const float maximumAltitude = std::max(minimumAltitude + 120.0f, glm::clamp(m_aiConfig.preferredDistance * 0.4f, 220.0f, 800.0f));
+    const float minimumAltitude = std::max(m_radius + 2.0f, kMinimumAltitudeMeters) + terrainFloorHere();
+    const float maximumAltitude = std::max(minimumAltitude + 120.0f,
+                                           glm::clamp(m_aiConfig.preferredDistance * 0.4f, 220.0f, 800.0f) + terrainCeilingLift());
     const float patrolRadius = std::max(m_aiConfig.preferredDistance, kReferenceDistanceFloorMeters);
     const float maximumHorizontalDistance = std::max(patrolRadius * (m_threatAssessment.active ? 1.90f : 1.45f),
                                                      patrolRadius + (m_threatAssessment.active ? 1600.0f : 700.0f));

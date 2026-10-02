@@ -8,14 +8,15 @@ remain separate particles downstream. This is an artistic real-time approximatio
 not a combustion or compressible-flow solver.
 
 `export_aircraft_obj.py` derives `# exhaust x y z dx dy dz radius` comments from the
-actual nozzle outlet rings in `aircraft.glb`. The OBJ loader applies the mesh's
+actual nozzle outlet rings in `rafale-c.glb` (fighter) and `aircraft.glb` (missile). The OBJ loader applies the mesh's
 pre-transform and normalization to those sockets. Rendering and attachments then
 share the same object matrix, including jet bank and scale. The exporter also
 adds recessed dark fighter nozzle baffles to hide the open tube and intersecting
-tailplane geometry in the source asset. Regenerate both models with:
+tailplane geometry in the older source asset. Regenerate the current models with:
 
 ```powershell
-python tools/export_aircraft_obj.py assets/models/aircraft.glb
+python tools/export_aircraft_obj.py assets/models/rafale-c.glb --only FIGHTER
+python tools/export_aircraft_obj.py assets/models/aircraft.glb --only MISSILE
 ```
 
 Replacement OBJ models need their own socket comments; missing metadata emits no

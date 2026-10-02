@@ -171,25 +171,23 @@ void Application::processInput(float deltaTime)
         }
     }
 
-    if (pressed(GLFW_KEY_R))
+    if (pressed(GLFW_KEY_R) && m_world)
     {
-        m_seekerCueEnabled = !m_seekerCueEnabled;
-        if (!m_seekerCueEnabled && !m_missileInFlight && m_missile && !m_missile->isFox2())
-        {
-            m_missile->clearTarget();
-        }
+        // Uncage (or cage) the seeker of the round that fires next. Caging
+        // drops its designation.
+        m_world->setSeekerUncaged(!m_world->seekerUncaged());
     }
 
     updatePreLaunchSeekerLock();
 
     const bool flyingFighter = m_playerRole == PlayerRole::Fighter && m_cameraMode == CameraMode::FIGHTER_JET;
-    if (pressed(GLFW_KEY_X) && flyingFighter && m_fighter)
+    if (pressed(GLFW_KEY_X) && flyingFighter && fighter())
     {
-        m_fighter->toggleAfterburner();
+        fighter()->toggleAfterburner();
     }
     if (pressed(GLFW_KEY_G) && flyingFighter)
     {
-        rearmFighter();
+        rearm();
     }
 
     sampleFighterControls(deltaTime);

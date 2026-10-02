@@ -66,6 +66,12 @@ public:
     Target *getTargetObject() const { return m_targetObject; }
 
     void clearTarget();
+    // The flare is leaving the world: drop every reference the seeker holds
+    // to it, so a later flare allocated at the same address is never
+    // mistaken for it.
+    void forgetFlare(const Flare *flare);
+    // The flare the seeker is currently tracking (null when on the airframe).
+    const Flare *getTrackedFlare() const { return m_trackedFlare; }
 
     bool hasTarget() const { return m_hasTarget; }
     const glm::vec3 &getTargetPosition() const { return m_targetPosition; }
@@ -112,7 +118,8 @@ public:
     const glm::vec3 &getBodyForward() const { return m_bodyForward; }
     void setBodyForward(const glm::vec3 &forward);
     void beginFox2Flight(const glm::vec3 &nose, bool irLock);
-    float getFuelCapacity() const { return (m_fox2Active && m_fuelCapacity > 0.0f) ? m_fuelCapacity : m_fuel; }
+    // Propellant (or, for most catalog rounds, burn-timer units) at ignition.
+    float getFuelCapacity() const { return m_fuelCapacity > 0.0f ? m_fuelCapacity : m_fuel; }
     bool hasFox2InfraredLock() const { return m_fox2Active && m_fox2Locked; }
     bool fox2GuidanceExpired() const { return m_fox2GuidanceExpired; }
     bool fox2SeekerLocked() const { return m_fox2Locked; }

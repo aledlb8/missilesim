@@ -4,6 +4,7 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -16,10 +17,16 @@ class PhysicsObject;
 class SceneEffects;
 
 namespace pbr { class PBRPipeline; }
+namespace missilesim::sim { class Terrain; }
 
 class Renderer
 {
 public:
+    // A 1 m near plane: the closest camera (the missile chase) sits 8 m back,
+    // and the 24-bit depth buffer keeps metre-level precision at 10 km, so
+    // distant slopes and shorelines do not flicker.
+    static constexpr float kNearPlane = 1.0f;
+
     struct ExhaustSocket
     {
         glm::vec3 position{0.0f};
@@ -40,7 +47,9 @@ public:
     void renderEnvironment();
     void render(PhysicsObject *object);
     void renderAll(const std::vector<PhysicsObject *> &objects);
-    void setEnvironmentMetrics(float groundHalfExtent, float airspaceHalfExtent, float airspaceHeight);
+    // The ground mesh is built from this terrain's own samples, so the drawn
+    // surface is the one the simulation collides with. Null draws flat ground.
+    void setTerrain(std::shared_ptr<const missilesim::sim::Terrain> terrain);
 
     // Visual effects
     void renderExplosion(const glm::vec3 &position, float size);
@@ -123,8 +132,6 @@ public:
     float getPBRFogDensityScale() const;
     void setEffectLightsEnabled(bool enabled);
     bool getEffectLightsEnabled() const;
-    void setWorldGuidesEnabled(bool enabled) { m_worldGuidesEnabled = enabled; }
-    bool getWorldGuidesEnabled() const { return m_worldGuidesEnabled; }
     void setSunOrientation(float azimuthDeg, float elevationDeg, float intensity);
     void getSunOrientation(float &azimuthDeg, float &elevationDeg, float &intensity) const;
 
@@ -192,9 +199,11 @@ private:
     void uploadFloorMesh();
     void renderObject(PhysicsObject *object, const glm::mat4 &modelMatrix);
     void renderFloor();
-    void renderWorldGuides();
-    void renderGroundCircle(float radius, const glm::vec3 &color, int segments = 48);
-    void renderAirspaceBeacon(const glm::vec3 &basePosition, float height, const glm::vec3 &color);
+    void renderWater();
+    void createWaterMesh();
+    void uploadTerrainSurface();
+    glm::vec3 keepCameraAboveGround(const glm::vec3 &position) const;
+    static constexpr float kCameraGroundClearance = 3.0f;
     bool loadObjModel(const std::string &relativePath,
                       std::vector<Vertex> &vertices,
                       std::vector<unsigned int> &indices,
@@ -247,6 +256,14 @@ private:
     GLuint m_floorVAO;
     GLuint m_floorVBO;
     GLuint m_floorEBO;
+    // Water: a plane at the terrain's water level that follows the camera,
+    // and the land heights the water shader reads for depth and shoreline.
+    GLuint m_waterVAO = 0;
+    GLuint m_waterVBO = 0;
+    GLuint m_waterEBO = 0;
+    GLsizei m_waterIndexCount = 0;
+    GLuint m_heightmapTexture = 0;
+    std::chrono::steady_clock::time_point m_startTime = std::chrono::steady_clock::now();
     std::vector<Vertex> m_floorVertices;
     std::vector<unsigned int> m_floorIndices;
 
@@ -281,10 +298,11 @@ private:
     // Viewport dimensions
     int m_viewportWidth = 1280;
     int m_viewportHeight = 720;
-    float m_groundHalfExtent = 1200.0f;
-    float m_airspaceHalfExtent = 600.0f;
-    float m_airspaceHeight = 320.0f;
-    float m_sceneFarPlane = 20000.0f;
+    // The world has a fixed size: the flat floor (or the skirt past a dry
+    // heightfield) reaches this far, and the far plane sees the horizon.
+    float m_groundHalfExtent = 40000.0f;
+    std::shared_ptr<const missilesim::sim::Terrain> m_terrain;
+    float m_sceneFarPlane = 60000.0f;
 
     std::unique_ptr<SceneEffects> m_sceneEffects;
     std::vector<ExhaustSocket> m_missileExhaustSockets;
@@ -296,9 +314,6 @@ private:
     std::vector<EffectLight> m_effectLights;
     std::vector<pbr::PointLight> m_effectLightScratch;
     bool m_effectLightsEnabled = true;
-
-    // Airspace boundary box, range rings, beacons and altitude ticks
-    bool m_worldGuidesEnabled = false;
 
     // Mesh data
     std::vector<Vertex> m_vertices;

@@ -24,6 +24,7 @@
 #include <glm/gtx/norm.hpp>
 
 #include "audio/AudioSystem.h"
+#include "flight/AircraftCatalog.h"
 #include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
@@ -169,11 +170,6 @@ bool Application::loadSettings()
     m_invertMouseY = readBool("invert_mouse_y", m_invertMouseY);
     m_cameraSmoothing = std::clamp(readFloat("camera_smoothing", m_cameraSmoothing), 3.0f, 40.0f);
 
-    if (m_renderer)
-    {
-        m_renderer->setWorldGuidesEnabled(
-            readBool("world_guides_enabled", m_renderer->getWorldGuidesEnabled()));
-    }
 
     // Graphics settings: apply straight to the live renderer (created before
     // loadSettings runs), using its current values as fallbacks.
@@ -200,12 +196,12 @@ bool Application::loadSettings()
             std::clamp(readFloat("sun_intensity", sunIntensity), 0.5f, 8.0f));
     }
 
-    if (m_physicsEngine)
+    if (physics())
     {
-        m_physicsEngine->setGroundEnabled(m_groundEnabled);
-        m_physicsEngine->setGroundRestitution(m_groundRestitution);
-        m_physicsEngine->setGravity(m_savedGravity);
-        m_physicsEngine->setAirDensity(m_savedAirDensity);
+        physics()->setGroundEnabled(m_groundEnabled);
+        physics()->setGroundRestitution(m_groundRestitution);
+        physics()->setGravity(m_savedGravity);
+        physics()->setAirDensity(m_savedAirDensity);
     }
 
     if (m_renderer)
@@ -219,6 +215,18 @@ bool Application::loadSettings()
     m_hudVisible = readBool("hud_visible", m_hudVisible);
     m_showUI = readBool("control_panel_visible", m_showUI);
     setVsyncEnabled(readBool("vsync", m_vsyncEnabled));
+    const std::string aircraftId = readString("aircraft_id", m_aircraftId);
+    const missilesim::flight::AircraftCard *aircraft = missilesim::flight::findAircraft(aircraftId.c_str());
+    m_aircraftId = aircraft != nullptr && aircraft->flyable ? aircraft->id : missilesim::flight::defaultAircraftId();
+    // The player chooses mountains or flat ground; the ridge is a test
+    // fixture, so a saved "ridge" falls back to the configured scenery.
+    const std::string terrainName = readString("terrain", missilesim::sim::terrainKindName(m_terrainKind));
+    missilesim::sim::TerrainKind savedTerrain = m_terrainKind;
+    if (missilesim::sim::parseTerrainKind(terrainName.c_str(), savedTerrain) &&
+        savedTerrain != missilesim::sim::TerrainKind::Ridge)
+    {
+        m_terrainKind = savedTerrain;
+    }
     const std::string playerRole = readString("player_role", "sam");
     if (playerRole == "fighter")
     {
@@ -252,8 +260,8 @@ std::string Application::buildSettingsSnapshot() const
 {
     std::ostringstream output;
 
-    const float gravity = m_physicsEngine ? m_physicsEngine->getGravity() : m_savedGravity;
-    const float airDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity;
+    const float gravity = physics() ? physics()->getGravity() : m_savedGravity;
+    const float airDensity = physics() ? physics()->getAirDensity() : m_savedAirDensity;
     // The live FOV moves with mouse-aim zoom; the saved one is the user's choice.
     const float cameraFOV = m_savedCameraFOV;
     const float cameraSpeed = m_renderer ? m_renderer->getCameraSpeed() : m_savedCameraSpeed;
@@ -294,8 +302,6 @@ std::string Application::buildSettingsSnapshot() const
     output << "target_max_speed=" << m_targetAIConfig.maxSpeed << "\n";
     output << "camera_fov=" << cameraFOV << "\n";
     output << "camera_speed=" << cameraSpeed << "\n";
-    output << "world_guides_enabled="
-           << formatBoolValue(m_renderer ? m_renderer->getWorldGuidesEnabled() : false) << "\n";
     output << "display_mode=" << displayModeName(m_displayMode) << "\n";
     output << "vsync=" << formatBoolValue(m_vsyncEnabled) << "\n";
     output << "ui_scale=" << m_uiScale << "\n";
@@ -303,6 +309,8 @@ std::string Application::buildSettingsSnapshot() const
     output << "control_panel_visible=" << formatBoolValue(m_showUI) << "\n";
     output << "player_role=" << (m_playerRole == PlayerRole::Fighter ? "fighter" : "sam") << "\n";
     output << "fox2_id=" << m_fox2Id << "\n";
+    output << "aircraft_id=" << m_aircraftId << "\n";
+    output << "terrain=" << missilesim::sim::terrainKindName(m_terrainKind) << "\n";
 
     if (m_renderer && m_renderer->hasPBR())
     {
@@ -342,8 +350,8 @@ void Application::saveSettings()
             return;
         }
 
-        const float gravity = m_physicsEngine ? m_physicsEngine->getGravity() : m_savedGravity;
-        const float airDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity;
+        const float gravity = physics() ? physics()->getGravity() : m_savedGravity;
+        const float airDensity = physics() ? physics()->getAirDensity() : m_savedAirDensity;
         const float cameraSpeed = m_renderer ? m_renderer->getCameraSpeed() : m_savedCameraSpeed;
 
         m_savedGravity = gravity;

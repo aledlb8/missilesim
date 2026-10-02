@@ -1,5 +1,7 @@
 #include "Fighter.h"
 
+#include "flight/AircraftCatalog.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -20,6 +22,23 @@ Fighter::Fighter()
     place(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 250.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
+void Fighter::setAircraft(const char *aircraftId)
+{
+    const glm::vec3 position = m_position;
+    const glm::vec3 velocity = m_velocity;
+    const glm::vec3 nose = getNose();
+    const float lever = m_lever;
+    const float leverBeforeAfterburner = m_leverBeforeAfterburner;
+    m_jet.configure(aircraftId);
+    setMass(m_jet.mass());
+    place(position, velocity, nose);
+    m_lever = lever;
+    m_leverBeforeAfterburner = leverBeforeAfterburner;
+    missilesim::flight::InstructorInput input;
+    input.aimDirection = nose;
+    setInstructorInput(input, 0.0f);
+}
+
 void Fighter::place(const glm::vec3 &position, const glm::vec3 &velocity, const glm::vec3 &nose)
 {
     const glm::vec3 forward = unitOr(nose, glm::vec3(0.0f, 0.0f, 1.0f));
@@ -33,7 +52,7 @@ void Fighter::place(const glm::vec3 &position, const glm::vec3 &velocity, const 
     m_stepStartPosition = position;
     m_renderPosition = position;
     m_previousRenderPosition = position;
-    m_stepStartAttitude = m_jet.airframe().attitude();
+    m_stepStartAttitude = m_jet.attitude();
     m_renderAttitude = m_stepStartAttitude;
 }
 
@@ -66,12 +85,10 @@ void Fighter::toggleAfterburner()
 
 void Fighter::syncFromJet()
 {
-    const auto &airframe = m_jet.airframe();
-    m_position = airframe.position();
-    m_velocity = airframe.velocity();
+    m_position = m_jet.position();
+    m_velocity = m_jet.velocity();
     // Felt acceleration direction for anything that banks visuals off it.
-    const glm::vec3 &body = airframe.telemetry().bodyAcceleration;
-    m_acceleration = airframe.attitude() * body;
+    m_acceleration = m_jet.attitude() * m_jet.telemetry().bodyAcceleration;
 }
 
 void Fighter::updateFlight(float deltaTime, float density, float speedOfSound, float gravity)
@@ -89,11 +106,11 @@ void Fighter::updateFlight(float deltaTime, float density, float speedOfSound, f
 void Fighter::beginFixedStep()
 {
     PhysicsObject::beginFixedStep();
-    m_stepStartAttitude = m_jet.airframe().attitude();
+    m_stepStartAttitude = m_jet.attitude();
 }
 
 void Fighter::setRenderBlend(float alpha)
 {
     PhysicsObject::setRenderBlend(alpha);
-    m_renderAttitude = glm::normalize(glm::slerp(m_stepStartAttitude, m_jet.airframe().attitude(), std::clamp(alpha, 0.0f, 1.0f)));
+    m_renderAttitude = glm::normalize(glm::slerp(m_stepStartAttitude, m_jet.attitude(), std::clamp(alpha, 0.0f, 1.0f)));
 }

@@ -17,6 +17,26 @@
 
 namespace pbr {
 
+/// How the legacy-mesh shader treats a mesh.
+enum class Surface
+{
+    Authored, // its own albedo/material
+    Terrain,  // ground materials from height, slope and noise
+    Water,    // drawn after the opaque scene, blended, no shadow
+};
+
+/// The heightfield the terrain and water shaders read.
+struct TerrainSurface
+{
+    GLuint heightmap = 0;          // R32F land heights, 0 for none
+    glm::vec2 origin{0.0f};        // world x, z of sample (0, 0)
+    float size = 0.0f;             // world span of the grid
+    float outerBed = 0.0f;         // land height past the grid
+    bool hasWater = false;
+    float waterLevel = 0.0f;
+    float snowLine = 1400.0f;      // metres above the water (or 0) where snow settles
+};
+
 class PBRPipeline
 {
 public:
@@ -38,6 +58,14 @@ public:
     // ---- Scene configuration ----
 
     void setSkybox(const std::string &skyboxName, int resolution = 512);
+    /// Use the procedural sky (sky.glsl) for the background and for
+    /// image-based lighting. Call refreshSky() after moving the sun.
+    void setProceduralSky(int resolution = 256);
+    /// Re-captures the procedural sky into the lighting maps.
+    void refreshSky();
+    void setTerrainSurface(const TerrainSurface &surface) { m_terrainSurface = surface; }
+    /// Seconds since start, for drifting clouds and moving water.
+    void setTime(float seconds) { m_time = seconds; }
     void setDirectionalLight(const DirectionalLight &light);
     void setPointLights(const std::vector<PointLight> &lights);
 
@@ -77,7 +105,8 @@ public:
                           const glm::vec3 &albedo,
                           float metallic, float roughness,
                           bool useVertexColor = false,
-                          bool useVertexMaterial = false);
+                          bool useVertexMaterial = false,
+                          Surface surface = Surface::Authored);
 
     /// Execute shadows, depth prepass, light culling, shading, skybox, MSAA resolve.
     void executeRenderPass();
@@ -118,6 +147,7 @@ private:
         float roughness;
         bool useVertexColor;
         bool useVertexMaterial;
+        Surface surface;
     };
 
     // Initialization stages
@@ -130,9 +160,14 @@ private:
     void lightCulling();
     void mainShadingPass();
     void renderSkybox();
+    void waterPass();
+    void drawLegacy(const LegacyDrawCall &dc, const glm::mat4 &VP);
 
     // Shared setup for PBR shaders
     void bindPBRUniforms(Shader &shader);
+    void bindSkyUniforms(Shader &shader);
+    void bindTerrainUniforms(Shader &shader);
+    void rebuildLighting();
 
     // Dimensions
     int m_width = 0;
@@ -207,6 +242,10 @@ private:
 
     bool m_initialized = false;
     bool m_skyboxReady = false;
+    bool m_proceduralSky = false;
+    int m_skyResolution = 256;
+    float m_time = 0.0f;
+    TerrainSurface m_terrainSurface;
 };
 
 } // namespace pbr

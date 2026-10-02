@@ -49,7 +49,8 @@ namespace missilesim::fox2
 
         float structuralG = 0.0f;
         bool structuralGPublished = false;
-        // Aero CN is sized to this g when it differs from the burn cap (A-Darter coasts at 50 g).
+        // Not a lift coefficient. Burn and coast limits are structuralG and
+        // coastStructuralG. A brochure g is not inverted into CN.
         float aeroStructuralG = 0.0f;
         float coastStructuralG = 0.0f;
         bool aeroGIsShapeCoefficient = false;

@@ -45,39 +45,41 @@ using missilesim::application::detail::trimWhitespace;
 Application::TrajectoryPreviewConfig Application::captureTrajectoryPreviewConfig() const
 {
     TrajectoryPreviewConfig config;
-    if (!m_missile)
+    const Missile *missile = focusMissile();
+    if (!missile)
     {
         return config;
     }
 
-    config.thrustDirection = m_missile->getThrustDirection();
-    config.dryMass = m_missile->getDryMass();
-    config.dragCoefficient = m_missile->getDragCoefficient();
-    config.crossSectionalArea = m_missile->getCrossSectionalArea();
-    config.liftCoefficient = m_missile->getLiftCoefficient();
-    config.guidanceEnabled = m_missile->isGuidanceEnabled();
-    config.navigationGain = m_missile->getNavigationGain();
-    config.maxSteeringForce = m_missile->getMaxSteeringForce();
-    config.trackingAngle = m_missile->getTrackingAngle();
-    config.proximityFuseRadius = m_missile->getProximityFuseRadius();
-    config.countermeasureResistance = m_missile->getCountermeasureResistance();
-    config.terrainAvoidanceEnabled = m_missile->isTerrainAvoidanceEnabled();
-    config.terrainClearance = m_missile->getTerrainClearance();
-    config.terrainLookAheadTime = m_missile->getTerrainLookAheadTime();
-    config.thrust = m_missile->getThrust();
-    config.thrustEnabled = m_missile->isThrustEnabled();
-    config.fuel = m_missile->getFuel();
-    config.fuelConsumptionRate = m_missile->getFuelConsumptionRate();
+    config.thrustDirection = missile->getThrustDirection();
+    config.dryMass = missile->getDryMass();
+    config.dragCoefficient = missile->getDragCoefficient();
+    config.crossSectionalArea = missile->getCrossSectionalArea();
+    config.liftCoefficient = missile->getLiftCoefficient();
+    config.guidanceEnabled = missile->isGuidanceEnabled();
+    config.navigationGain = missile->getNavigationGain();
+    config.maxSteeringForce = missile->getMaxSteeringForce();
+    config.trackingAngle = missile->getTrackingAngle();
+    config.proximityFuseRadius = missile->getProximityFuseRadius();
+    config.countermeasureResistance = missile->getCountermeasureResistance();
+    config.terrainAvoidanceEnabled = missile->isTerrainAvoidanceEnabled();
+    config.terrainClearance = missile->getTerrainClearance();
+    config.terrainLookAheadTime = missile->getTerrainLookAheadTime();
+    config.thrust = missile->getThrust();
+    config.thrustEnabled = missile->isThrustEnabled();
+    config.fuel = missile->getFuel();
+    config.fuelConsumptionRate = missile->getFuelConsumptionRate();
     config.trajectoryPoints = m_trajectoryPoints;
     config.trajectoryTime = m_trajectoryTime;
-    config.gravityMagnitude = m_physicsEngine ? m_physicsEngine->getGravity() : 9.81f;
-    config.airDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : m_savedAirDensity;
+    config.gravityMagnitude = physics() ? physics()->getGravity() : 9.81f;
+    config.airDensity = physics() ? physics()->getAirDensity() : m_savedAirDensity;
     return config;
 }
 
 bool Application::shouldRefreshTrajectoryPreviewCache(Target *target, const TrajectoryPreviewConfig &config) const
 {
-    if (!m_missile || !target)
+    const Missile *missile = focusMissile();
+    if (!missile || !target)
     {
         return false;
     }
@@ -127,8 +129,8 @@ bool Application::shouldRefreshTrajectoryPreviewCache(Target *target, const Traj
         return false;
     }
 
-    const glm::vec3 missilePos = m_missile->getPosition();
-    const glm::vec3 missileVel = m_missile->getVelocity();
+    const glm::vec3 missilePos = missile->getPosition();
+    const glm::vec3 missileVel = missile->getVelocity();
     const glm::vec3 targetPos = target->getPosition();
     const glm::vec3 targetVel = target->getVelocity();
 
@@ -145,13 +147,14 @@ bool Application::shouldRefreshTrajectoryPreviewCache(Target *target, const Traj
 void Application::updateTrajectoryPreviewCache(Target *target, const TrajectoryPreviewConfig &config)
 {
     invalidateTrajectoryPreviewCache();
-    if (!m_missile || !target || config.trajectoryPoints < 2 || config.trajectoryTime <= 0.0f)
+    const Missile *missile = focusMissile();
+    if (!missile || !target || config.trajectoryPoints < 2 || config.trajectoryTime <= 0.0f)
     {
         return;
     }
 
-    const glm::vec3 missilePos = m_missile->getPosition();
-    const glm::vec3 missileVel = m_missile->getVelocity();
+    const glm::vec3 missilePos = missile->getPosition();
+    const glm::vec3 missileVel = missile->getVelocity();
     const glm::vec3 targetPos = target->getPosition();
     const glm::vec3 targetVel = target->getVelocity();
 
@@ -171,7 +174,7 @@ void Application::updateTrajectoryPreviewCache(Target *target, const TrajectoryP
     simMissile.setTerrainAvoidanceEnabled(config.terrainAvoidanceEnabled);
     simMissile.setTerrainClearance(config.terrainClearance);
     simMissile.setTerrainLookAheadTime(config.terrainLookAheadTime);
-    simMissile.setGroundReferenceAltitude(m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f);
+    simMissile.setGroundReferenceAltitude(physics() ? physics()->getGroundLevel() : 0.0f);
     simMissile.setThrust(config.thrust);
     simMissile.setThrustEnabled(config.thrustEnabled);
     simMissile.setFuel(config.fuel);
@@ -237,7 +240,7 @@ void Application::invalidateTrajectoryPreviewCache()
 
 void Application::renderPredictedTrajectory()
 {
-    if (!m_missile || !m_renderer)
+    if (!focusMissile() || !m_renderer)
     {
         return;
     }

@@ -1,5 +1,6 @@
 #include "HandlingChecks.h"
 
+#include "flight/AircraftCatalog.h"
 #include "flight/Jet.h"
 #include "objects/Fighter.h"
 #include "physics/Atmosphere.h"
@@ -195,8 +196,8 @@ namespace
                 input.aimDirection = direction(0.0f, 12.0f * static_cast<float>(frame) * sampleTime);
                 moving.observeAim(input.aimDirection, sampleTime);
                 stationary.observeAim(input.aimDirection, 0.0f);
-                const auto withMotion = moving.update(jet.airframe(), input, kGravity, kStep);
-                const auto withoutMotion = stationary.update(jet.airframe(), input, kGravity, kStep);
+                const auto withMotion = moving.update(jet.view(), input, kGravity, kStep);
+                const auto withoutMotion = stationary.update(jet.view(), input, kGravity, kStep);
                 if (frame >= fps)
                 {
                     const float rate = glm::degrees(withMotion.pitchRate - withoutMotion.pitchRate);
@@ -211,8 +212,8 @@ namespace
             input.aimDirection = direction(0.0f, -5.0f);
             moving.observeAim(input.aimDirection, 0.0f);
             stationary.observeAim(input.aimDirection, 0.0f);
-            const auto resumed = moving.update(jet.airframe(), input, kGravity, kStep);
-            const auto fresh = stationary.update(jet.airframe(), input, kGravity, kStep);
+            const auto resumed = moving.update(jet.view(), input, kGravity, kStep);
+            const auto fresh = stationary.update(jet.view(), input, kGravity, kStep);
             checks.below(std::abs(resumed.pitchRate - fresh.pitchRate), 1.0e-6f, "pause/recenter clears aim motion");
         }
     }
@@ -296,11 +297,188 @@ namespace
             checks.below(glm::distance(result.position, reference.position), 15.0f, "independent physics timestep position");
         }
     }
+
+    void checkHighSpeedTurn(Checks &checks)
+    {
+        Jet jet;
+        jet.reset({0.0f, 300.0f, 0.0f}, {0.0f, 0.0f, 400.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f});
+        JetControls controls;
+        controls.afterburner = true;
+        controls.instructor.aimDirection = direction(90.0f, 0.0f);
+        jet.setControls(controls, 0.0f);
+        float maxLoad = 0.0f;
+        float maxAlpha = 0.0f;
+        const auto air0 = Atmosphere().sample(300.0f);
+        for (int i = 0; i < 800; ++i)
+        {
+            const auto air = Atmosphere().sample(jet.airframe().position().y);
+            jet.setControls(controls, kStep);
+            jet.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+            maxLoad = std::max(maxLoad, jet.airframe().telemetry().normalLoad);
+            maxAlpha = std::max(maxAlpha, glm::degrees(jet.airframe().telemetry().alpha));
+        }
+        const glm::vec3 velocity = jet.airframe().velocity();
+        const float heading = std::abs(glm::degrees(std::atan2(velocity.x, velocity.z)));
+        checks.require(heading >= 75.0f, "400 m/s sea-level aim captures a turn", heading, 75.0f);
+        checks.require(maxLoad >= 8.0f && maxLoad <= 9.6f, "400 m/s turn holds the 9 g limiter", maxLoad, 9.0f);
+        checks.below(maxAlpha, 8.0f, "400 m/s turn is g-limited, not the 25 deg alpha cap");
+        checks.require(air0.speedOfSoundMetersPerSecond > 300.0f, "sea-level speed of sound", air0.speedOfSoundMetersPerSecond, 300.0f);
+    }
+
+    void checkAircraftCatalog(Checks &checks)
+    {
+        const AircraftCard *f16 = findAircraft("f-16c-block-50");
+        checks.require(f16 != nullptr && f16->flyable && f16->tableModel, "F-16 card is the table model",
+                       f16 != nullptr && f16->flyable && f16->tableModel ? 1.0f : 0.0f, 1.0f);
+        int flyable = 0;
+        const int count = aircraftCatalogCount();
+        checks.require(count == 13, "thirteen aircraft cards", static_cast<float>(count), 13.0f);
+        for (int i = 0; i < count; ++i)
+        {
+            flyable += aircraftCatalog()[i].flyable ? 1 : 0;
+        }
+        checks.require(flyable == 13, "every card can be selected", static_cast<float>(flyable), 13.0f);
+        const AircraftCard *j20 = findAircraft("j-20a");
+        checks.require(j20 != nullptr && j20->flyable && j20->status == CardStatus::Insufficient && j20->maxThrustN == 0.0f &&
+                           j20->massKg == 0.0f,
+                       "J-20A stays insufficient", j20 != nullptr && j20->status == CardStatus::Insufficient ? 1.0f : 0.0f, 1.0f);
+        checks.require(findAircraft("not-a-jet") == nullptr, "unknown aircraft id", 0.0f, 0.0f);
+        const AircraftCard *gripen = findAircraft("gripen-e");
+        checks.require(gripen != nullptr && !gripen->tableModel && std::abs(gripen->massKg - 16500.0f) < 1.0f, "Gripen mass is 16,500 kg",
+                       gripen != nullptr ? gripen->massKg : 0.0f, 16500.0f);
+    }
+
+    float flyLevel(const char *id, float seconds, float startSpeed)
+    {
+        Jet jet(id);
+        const glm::vec3 nose(0.0f, 0.0f, 1.0f);
+        jet.reset({0.0f, 300.0f, 0.0f}, nose * startSpeed, nose, {0.0f, 1.0f, 0.0f});
+        JetControls controls;
+        controls.afterburner = true;
+        controls.throttle = 1.0f;
+        controls.instructor.aimDirection = nose;
+        jet.setControls(controls, 0.0f);
+        const int steps = std::max(1, static_cast<int>(seconds / kStep));
+        for (int i = 0; i < steps; ++i)
+        {
+            const auto air = Atmosphere().sample(jet.position().y);
+            jet.setControls(controls, kStep);
+            jet.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+        }
+        return glm::length(jet.velocity());
+    }
+
+    void checkCardFlight(Checks &checks)
+    {
+        const float f16Speed = flyLevel("f-16c-block-50", 6.0f, 250.0f);
+        const float gripenSpeed = flyLevel("gripen-e", 6.0f, 250.0f);
+        checks.require(std::abs(f16Speed - gripenSpeed) > 15.0f, "Gripen does not fly the F-16", std::abs(f16Speed - gripenSpeed), 15.0f);
+        std::printf("Level AB 6 s: F-16 %.1f m/s, Gripen %.1f m/s\n", f16Speed, gripenSpeed);
+
+        const float flanker = flyLevel("su-27s", 25.0f, 250.0f);
+        checks.require(flanker > 340.0f && flanker < 430.0f, "Su-27 holds its sea-level speed", flanker, 388.9f);
+        std::printf("Su-27 AB 25 s: %.1f m/s\n", flanker);
+
+        Jet gripen("gripen-e");
+        gripen.reset({0.0f, 300.0f, 0.0f}, {0.0f, 0.0f, 250.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f});
+        JetControls controls;
+        controls.afterburner = true;
+        controls.instructor.aimDirection = direction(90.0f, 0.0f);
+        gripen.setControls(controls, 0.0f);
+        float maxLoad = 0.0f;
+        for (int i = 0; i < 800; ++i)
+        {
+            const auto air = Atmosphere().sample(gripen.position().y);
+            gripen.setControls(controls, kStep);
+            gripen.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+            maxLoad = std::max(maxLoad, gripen.telemetry().normalLoad);
+        }
+        const float turned = angleDegrees(glm::normalize(gripen.velocity()), glm::vec3(0.0f, 0.0f, 1.0f));
+        checks.require(std::isfinite(turned) && turned > 50.0f, "Gripen aim captures a turn", turned, 50.0f);
+        checks.below(maxLoad, 9.6f, "Gripen pull stays inside +9");
+        // Cards fly a combat mass (empty + half fuel + 2 missiles + pilot),
+        // not the brochure's maximum or empty weight.
+        checks.require(std::abs(Jet("j-20a").mass() - 25000.0f) < 1.0f, "J-20 flies its 25 t air-combat weight", Jet("j-20a").mass(), 25000.0f);
+        checks.require(std::abs(Jet("su-57").mass() - 23609.4f) < 1.0f, "Su-57 flies 23.6 t", Jet("su-57").mass(), 23609.4f);
+        checks.require(std::abs(Jet("rafale-c").mass() - 12609.4f) < 1.0f, "Rafale flies 12.6 t, not its 24.5 t maximum", Jet("rafale-c").mass(), 12609.4f);
+        for (int i = 0; i < aircraftCatalogCount(); ++i)
+        {
+            const AircraftCard &card = aircraftCatalog()[i];
+            if (!card.tableModel)
+            {
+                checks.require(card.flyingMassKg > 5000.0f && card.flyingMassKg < 30000.0f, std::string(card.id) + " has a flying mass",
+                               card.flyingMassKg, 5000.0f);
+            }
+        }
+    }
+
+    // Card jets used to obey the instructor's rate and load commands at once:
+    // a one-degree nudge rolled at ~4,900 deg/s2 and a three-degree pull rose
+    // at ~240 g/s, and the fine-aim rudder swung the nose away from the aim.
+    void checkCardResponse(Checks &checks)
+    {
+        for (const char *id : {"rafale-c", "gripen-e", "su-27s"})
+        {
+            for (const glm::vec2 nudge : {glm::vec2(1.0f, 0.0f), glm::vec2(3.0f, 0.0f), glm::vec2(0.0f, 3.0f), glm::vec2(0.0f, 10.0f)})
+            {
+                Jet jet(id);
+                jet.reset({0.0f, 3000.0f, 0.0f}, {0.0f, 0.0f, 250.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f});
+                JetControls controls;
+                controls.throttle = 0.9f;
+                controls.instructor.aimDirection = direction(0.0f, 0.0f);
+                for (int i = 0; i < 400; ++i)
+                {
+                    const auto air = Atmosphere().sample(jet.position().y);
+                    jet.setControls(controls, kStep);
+                    jet.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+                }
+                const float az = glm::radians(nudge.x);
+                const float el = glm::radians(nudge.y);
+                controls.instructor.aimDirection = glm::normalize(jet.forward() * (std::cos(az) * std::cos(el)) +
+                                                                  jet.right() * (std::sin(az) * std::cos(el)) + jet.up() * std::sin(el));
+                float previousRoll = jet.bodyRates().x;
+                float previousLoad = jet.telemetry().normalLoad;
+                float rollAccel = 0.0f;
+                float onset = 0.0f;
+                float firstLateral = 0.0f;
+                for (int i = 0; i < 600; ++i)
+                {
+                    const auto air = Atmosphere().sample(jet.position().y);
+                    jet.setControls(controls, kStep);
+                    jet.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+                    rollAccel = std::max(rollAccel, std::abs(glm::degrees(jet.bodyRates().x - previousRoll)) / kStep);
+                    onset = std::max(onset, std::abs(jet.telemetry().normalLoad - previousLoad) / kStep);
+                    previousRoll = jet.bodyRates().x;
+                    previousLoad = jet.telemetry().normalLoad;
+                    if (i == 9)
+                    {
+                        // After 0.1 s, before any bank has turned the path, a
+                        // sideways aim has moved the nose toward it.
+                        firstLateral = glm::dot(jet.forward(), controls.instructor.aimDirection);
+                    }
+                }
+                const std::string label = std::string(id) + " nudge " + std::to_string(static_cast<int>(nudge.x)) + "/" +
+                                          std::to_string(static_cast<int>(nudge.y));
+                checks.below(rollAccel, 800.0f, label + " roll acceleration deg/s2");
+                checks.below(onset, 20.0f, label + " g onset g/s");
+                checks.below(angleDegrees(jet.forward(), controls.instructor.aimDirection), 0.5f, label + " captured");
+                if (nudge.x > 0.0f)
+                {
+                    const float startCos = std::cos(az) * std::cos(el);
+                    checks.require(firstLateral > startCos, label + " rudder swings the nose toward the aim", firstLateral, startCos);
+                }
+            }
+        }
+    }
 }
 
 int runHandlingChecks()
 {
     Checks checks;
+    checkAircraftCatalog(checks);
+    checkCardFlight(checks);
+    checkCardResponse(checks);
+    checkHighSpeedTurn(checks);
     checkSmallCorrections(checks);
     checkLargeManeuvers(checks);
     checkKeyboardHandoff(checks);

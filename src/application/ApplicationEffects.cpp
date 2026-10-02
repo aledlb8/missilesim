@@ -73,10 +73,8 @@ namespace
     }
 }
 
-void Application::createExplosion(const glm::vec3 &position)
+void Application::createExplosion(const glm::vec3 &position, const glm::vec3 &velocityHint)
 {
-    const glm::vec3 velocityHint = m_missile ? m_missile->getVelocity() : glm::vec3(0.0f);
-
     if (m_renderer)
     {
         m_renderer->spawnExplosionEffect(position, velocityHint, 1.0f);
@@ -96,32 +94,47 @@ void Application::updateAudioFrame(float deltaTime)
     }
 
     const float dt = (deltaTime > 0.0f && std::isfinite(deltaTime)) ? deltaTime : 0.016f;
-    std::vector<Target *> activeTargets;
-    activeTargets.reserve(m_targets.size());
-    for (const auto &target : m_targets)
+    std::vector<AudioTargetSource> activeTargets;
+    activeTargets.reserve(targets().size());
+    for (const auto &target : targets())
     {
-        if (target && target->isActive())
+        if (target->isActive())
         {
-            activeTargets.push_back(target.get());
+            activeTargets.push_back(AudioTargetSource{target->getEntityId().value, target.get()});
         }
     }
 
-    std::vector<Flare *> activeFlares;
-    activeFlares.reserve(m_flares.size());
-    for (const auto &flare : m_flares)
+    std::vector<AudioFlareSource> activeFlares;
+    activeFlares.reserve(flares().size());
+    for (const auto &flare : flares())
     {
-        if (flare && flare->isActive())
+        if (flare->isActive())
         {
-            activeFlares.push_back(flare.get());
+            activeFlares.push_back(AudioFlareSource{flare->getEntityId().value, flare.get()});
         }
     }
 
-    const bool seekerPowered = !m_missileInFlight &&
-                               m_missile != nullptr &&
+    std::vector<AudioMissileSource> shotsInFlight;
+    if (m_world)
+    {
+        shotsInFlight.reserve(m_world->shots().size());
+        for (const auto &shot : m_world->shots())
+        {
+            shotsInFlight.push_back(AudioMissileSource{shot->id.value, shot->missile.get()});
+        }
+    }
+
+    // The seeker tone belongs to the uncaged round waiting to fire.
+    const Missile *readyRound = m_world ? m_world->readyRound() : nullptr;
+    const bool seekerPowered = readyRound != nullptr &&
                                m_guidanceEnabled &&
-                               m_missile->isGuidanceEnabled() &&
-                               m_seekerCueEnabled;
-    Target *lockedTarget = seekerPowered ? getTrackedMissileTarget() : nullptr;
+                               readyRound->isGuidanceEnabled() &&
+                               seekerUncaged();
+    Target *lockedTarget = seekerPowered ? readyRound->getTargetObject() : nullptr;
+    if (lockedTarget != nullptr && !lockedTarget->isActive())
+    {
+        lockedTarget = nullptr;
+    }
     const bool seekerLocked = seekerPowered && lockedTarget != nullptr;
 
     float seekerSignalStrength = 0.0f;
@@ -130,11 +143,11 @@ void Application::updateAudioFrame(float deltaTime)
         const float searchCueRadiusPixels = std::max(m_seekerCueRadiusPixels * 3.0f, m_seekerCueRadiusPixels + 1.0f);
         float bestPixelDistance = std::numeric_limits<float>::max();
 
-        for (Target *target : activeTargets)
+        for (const AudioTargetSource &source : activeTargets)
         {
             ImVec2 screenPosition(0.0f, 0.0f);
             float pixelDistance = 0.0f;
-            if (!projectTargetToSeekerScreen(target, screenPosition, &pixelDistance))
+            if (!projectTargetToSeekerScreen(source.object, screenPosition, &pixelDistance))
             {
                 continue;
             }
@@ -191,9 +204,9 @@ void Application::updateAudioFrame(float deltaTime)
     AudioWorldState world;
     world.paused = m_isPaused;
     world.timeScale = m_simulationSpeed;
-    world.seaLevelAirDensity = m_physicsEngine ? m_physicsEngine->getAirDensity() : world.seaLevelAirDensity;
+    world.seaLevelAirDensity = physics() ? physics()->getAirDensity() : world.seaLevelAirDensity;
     world.groundPresent = m_groundEnabled;
-    world.groundLevel = m_physicsEngine ? m_physicsEngine->getGroundLevel() : 0.0f;
+    world.groundLevel = physics() ? physics()->getGroundLevel() : 0.0f;
     // Duck the mix behind the title screen so the flyby is atmosphere, not a
     // roar; ease back in when the engagement starts.
     const float menuGainTarget = (m_screen == Screen::Title) ? 0.45f : 1.0f;
@@ -211,7 +224,7 @@ void Application::updateAudioFrame(float deltaTime)
     m_audioSystem->setListener(m_renderer->getCameraPosition(),
                                m_renderer->getCameraFront(),
                                m_renderer->getCameraUp());
-    m_audioSystem->syncMissile(m_missile.get(), m_missileInFlight);
+    m_audioSystem->syncMissiles(shotsInFlight);
     m_audioSystem->syncTargets(activeTargets);
     m_audioSystem->syncFlares(activeFlares);
     m_audioSystem->syncCockpitCues(cues);
@@ -230,33 +243,39 @@ void Application::emitFrameVisualEffects(float deltaTime)
         return;
     }
 
-    if (m_missile && m_missile->isThrustEnabled() && m_missile->getFuel() > 0.0f && m_missile->getThrottle() > 0.01f)
+    if (m_world)
     {
-        const auto sockets = m_renderer->getExhaustSockets(*m_missile);
-        const float fuelCapacity = m_missile->isFox2() ? m_missile->getFuelCapacity() : m_missileFuel;
-        const float fuelFraction = (fuelCapacity > 0.0f)
-                                       ? glm::clamp(m_missile->getFuel() / fuelCapacity, 0.0f, 1.0f)
-                                       : 1.0f;
-        // The booster burns at elevated thrust; lay a noticeably thicker, brighter
-        // plume for its duration so the climb-out reads as a hard rocket boost.
-        const float boostPlume = (m_launchSequence.motorIgnited && !m_launchSequence.boostComplete) ? 0.34f : 0.0f;
-        const float throttle = glm::clamp(m_missile->getThrottle(), 0.0f, 1.0f);
-        const float smokeScale = m_missile->isReducedSmoke() ? 0.35f : 1.0f;
-        const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle * smokeScale,
-                                                0.08f,
-                                                1.0f);
-        for (const auto &socket : sockets)
+        for (const auto &shot : m_world->shots())
         {
-            const glm::vec3 previous = socket.position + m_missile->getPreviousRenderPosition() - m_missile->getRenderPosition();
-            m_renderer->emitMissileExhaust(previous, socket.position, -socket.direction, m_missile->getVelocity(), plumeIntensity);
+            const Missile &missile = *shot->missile;
+            if (!missile.isThrustEnabled() || missile.getFuel() <= 0.0f || missile.getThrottle() <= 0.01f)
+            {
+                continue;
+            }
+            const float fuelCapacity = missile.getFuelCapacity();
+            const float fuelFraction = (fuelCapacity > 0.0f) ? glm::clamp(missile.getFuel() / fuelCapacity, 0.0f, 1.0f) : 1.0f;
+            // The booster burns at elevated thrust; lay a noticeably thicker,
+            // brighter plume for its duration so the climb-out reads as a hard boost.
+            const bool boosting = shot->coldLaunch.motorIgnited && !shot->coldLaunch.boostComplete;
+            const float boostPlume = boosting ? 0.34f : 0.0f;
+            const float throttle = glm::clamp(missile.getThrottle(), 0.0f, 1.0f);
+            const float smokeScale = missile.isReducedSmoke() ? 0.35f : 1.0f;
+            const float plumeIntensity = glm::clamp((glm::mix(0.38f, 0.68f, fuelFraction) + boostPlume) * throttle * smokeScale,
+                                                    0.08f,
+                                                    1.0f);
+            for (const auto &socket : m_renderer->getExhaustSockets(missile))
+            {
+                const glm::vec3 previous = socket.position + missile.getPreviousRenderPosition() - missile.getRenderPosition();
+                m_renderer->emitMissileExhaust(previous, socket.position, -socket.direction, missile.getVelocity(), plumeIntensity);
+            }
         }
     }
 
     emitFighterVisuals();
 
-    for (const auto &target : m_targets)
+    for (const auto &target : targets())
     {
-        if (!target || !target->isActive())
+        if (!target->isActive())
         {
             continue;
         }
@@ -300,9 +319,9 @@ void Application::emitFrameVisualEffects(float deltaTime)
         }
     }
 
-    for (const auto &flare : m_flares)
+    for (const auto &flare : flares())
     {
-        if (!flare || !flare->isActive())
+        if (!flare->isActive())
         {
             continue;
         }

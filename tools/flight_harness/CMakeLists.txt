@@ -9,6 +9,8 @@ add_executable(flight_harness
     ${CMAKE_SOURCE_DIR}/src/flight/FlightControl.cpp
     ${CMAKE_SOURCE_DIR}/src/flight/MouseAimInstructor.cpp
     ${CMAKE_SOURCE_DIR}/src/flight/Jet.cpp
+    ${CMAKE_SOURCE_DIR}/src/flight/CardAirframe.cpp
+    ${CMAKE_SOURCE_DIR}/src/flight/AircraftCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/physics/Atmosphere.cpp
     ${CMAKE_SOURCE_DIR}/src/objects/Fighter.cpp
     ${CMAKE_SOURCE_DIR}/src/objects/PhysicsObject.cpp)

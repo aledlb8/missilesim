@@ -101,12 +101,12 @@ void MouseAimInstructor::observeAim(const glm::vec3 &aimDirection, float sampleD
     m_previousAim = aim;
 }
 
-PilotCommand MouseAimInstructor::update(const F16Airframe &airframe, const InstructorInput &input, float gravity, float deltaTime)
+PilotCommand MouseAimInstructor::update(const AirframeView &airframe, const InstructorInput &input, float gravity, float deltaTime)
 {
-    const glm::vec3 forward = airframe.forward();
-    const glm::vec3 right = airframe.right();
-    const glm::vec3 up = airframe.up();
-    const float speed = std::max(airframe.telemetry().airspeed, 1.0f);
+    const glm::vec3 forward = airframe.forward;
+    const glm::vec3 right = airframe.right;
+    const glm::vec3 up = airframe.up;
+    const float speed = std::max(airframe.telemetry.airspeed, 1.0f);
     const float g = std::max(gravity, 0.1f);
 
     const float aimLengthSquared = glm::length2(input.aimDirection);
@@ -175,7 +175,7 @@ PilotCommand MouseAimInstructor::update(const F16Airframe &airframe, const Instr
     // acceleration now wanted, swinging that lift round throws the nose off,
     // so the roll waits for the pull to come off.
     const float wantedMagnitude = glm::length(wanted);
-    const float liftNow = std::abs(airframe.telemetry().normalLoad) * g;
+    const float liftNow = std::abs(airframe.telemetry.normalLoad) * g;
     const float unload = std::clamp((wantedMagnitude + g) / std::max(liftNow, g), 0.25f, 1.0f);
     const float authority = smoothstep(0.05f * g, 0.3f * g, wantedMagnitude) * unload;
 
@@ -200,9 +200,9 @@ PilotCommand MouseAimInstructor::update(const F16Airframe &airframe, const Instr
 
     // ---- Keyboard assists own their axis while held (pitch also owns roll,
     // so the instructor does not bank against a manual pull).
-    const AirframeTelemetry &telemetry = airframe.telemetry();
-    const glm::vec3 &rates = airframe.bodyRates();
-    const float rollLimit = FlightControlSystem::rollRateLimit(telemetry.dynamicPressure, telemetry.alpha);
+    const AirframeTelemetry &telemetry = airframe.telemetry;
+    const glm::vec3 &rates = airframe.bodyRates;
+    const float rollLimit = std::max(airframe.rollRateLimit, 0.0f);
     const float stabilityRollRate = std::clamp(rates.x / std::max(std::cos(telemetry.alpha), 0.2f), -rollLimit, rollLimit);
     command.pitchRate = m_pitchHandoff.apply(command.pitchRate, input.pitchKey * kKeyPitchRate,
                                            rates.y, pitchHeld, deltaTime);

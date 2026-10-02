@@ -47,9 +47,6 @@ Application::Application(int width, int height, const std::string &title)
     : m_width(width), m_height(height), m_title(title), m_window(nullptr),
       m_lastMouseX(width / 2.0f), m_lastMouseY(height / 2.0f), m_firstMouse(true)
 {
-    // Initialize random number generator with a time-based seed
-    std::random_device rd;
-    m_rng = std::mt19937(rd());
 }
 
 Application::~Application()
