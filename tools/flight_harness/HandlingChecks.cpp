@@ -396,8 +396,79 @@ namespace
         const float turned = angleDegrees(glm::normalize(gripen.velocity()), glm::vec3(0.0f, 0.0f, 1.0f));
         checks.require(std::isfinite(turned) && turned > 50.0f, "Gripen aim captures a turn", turned, 50.0f);
         checks.below(maxLoad, 9.6f, "Gripen pull stays inside +9");
-        checks.require(std::abs(Jet("j-20a").mass() - kStandInMassKg) < 1.0f, "J-20 stand-in mass", Jet("j-20a").mass(), kStandInMassKg);
-        checks.require(std::abs(Jet("su-57").mass() - 26700.0f) < 1.0f, "Su-57 mass is 26,700 kg", Jet("su-57").mass(), 26700.0f);
+        // Cards fly a combat mass (empty + half fuel + 2 missiles + pilot),
+        // not the brochure's maximum or empty weight.
+        checks.require(std::abs(Jet("j-20a").mass() - 25000.0f) < 1.0f, "J-20 flies its 25 t air-combat weight", Jet("j-20a").mass(), 25000.0f);
+        checks.require(std::abs(Jet("su-57").mass() - 23609.4f) < 1.0f, "Su-57 flies 23.6 t", Jet("su-57").mass(), 23609.4f);
+        checks.require(std::abs(Jet("rafale-c").mass() - 12609.4f) < 1.0f, "Rafale flies 12.6 t, not its 24.5 t maximum", Jet("rafale-c").mass(), 12609.4f);
+        for (int i = 0; i < aircraftCatalogCount(); ++i)
+        {
+            const AircraftCard &card = aircraftCatalog()[i];
+            if (!card.tableModel)
+            {
+                checks.require(card.flyingMassKg > 5000.0f && card.flyingMassKg < 30000.0f, std::string(card.id) + " has a flying mass",
+                               card.flyingMassKg, 5000.0f);
+            }
+        }
+    }
+
+    // Card jets used to obey the instructor's rate and load commands at once:
+    // a one-degree nudge rolled at ~4,900 deg/s2 and a three-degree pull rose
+    // at ~240 g/s, and the fine-aim rudder swung the nose away from the aim.
+    void checkCardResponse(Checks &checks)
+    {
+        for (const char *id : {"rafale-c", "gripen-e", "su-27s"})
+        {
+            for (const glm::vec2 nudge : {glm::vec2(1.0f, 0.0f), glm::vec2(3.0f, 0.0f), glm::vec2(0.0f, 3.0f), glm::vec2(0.0f, 10.0f)})
+            {
+                Jet jet(id);
+                jet.reset({0.0f, 3000.0f, 0.0f}, {0.0f, 0.0f, 250.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f});
+                JetControls controls;
+                controls.throttle = 0.9f;
+                controls.instructor.aimDirection = direction(0.0f, 0.0f);
+                for (int i = 0; i < 400; ++i)
+                {
+                    const auto air = Atmosphere().sample(jet.position().y);
+                    jet.setControls(controls, kStep);
+                    jet.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+                }
+                const float az = glm::radians(nudge.x);
+                const float el = glm::radians(nudge.y);
+                controls.instructor.aimDirection = glm::normalize(jet.forward() * (std::cos(az) * std::cos(el)) +
+                                                                  jet.right() * (std::sin(az) * std::cos(el)) + jet.up() * std::sin(el));
+                float previousRoll = jet.bodyRates().x;
+                float previousLoad = jet.telemetry().normalLoad;
+                float rollAccel = 0.0f;
+                float onset = 0.0f;
+                float firstLateral = 0.0f;
+                for (int i = 0; i < 600; ++i)
+                {
+                    const auto air = Atmosphere().sample(jet.position().y);
+                    jet.setControls(controls, kStep);
+                    jet.step(kStep, {air.densityKgPerCubicMeter, air.speedOfSoundMetersPerSecond}, kGravity);
+                    rollAccel = std::max(rollAccel, std::abs(glm::degrees(jet.bodyRates().x - previousRoll)) / kStep);
+                    onset = std::max(onset, std::abs(jet.telemetry().normalLoad - previousLoad) / kStep);
+                    previousRoll = jet.bodyRates().x;
+                    previousLoad = jet.telemetry().normalLoad;
+                    if (i == 9)
+                    {
+                        // After 0.1 s, before any bank has turned the path, a
+                        // sideways aim has moved the nose toward it.
+                        firstLateral = glm::dot(jet.forward(), controls.instructor.aimDirection);
+                    }
+                }
+                const std::string label = std::string(id) + " nudge " + std::to_string(static_cast<int>(nudge.x)) + "/" +
+                                          std::to_string(static_cast<int>(nudge.y));
+                checks.below(rollAccel, 800.0f, label + " roll acceleration deg/s2");
+                checks.below(onset, 20.0f, label + " g onset g/s");
+                checks.below(angleDegrees(jet.forward(), controls.instructor.aimDirection), 0.5f, label + " captured");
+                if (nudge.x > 0.0f)
+                {
+                    const float startCos = std::cos(az) * std::cos(el);
+                    checks.require(firstLateral > startCos, label + " rudder swings the nose toward the aim", firstLateral, startCos);
+                }
+            }
+        }
     }
 }
 
@@ -406,6 +477,7 @@ int runHandlingChecks()
     Checks checks;
     checkAircraftCatalog(checks);
     checkCardFlight(checks);
+    checkCardResponse(checks);
     checkHighSpeedTurn(checks);
     checkSmallCorrections(checks);
     checkLargeManeuvers(checks);

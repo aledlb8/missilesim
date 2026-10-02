@@ -53,6 +53,9 @@ namespace missilesim::flight
         glm::vec3 m_lift{0.0f, 1.0f, 0.0f};
         glm::quat m_attitude{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 m_rates{0.0f};
+        float m_rollRate = 0.0f; // achieved roll rate about the flight path, rad/s
+        float m_load = 1.0f;     // achieved normal load, g
+        bool m_trimmed = false;  // angle of attack set to trim on the first step
         float m_alpha = 0.0f;
         float m_beta = 0.0f;
         float m_throttle = 0.85f;

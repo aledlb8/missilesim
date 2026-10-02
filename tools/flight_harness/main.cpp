@@ -13,6 +13,7 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace missilesim::flight;
 
@@ -173,6 +174,102 @@ int main(int argc, char **argv)
             controls.throttle = 1.0f;
         });
         report(c.name, jet, s);
+    }
+
+    // ---- Small-input response, any card: how hard the jet reacts to a nudge
+    // of the aim. Roll acceleration and g onset are what the player feels;
+    // a real fighter needs a few tenths of a second to build either.
+    if (matches(filter, "response"))
+    {
+        std::vector<const char *> cards;
+        for (int i = 0; i < aircraftCatalogCount(); ++i)
+        {
+            if (aircraftCatalog()[i].flyable)
+            {
+                cards.push_back(aircraftCatalog()[i].id);
+            }
+        }
+        const struct
+        {
+            const char *name;
+            float azimuth, elevation;
+        } nudges[] = {{"1 right", 1.0f, 0.0f}, {"3 right", 3.0f, 0.0f}, {"3 up", 0.0f, 3.0f},   {"10 right", 10.0f, 0.0f},
+                      {"30 right", 30.0f, 0.0f}, {"30 up", 0.0f, 30.0f}, {"120 right", 120.0f, 0.0f}};
+        for (const char *card : cards)
+        {
+            for (const auto &nudge : nudges)
+            {
+                Jet jet(card);
+                jet.reset(glm::vec3(0.0f, 3000.0f, 0.0f), glm::vec3(0.0f, 0.0f, 250.0f), glm::vec3(0.0f, 0.0f, 1.0f),
+                          glm::vec3(0.0f, 1.0f, 0.0f));
+                // Settle trimmed on a level aim first, so each jet starts from
+                // its own steady nose, then nudge the aim from that nose.
+                const glm::vec3 level = direction(0.0f, 0.0f);
+                for (float t = 0.0f; t < 4.0f; t += kFrame)
+                {
+                    JetControls controls = jet.controls();
+                    controls.instructor.aimDirection = level;
+                    controls.throttle = 0.9f;
+                    jet.setControls(controls, kFrame);
+                    jet.step(kFrame, airAt(jet.position().y), kGravity);
+                }
+                const glm::vec3 nose = jet.forward();
+                const float az = glm::radians(nudge.azimuth);
+                const float el = glm::radians(nudge.elevation);
+                const glm::vec3 aim = glm::normalize(nose * (std::cos(az) * std::cos(el)) + jet.right() * (std::sin(az) * std::cos(el)) +
+                                                     jet.up() * std::sin(el));
+                float previousRoll = glm::degrees(jet.bodyRates().x);
+                float previousNz = jet.telemetry().normalLoad;
+                float peakRoll = 0.0f;
+                float peakRollAccel = 0.0f;
+                float peakOnset = 0.0f;
+                float peakNz = 0.0f;
+                float peakBank = 0.0f;
+                float settle = -1.0f;
+                float insideSince = -1.0f;
+                float worstAfter = 0.0f;
+                bool reached = false;
+                float finalOff = 0.0f;
+                for (float t = 0.0f; t < 12.0f; t += kFrame)
+                {
+                    JetControls controls = jet.controls();
+                    controls.instructor.aimDirection = aim;
+                    controls.throttle = 0.9f;
+                    jet.setControls(controls, kFrame);
+                    jet.step(kFrame, airAt(jet.position().y), kGravity);
+                    const float roll = glm::degrees(jet.bodyRates().x);
+                    const float nz = jet.telemetry().normalLoad;
+                    peakRoll = std::max(peakRoll, std::abs(roll));
+                    peakRollAccel = std::max(peakRollAccel, std::abs(roll - previousRoll) / kFrame);
+                    peakOnset = std::max(peakOnset, std::abs(nz - previousNz) / kFrame);
+                    peakNz = std::max(peakNz, nz);
+                    peakBank = std::max(peakBank, std::abs(glm::degrees(std::atan2(jet.right().y, jet.up().y))));
+                    previousRoll = roll;
+                    previousNz = nz;
+                    const float off = glm::degrees(jet.instructor().status().angleOff);
+                    finalOff = off;
+                    if (off < 0.5f)
+                    {
+                        reached = true;
+                        insideSince = insideSince < 0.0f ? t : insideSince;
+                        if (settle < 0.0f && t - insideSince >= 0.5f)
+                        {
+                            settle = insideSince;
+                        }
+                    }
+                    else
+                    {
+                        insideSince = -1.0f;
+                    }
+                    if (reached)
+                    {
+                        worstAfter = std::max(worstAfter, off);
+                    }
+                }
+                std::printf("response %-15s %-9s roll %6.1f deg/s  roll accel %7.0f deg/s2  onset %6.1f g/s  Nz %4.2f  bank %5.1f  settle %5.2fs  over %4.2f  final %5.2f\n",
+                            card, nudge.name, peakRoll, peakRollAccel, peakOnset, peakNz, peakBank, settle, worstAfter, finalOff);
+            }
+        }
     }
 
     // ---- Tracking a steadily moving aim point (a turning target).
