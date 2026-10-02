@@ -8,6 +8,10 @@
 
 namespace missilesim::sim
 {
+    // Version of the simulation config schema this build reads. A file with
+    // another version is refused with a readable error.
+    constexpr int kSupportedSchemaVersion = 1;
+
     struct EnvironmentConfig
     {
         float fixedTimeStep = 0.01f;
@@ -187,6 +191,9 @@ namespace missilesim::sim
         std::filesystem::path path;
         bool loaded = false;
         std::string error;
+        // Fields that were present but unusable (wrong type or out of range);
+        // each names the field and the value used instead.
+        std::vector<std::string> warnings;
     };
 
     std::filesystem::path resolveDefaultSimulationConfigPath();
