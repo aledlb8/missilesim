@@ -10,3 +10,8 @@ if(MSVC)
 else()
     target_compile_options(fox2_kinematics PRIVATE -Wall -Wextra)
 endif()
+
+# Sanity and regression checks only: success means the catalog is finite and
+# unit-consistent and the AIM-9B drag band holds, not that any brochure range
+# is reproduced (the reference-case residuals are printed, not gated).
+add_test(NAME fox2_kinematics_sanity COMMAND fox2_kinematics)
