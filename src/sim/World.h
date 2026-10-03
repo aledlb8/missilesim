@@ -24,6 +24,10 @@
 #include "sim/SimEvents.h"
 #include "sim/SimulationConfig.h"
 #include "sim/Terrain.h"
+#include "sim/defense/Chaff.h"
+#include "sim/defense/Warnings.h"
+#include "sim/guidance/RadarHoming.h"
+#include "sim/sensors/ScanRadar.h"
 #include "objects/Target.h"
 
 #include <cstdint>
@@ -123,9 +127,16 @@ namespace missilesim::sim
         NoLauncher,        // the role has no launcher (fighter not spawned)
         NoRound,           // stations empty
         Reloading,         // next round not ready yet
-        SeekerCaged,       // seeker not uncaged, so nothing can be designated
+        SeekerCaged,       // seeker neither uncaged nor slaved to a radar lock, so nothing is designated
         NoDesignation,     // no target in the seeker's designation cone
         NeedsInfraredLock, // lock-before-launch round without an infrared lock
+        NoLaunchQuality,   // radar track is not confirmed, or the measurement is too old
+        RadarMagazineEmpty, // the fictional radar-round magazine is empty
+        SemiActiveNotInBuild,    // Phoenix still needs illumination this build does not fly
+        ThrustModelUnpublished,  // Meteor's ducted rocket has no published thrust
+        SeekerUnresolved,        // opened sources do not settle the seeker
+        SecondarySource,         // geometry came from a secondary page only
+        NoPerformanceCard        // no opened page states a fly-out
     };
 
     const char *launchBlockMessage(LaunchBlock block);
@@ -215,6 +226,90 @@ namespace missilesim::sim
         glm::vec3 endPosition{0.0f};
 
         bool ended() const { return endReason != ShotEndReason::None; }
+
+        // Fictional radar round. supportTrack is a track id, never a platform id.
+        // The missile is not given a Target*.
+        bool radarGuided = false;
+        EntityId supportTrack;
+        RadarHoming homing;
+        double nextSupportTime = 0.0;
+        bool supportFresh = false;
+        bool seekerEmitting = false;
+    };
+
+    enum class FighterWeapon : std::uint8_t
+    {
+        Fox2,
+        RadarRound,
+    };
+
+    // Readout for the scope. flying is false when the player has no radar round in the air.
+    struct RadarFlightStatus
+    {
+        bool flying = false;
+        RadarHomingState::Phase phase = RadarHomingState::Phase::Midcourse;
+        bool supportFresh = false;
+        bool seekerTracking = false;
+    };
+
+    // ---- Fire control ---------------------------------------------------------
+    // One targeting picture for the player's fighter. The radar finds and locks
+    // contacts; the lock is the one designation both weapons share: the radar
+    // round fires on it, and the heat seeker on the rail is slaved to it. HUD,
+    // audio and harness read this picture, never a live Target* or the
+    // missiles' internals, so every display tells the same story.
+
+    enum class RadarMode : std::uint8_t
+    {
+        Off,    // no radar (no fighter, or the SAM role)
+        Search, // raster scan
+        Track,  // single-target track on the lock
+    };
+
+    enum class SeekerState : std::uint8_t
+    {
+        Off,        // the selected weapon has no seeker powered on the rail
+        Caged,      // heat seeker powered but caged to the nose (R uncages it)
+        Search,     // uncaged, looking along the nose for heat
+        Slaved,     // looking where the radar lock points, no heat lock yet
+        Designated, // a lock-after-launch round has its aircraft, no heat lock yet
+        Locked,     // heat lock: the round can be fired
+    };
+
+    // The radar's locked contact, from the track estimate only.
+    struct LockPicture
+    {
+        bool valid = false;
+        EntityId track;
+        TrackLife life = TrackLife::Tentative;
+        glm::vec3 position{0.0f}; // estimate carried to the current time
+        glm::vec3 velocity{0.0f};
+        float rangeM = 0.0f;
+        float closingMps = 0.0f;   // positive while the range is shrinking
+        float azimuthRad = 0.0f;   // toward the fighter's right wing
+        float elevationRad = 0.0f; // above the fighter's nose-right plane
+        double ageS = 0.0;         // since the last measurement
+        bool launchQuality = false;
+    };
+
+    struct SeekerPicture
+    {
+        SensorFamily family = SensorFamily::Infrared;
+        SeekerState state = SeekerState::Off;
+        glm::vec3 lookDirection{0.0f, 0.0f, 1.0f}; // where the head points (world, unit)
+        float gimbalHalfRad = 0.0f;
+        float tone = 0.0f; // 0..1 headset tone: clutter growl up to the lock tone
+    };
+
+    struct FireControl
+    {
+        FighterWeapon weapon = FighterWeapon::Fox2;
+        int rounds = 0;                     // of the selected weapon
+        LaunchBlock clearance = LaunchBlock::None;
+        RadarMode radar = RadarMode::Off;
+        LockPicture lock;
+        SeekerPicture seeker;
+        RadarFlightStatus radarRound;       // the player's radar round in the air, if any
     };
 
     class World
@@ -302,6 +397,10 @@ namespace missilesim::sim
         // Replaces the round type on the loaded rails (rounds in the air keep theirs).
         void selectFox2(const std::string &fox2Id);
         const std::string &fox2Id() const { return m_fox2Id; }
+        // Catalog id of the radar round the player fires. "reference" is the
+        // declared archetype. The opponent ignores this and fires that archetype.
+        void setFox3(const std::string &fox3Id);
+        const std::string &fox3Id() const { return m_fox3Id; }
         // Stores a card id and, if the fighter already exists, swaps its flight
         // model in place. The mesh stays models/jet.obj. Returns false when the
         // id is not in the catalog.
@@ -321,6 +420,37 @@ namespace missilesim::sim
 
         void setSeekerUncaged(bool uncaged);
         bool seekerUncaged() const { return m_seekerUncaged; }
+
+        // Fox 2 is the default, so existing scenarios never select the radar round.
+        FighterWeapon fighterWeapon() const { return m_fighterWeapon; }
+        void setFighterWeapon(FighterWeapon weapon) { m_fighterWeapon = weapon; }
+        void cycleFighterWeapon();
+        const ScanRadar &playerRadar() const { return m_playerRadar; }
+        const ScanVolume &radarVolume() const { return m_radarVolume; }
+        EntityId designatedRadarTrack() const { return m_designatedTrack; }
+        // Locks the living track nearest the nose, then each next one further
+        // off the nose, then back to search.
+        void cycleRadarDesignation();
+        // The whole targeting picture: radar, lock, seeker and clearance.
+        FireControl fireControl() const;
+        // Age limit used by launch clearance and the scope. A declared freshness, not a range.
+        double radarLaunchAgeLimit() const { return 2.0; }
+        int radarRoundsRemaining() const { return m_radarMagazine; }
+        int chaffRemaining() const { return m_chaff.remaining; }
+        // Alive and spent bundles. Spent entries stay so their ids are not reused.
+        const std::vector<ChaffRound> &chaffRounds() const { return m_chaffRounds; }
+        // False until a warning has been heard and the reaction delay has elapsed.
+        bool dispenseChaff();
+        const WarningPicture &warnings() const { return m_playerWarnings; }
+        RadarFlightStatus radarFlightStatus() const;
+        // Opponent radar. Off unless a scenario turns it on. Uses the same scan and the same round.
+        void setRedRadar(bool enabled) { m_redRadarEnabled = enabled; }
+        bool redRadar() const { return m_redRadarEnabled; }
+        int hostileRadarRoundsRemaining() const { return m_redRadarMagazine; }
+        // Diagnostics and harness checks. The HUD must not read the opponent's tracks.
+        const ScanRadar &hostileRadar() const { return m_redRadar; }
+        // New formation: full magazine. Tracks stay while an opponent round is still in the air.
+        void rearmHostileRadar();
         // SAM: the launcher's seeker cue designation (a Fox 2 designates itself).
         void designate(EntityId target);
         // SAM: points the ready round like the launcher would fire it.
@@ -388,8 +518,27 @@ namespace missilesim::sim
         void positionOnRail(Station &station) const;
         void refreshPrelaunch(Station &station);
         LaunchBlock clearanceFor(const Station &station) const;
+        // The radar lock's estimated position now, when the radar holds one in
+        // single-target track. It is the cue the heat seeker is slaved to.
+        bool radarLockPoint(glm::vec3 &point) const;
+        // The ready round's seeker is powered. SAM: while uncaged. Fighter: the
+        // heat seeker is the selected weapon and is uncaged or slaved to a lock.
+        bool seekerPowered() const;
         LaunchResult launchSam(Station &station, const glm::vec3 &fallbackAim);
         LaunchResult launchFox2(Station &station);
+        void configureRadars();
+        void resetRadarStores();
+        void stepRadarBeforePhysics();
+        void stepRadarAfterOutcomes();
+        LaunchBlock radarClearance(const ScanRadar &radar, EntityId track, int magazine) const;
+        LaunchBlock fox3Refusal() const;
+        LaunchResult launchRadarRound(Team team, EntityId owner, ScanRadar &radar, EntityId track, int &magazine);
+        // Living platforms except the ownship, plus live chaff. A scan radar
+        // passes its team: the radar's IFF leaves friendly platforms out.
+        // Seekers pass nothing, since they have no IFF.
+        std::vector<SensorBody> sensorBodies(EntityId ownship, const Team *friendly = nullptr) const;
+        // G on the fighter: full radar magazine and chaff store. Bundles in the air stay.
+        void rearmRadarStores();
         void advanceSelectedStation();
         // The station launch() fires from: the selected one, or the next loaded one.
         int stationToFire() const;
@@ -432,10 +581,25 @@ namespace missilesim::sim
         EntityId m_scenarioSiteId; // owner of scripted launches
         CustomRoundSpec m_customSpec;
         std::string m_fox2Id = "aim-9x-blk2";
+        std::string m_fox3Id = "reference";
         std::string m_aircraftId = "f-16c-block-50";
         std::vector<Station> m_stations;
         int m_selectedStation = 0;
         bool m_seekerUncaged = false;
+
+        FighterWeapon m_fighterWeapon = FighterWeapon::Fox2;
+        ScanVolume m_radarVolume;
+        ScanRadar m_playerRadar;
+        ScanRadar m_redRadar;
+        bool m_redRadarEnabled = false;
+        EntityId m_designatedTrack;
+        int m_radarMagazine = 4;
+        int m_redRadarMagazine = 2;
+        double m_redQualitySince = -1.0;
+        ChaffDispenser m_chaff;
+        std::vector<ChaffRound> m_chaffRounds;
+        WarningPicture m_playerWarnings;
+        double m_firstWarningTime = -1.0;
 
         std::vector<std::unique_ptr<Shot>> m_shots;
     };

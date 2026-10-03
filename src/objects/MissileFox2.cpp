@@ -228,6 +228,11 @@ bool Missile::sampleZeroLiftDrag(float mach, float dynamicPressurePa, float &cd0
 
 bool Missile::isFuzeArmed() const
 {
+    if (m_fuzeHeld)
+    {
+        return false;
+    }
+
     if (!m_fox2Active)
     {
         return true;
@@ -297,7 +302,8 @@ namespace
     }
 }
 
-void Missile::updateFox2Prelaunch(const std::vector<Target *> &targets, const glm::vec3 &fighterNose, const glm::vec3 &fighterPosition)
+void Missile::updateFox2Prelaunch(const std::vector<Target *> &targets, const glm::vec3 &fighterNose, const glm::vec3 &fighterPosition,
+                                  const SeekerCue *cue)
 {
     if (!m_fox2Active)
     {
@@ -320,36 +326,70 @@ void Missile::updateFox2Prelaunch(const std::vector<Target *> &targets, const gl
     {
         coneDegrees = m_fox2.cueDeg;
     }
+    const float gimbalDegrees = std::max(m_fox2.gimbalDeg, 0.0f);
 
     Target *best = nullptr;
     float bestAngle = 1.0e9f;
-    float bestRange = 1.0e9f;
     const glm::vec3 nose = m_bodyForward;
-    for (Target *target : targets)
+    if (cue != nullptr)
     {
-        if (target == nullptr || !target->isActive())
+        // Slaved: the head swings onto the cue as far as the gimbal allows,
+        // and the cue, not the nose, says which aircraft is meant.
+        m_boresight = clampToCone(m_bodyForward, cue->point - m_position, glm::radians(gimbalDegrees));
+        float bestGap = std::max(cue->gateM, 0.0f);
+        for (Target *target : targets)
         {
-            continue;
+            if (target == nullptr || !target->isActive())
+            {
+                continue;
+            }
+            const glm::vec3 offset = target->getPosition() - fighterPosition;
+            if (glm::length(offset) < 1.0f)
+            {
+                continue;
+            }
+            const float gap = glm::length(target->getPosition() - cue->point);
+            if (gap <= bestGap)
+            {
+                best = target;
+                bestGap = gap;
+                bestAngle = glm::degrees(angleBetween(nose, offset));
+            }
         }
-
-        const glm::vec3 offset = target->getPosition() - fighterPosition;
-        const float range = glm::length(offset);
-        if (range < 1.0f)
+        if (best != nullptr && bestAngle > coneDegrees + 0.05f)
         {
-            continue;
+            best = nullptr;
         }
-
-        const float angle = glm::degrees(angleBetween(nose, offset));
-        if (angle > coneDegrees + 0.05f)
+    }
+    else
+    {
+        float bestRange = 1.0e9f;
+        for (Target *target : targets)
         {
-            continue;
-        }
+            if (target == nullptr || !target->isActive())
+            {
+                continue;
+            }
 
-        if (angle + 0.05f < bestAngle || (std::abs(angle - bestAngle) <= 0.05f && range < bestRange))
-        {
-            best = target;
-            bestAngle = angle;
-            bestRange = range;
+            const glm::vec3 offset = target->getPosition() - fighterPosition;
+            const float range = glm::length(offset);
+            if (range < 1.0f)
+            {
+                continue;
+            }
+
+            const float angle = glm::degrees(angleBetween(nose, offset));
+            if (angle > coneDegrees + 0.05f)
+            {
+                continue;
+            }
+
+            if (angle + 0.05f < bestAngle || (std::abs(angle - bestAngle) <= 0.05f && range < bestRange))
+            {
+                best = target;
+                bestAngle = angle;
+                bestRange = range;
+            }
         }
     }
 
@@ -361,7 +401,6 @@ void Missile::updateFox2Prelaunch(const std::vector<Target *> &targets, const gl
     }
 
     const SourceSignal signal = measureTarget(m_fox2, m_position, *best);
-    const float gimbalDegrees = std::max(m_fox2.gimbalDeg, 0.0f);
     const bool inGimbal = bestAngle <= gimbalDegrees + 0.05f;
     const bool infrared = signal.visible && inGimbal;
     if (lockAfterLaunch || infrared)

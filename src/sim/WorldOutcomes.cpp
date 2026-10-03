@@ -97,6 +97,17 @@ namespace missilesim::sim
         Missile &missile = *shot.missile;
         shot.flightTime += m_fixedStep;
 
+        // The radar round leaves the rail inside the shooter's fuze radius.
+        // Hold the fuze until it has flown clear, or for one second.
+        if (shot.radarGuided)
+        {
+            const float flown = glm::length(missile.getPosition() - shot.launchPosition);
+            if (shot.flightTime >= 1.0f || flown >= 300.0f)
+            {
+                missile.setFuzeHeld(false);
+            }
+        }
+
         const bool burning = missile.isThrustEnabled() && missile.getFuel() > 0.0f;
         if (shot.motorBurning && !burning && !shot.coldLaunch.active)
         {

@@ -108,6 +108,8 @@ namespace missilesim::sim
         cell.readyTime = time();
         m_stations.push_back(std::move(cell));
         m_selectedStation = 0;
+        // The radar stores and tracks belonged to the previous loadout.
+        resetRadarStores();
     }
 
     void World::setRoleFighter(const std::string &fox2Id)
@@ -132,6 +134,8 @@ namespace missilesim::sim
         {
             positionOnRail(station);
         }
+        // A new fighter: full stores, and no tracks measured by the old one.
+        resetRadarStores();
     }
 
     void World::selectFox2(const std::string &fox2Id)
@@ -175,6 +179,10 @@ namespace missilesim::sim
             positionOnRail(station);
         }
         m_selectedStation = 0;
+        if (m_role == PlayerRole::Fighter)
+        {
+            rearmRadarStores();
+        }
     }
 
     std::unique_ptr<Missile> World::buildFox2Round() const
@@ -277,13 +285,32 @@ namespace missilesim::sim
         {
             return;
         }
-        if (!m_seekerUncaged)
+        if (!seekerPowered())
         {
             station.round->clearTarget();
             station.round->clearFox2Lock();
             return;
         }
-        station.round->updateFox2Prelaunch(aliveTargets(), m_fighter->getNose(), m_fighter->getPosition());
+        // A radar lock slaves the head to it; otherwise it searches the nose.
+        Missile::SeekerCue cue;
+        const bool slaved = radarLockPoint(cue.point);
+        cue.gateM = kDefaultAssociationGateM;
+        station.round->updateFox2Prelaunch(aliveTargets(), m_fighter->getNose(), m_fighter->getPosition(),
+                                           slaved ? &cue : nullptr);
+    }
+
+    bool World::seekerPowered() const
+    {
+        if (m_role != PlayerRole::Fighter)
+        {
+            return m_seekerUncaged;
+        }
+        if (m_fighterWeapon != FighterWeapon::Fox2)
+        {
+            return false;
+        }
+        glm::vec3 lockPoint{0.0f};
+        return m_seekerUncaged || radarLockPoint(lockPoint);
     }
 
     void World::stepStations()
@@ -413,7 +440,7 @@ namespace missilesim::sim
         {
             return station.reserve != 0 ? LaunchBlock::Reloading : LaunchBlock::NoRound;
         }
-        if (!m_seekerUncaged)
+        if (!seekerPowered())
         {
             return LaunchBlock::SeekerCaged;
         }
@@ -438,6 +465,19 @@ namespace missilesim::sim
 
     LaunchBlock World::launchClearance() const
     {
+        if (m_role == PlayerRole::Fighter && m_fighterWeapon == FighterWeapon::RadarRound)
+        {
+            if (!m_fighter)
+            {
+                return LaunchBlock::NoLauncher;
+            }
+            const LaunchBlock refused = fox3Refusal();
+            if (refused != LaunchBlock::None)
+            {
+                return refused;
+            }
+            return radarClearance(m_playerRadar, m_designatedTrack, m_radarMagazine);
+        }
         if (m_role == PlayerRole::Fighter && !m_fighter)
         {
             return LaunchBlock::NoLauncher;
@@ -452,6 +492,15 @@ namespace missilesim::sim
 
     LaunchResult World::launch(const glm::vec3 &fallbackAim)
     {
+        if (m_role == PlayerRole::Fighter && m_fighterWeapon == FighterWeapon::RadarRound)
+        {
+            if (!m_fighter)
+            {
+                return LaunchResult{LaunchBlock::NoLauncher, kNoEntity};
+            }
+            return launchRadarRound(Team::Blue, m_fighterId, m_playerRadar, m_designatedTrack, m_radarMagazine);
+        }
+
         if (m_stations.empty() || (m_role == PlayerRole::Fighter && !m_fighter))
         {
             return LaunchResult{LaunchBlock::NoLauncher, kNoEntity};

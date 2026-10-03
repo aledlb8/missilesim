@@ -79,6 +79,27 @@ public:
     // Guidance parameters
     void setGuidanceEnabled(bool enabled) { m_guidanceEnabled = enabled; }
     bool isGuidanceEnabled() const { return m_guidanceEnabled; }
+
+    // Inertial command from a seeker that does not use Target*. While this is
+    // set, the physics step applies it after clearing forces and does not run
+    // the heat seeker. Zero is still a command.
+    void setExternalAcceleration(const glm::vec3 &acceleration)
+    {
+        m_externalAcceleration = acceleration;
+        m_useExternalAcceleration = true;
+    }
+    void clearExternalAcceleration()
+    {
+        m_externalAcceleration = glm::vec3(0.0f);
+        m_useExternalAcceleration = false;
+    }
+    bool usesExternalAcceleration() const { return m_useExternalAcceleration; }
+    const glm::vec3 &externalAcceleration() const { return m_externalAcceleration; }
+
+    // Holds the proximity fuze. A radar round starts held so the shooter is
+    // outside the fuze radius before it can fire. Default is not held.
+    void setFuzeHeld(bool held) { m_fuzeHeld = held; }
+    bool isFuzeHeld() const { return m_fuzeHeld; }
     void setMass(float mass);
     float getDryMass() const { return m_dryMass; }
     void setNavigationGain(float gain) { m_navigationGain = gain; }
@@ -127,9 +148,24 @@ public:
     // Lock lost, still flying on the remembered track.
     bool fox2OnTrackMemory() const;
     void clearFox2Lock();
+    // Where the launching aircraft's radar lock points the rail seeker: the
+    // locked contact's estimated position, and how far from it an aircraft
+    // may sit and still be the one the radar means.
+    struct SeekerCue
+    {
+        glm::vec3 point{0.0f};
+        float gateM = 0.0f;
+    };
     // Uncaged rail seeker. Geometric designation, then an infrared lock if the
     // aspect and range gates pass. Does not run proportional navigation.
-    void updateFox2Prelaunch(const std::vector<Target *> &targets, const glm::vec3 &fighterNose, const glm::vec3 &fighterPosition);
+    // Without a cue the head searches along the nose and takes the aircraft
+    // nearest it. With a cue the head is slaved: it looks at the cue point
+    // (within its gimbal) and takes the aircraft nearest that point inside the
+    // gate. The designation cone and the infrared gates are the same either way.
+    void updateFox2Prelaunch(const std::vector<Target *> &targets, const glm::vec3 &fighterNose, const glm::vec3 &fighterPosition,
+                             const SeekerCue *cue = nullptr);
+    // Where the seeker head looks (world, unit). Fox 2 only; the nose otherwise.
+    const glm::vec3 &getSeekerBoresight() const { return m_fox2Active ? m_boresight : m_bodyForward; }
 
     // Thrust system. The configured thrust is the sea-level, full-burn thrust;
     // the effective exhaust velocity is derived from it and the burn rate
@@ -193,6 +229,9 @@ private:
 
     // Guidance properties
     bool m_guidanceEnabled = true;
+    bool m_useExternalAcceleration = false;
+    glm::vec3 m_externalAcceleration{0.0f};
+    bool m_fuzeHeld = false;
     bool m_hasTarget = false;
     glm::vec3 m_targetPosition = glm::vec3(0.0f);
     glm::vec3 m_trackedSourceVelocity = glm::vec3(0.0f);
