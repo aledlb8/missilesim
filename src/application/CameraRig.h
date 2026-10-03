@@ -32,6 +32,9 @@ public:
     // Free look: the aim freezes (the aircraft keeps flying to it) and the
     // mouse looks around instead; releasing swings the view back.
     void setFreeLook(bool held);
+    // Moves the aim point without touching a free-look view: the keyboard
+    // flight keys drag it along the nose so releasing them holds the heading.
+    void setAim(const glm::vec3 &aimDirection);
     void setDistanceScale(float scale) { m_distanceScale = scale; }
     float distanceScale() const { return m_distanceScale; }
 

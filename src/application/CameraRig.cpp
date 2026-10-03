@@ -98,6 +98,11 @@ void MouseAimCamera::setFreeLook(bool held)
     m_freeLook = held;
 }
 
+void MouseAimCamera::setAim(const glm::vec3 &aimDirection)
+{
+    m_aim = unitOr(aimDirection, m_aim);
+}
+
 void MouseAimCamera::update(float deltaTime, const glm::vec3 &subject, float size, float baseFov, float smoothing)
 {
     const glm::vec3 target = m_freeLook ? m_look : m_aim;

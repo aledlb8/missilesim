@@ -38,6 +38,17 @@ void Application::sampleFighterControls(float deltaTime)
         input.rollKey = axis(GLFW_KEY_A, GLFW_KEY_D);
         input.yawKey = axis(GLFW_KEY_Q, GLFW_KEY_E);
 
+        // In free look the mouse cannot move the aim, so while a flight key is
+        // held the aim point rides on the nose. Releasing the key then holds
+        // the new heading instead of turning back to the frozen aim. Outside
+        // free look the keys stay a nudge and the jet returns to the cursor.
+        if (mouseAimActive() && m_aimCamera.isFreeLook() &&
+            (input.pitchKey != 0.0f || input.rollKey != 0.0f || input.yawKey != 0.0f))
+        {
+            m_aimCamera.setAim(jet->getNose());
+            input.aimDirection = m_aimCamera.aimDirection();
+        }
+
         const float throttleKey = axis(GLFW_KEY_LEFT_CONTROL, GLFW_KEY_LEFT_SHIFT) + axis(GLFW_KEY_RIGHT_CONTROL, GLFW_KEY_RIGHT_SHIFT);
         if (throttleKey != 0.0f)
         {
