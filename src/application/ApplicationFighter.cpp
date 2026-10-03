@@ -10,7 +10,6 @@
 #include "objects/Fighter.h"
 #include "objects/Missile.h"
 #include "rendering/Renderer.h"
-#include "sim/Fox2Catalog.h"
 
 void Application::sampleFighterControls(float deltaTime)
 {
@@ -81,33 +80,3 @@ void Application::emitFighterVisuals()
     }
 }
 
-float Application::fox2SeekerCueRadiusPixels() const
-{
-    const float cap = 0.46f * static_cast<float>(std::min(std::max(m_width, 1), std::max(m_height, 1)));
-    const Missile *round = m_world ? m_world->readyRound() : nullptr;
-    if (round == nullptr || !round->isFox2() || round->fox2Spec() == nullptr || m_renderer == nullptr)
-    {
-        return m_seekerCueRadiusPixels;
-    }
-
-    const missilesim::fox2::Spec &spec = *round->fox2Spec();
-    if (spec.rearHemisphereDesignation)
-    {
-        return cap;
-    }
-
-    float angle = spec.gimbalDeg;
-    if (spec.homing == missilesim::fox2::LaunchHoming::LockAfterLaunch && spec.cueDeg > 0.0f)
-    {
-        angle = spec.cueDeg;
-    }
-    angle = std::min(angle, 89.0f);
-    const float halfFov = glm::radians(m_renderer->getCameraFOV() * 0.5f);
-    const float tangent = std::tan(halfFov);
-    if (tangent <= 1.0e-4f)
-    {
-        return m_seekerCueRadiusPixels;
-    }
-    const float radius = std::tan(glm::radians(angle)) / tangent * (static_cast<float>(std::max(m_height, 1)) * 0.5f);
-    return std::min(std::max(radius, 8.0f), cap);
-}

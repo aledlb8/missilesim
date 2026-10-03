@@ -17,6 +17,7 @@
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
 #include "sim/Fox2Catalog.h"
+#include "sim/Fox3Catalog.h"
 #include "ui/Theme.h"
 #include "ui/Widgets.h"
 
@@ -192,6 +193,104 @@ namespace
         if (spec.irccmNote != nullptr && spec.irccmNote[0] != '\0')
         {
             note(spec.irccmNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.card != nullptr && spec.card[0] != '\0')
+        {
+            note(spec.card);
+        }
+    }
+
+    void fox3Measure(const char *label, bool published, float value, const char *format, const char *blank)
+    {
+        char line[96];
+        if (published)
+        {
+            std::snprintf(line, sizeof(line), format, value);
+        }
+        fox2Readout(label, published ? line : blank, published);
+    }
+
+    void drawFox3Card(const missilesim::fox3::Spec &spec)
+    {
+        if (spec.shell == missilesim::fox3::Shell::ReferenceExact)
+        {
+            const missilesim::fox3::Flyout body = missilesim::fox3::referenceFlyout();
+            char line[96];
+            std::snprintf(line, sizeof(line), "Declared %.0f kg", body.massKg);
+            fox2Readout("Launch mass", line, false);
+            std::snprintf(line, sizeof(line), "Declared %.2f", body.dragCoefficient);
+            fox2Readout("Drag coefficient", line, false);
+            std::snprintf(line, sizeof(line), "Declared %.3f m2", body.areaM2);
+            fox2Readout("Area", line, false);
+            std::snprintf(line, sizeof(line), "Declared %.0f N", body.thrustN);
+            fox2Readout("Thrust", line, false);
+            std::snprintf(line, sizeof(line), "Declared %.0f kg at %.0f kg/s", body.fuelKg, body.fuelPerS);
+            fox2Readout("Fuel", line, false);
+        }
+        else
+        {
+            fox3Measure("Launch mass", spec.massPublished, spec.massKg, "%.1f kg",
+                        (spec.massNote != nullptr && spec.massNote[0] != '\0') ? "Conflict, see note" : "Not published");
+            fox3Measure("Length", spec.lengthPublished, spec.lengthM, "%.3f m",
+                        (spec.lengthNote != nullptr && spec.lengthNote[0] != '\0') ? "Conflict, see note" : "Not published");
+            fox3Measure("Diameter", spec.diameterPublished, spec.diameterM, "%.3f m",
+                        (spec.diameterNote != nullptr && spec.diameterNote[0] != '\0') ? "Conflict, see note" : "Not published");
+            if (spec.spanPublished)
+            {
+                fox3Measure("Span", true, spec.spanM, "%.3f m", "Not published");
+            }
+            fox2Readout("Thrust", "Not published", false);
+            fox2Readout("Burn", "Not published", false);
+        }
+
+        const bool motorKnown = spec.motor != missilesim::fox3::Motor::Unpublished && spec.motor != missilesim::fox3::Motor::ReferenceSolid;
+        fox2Readout("Motor", missilesim::fox3::motorLabel(spec.motor), motorKnown);
+        fox2Readout("Seeker band", "Not published", false);
+        fox2Readout("Gimbal", "Not published", false);
+        fox2Readout("Datalink rate", "Not published", false);
+        fox2Readout("Lethal radius", "Not published", false);
+        fox2Readout("Guidance", missilesim::fox3::supportLabel(spec.support),
+                    spec.support == missilesim::fox3::Support::DatalinkThenActive ||
+                        spec.support == missilesim::fox3::Support::SemiActiveThenActive);
+        const bool linkStated = spec.link == missilesim::fox3::Link::Uplink || spec.link == missilesim::fox3::Link::TwoWay;
+        fox2Readout("Datalink", missilesim::fox3::linkLabel(spec.link), linkStated);
+        fox2Readout("Home on jam", spec.homeOnJam ? "Stated" : "Not stated", spec.homeOnJam);
+        fox2Readout("Range claim", (spec.rangeClaim != nullptr && spec.rangeClaim[0] != '\0') ? spec.rangeClaim : "Not published", false);
+        if (spec.captureNote != nullptr && spec.captureNote[0] != '\0')
+        {
+            fox2Readout("Capture, with RCS", spec.captureNote, false);
+        }
+        fox2Readout("Flyout", missilesim::fox3::shellLabel(spec.shell), spec.shell == missilesim::fox3::Shell::ReferenceExact);
+        if (spec.refusal != missilesim::fox3::LaunchRefusal::None)
+        {
+            fox2Readout("Launch", missilesim::fox3::refusalLabel(spec.refusal), false);
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, ui::px(8.0f)));
+        if (spec.massNote != nullptr && spec.massNote[0] != '\0')
+        {
+            note(spec.massNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.lengthNote != nullptr && spec.lengthNote[0] != '\0')
+        {
+            note(spec.lengthNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.diameterNote != nullptr && spec.diameterNote[0] != '\0')
+        {
+            note(spec.diameterNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.finNote != nullptr && spec.finNote[0] != '\0')
+        {
+            note(spec.finNote);
+            ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
+        }
+        if (spec.flyoutNote != nullptr && spec.flyoutNote[0] != '\0')
+        {
+            note(spec.flyoutNote);
             ImGui::Dummy(ImVec2(0.0f, ui::px(6.0f)));
         }
         if (spec.card != nullptr && spec.card[0] != '\0')
@@ -381,6 +480,21 @@ void Application::setupUI()
         case missilesim::sim::LaunchBlock::NeedsInfraredLock:
             blockedLabel = "NO IR LOCK";
             break;
+        case missilesim::sim::LaunchBlock::SemiActiveNotInBuild:
+            blockedLabel = "SEMI-ACTIVE";
+            break;
+        case missilesim::sim::LaunchBlock::ThrustModelUnpublished:
+            blockedLabel = "NO THRUST";
+            break;
+        case missilesim::sim::LaunchBlock::SeekerUnresolved:
+            blockedLabel = "SEEKER OPEN";
+            break;
+        case missilesim::sim::LaunchBlock::SecondarySource:
+            blockedLabel = "SECONDARY";
+            break;
+        case missilesim::sim::LaunchBlock::NoPerformanceCard:
+            blockedLabel = "NO CARD";
+            break;
         default:
             break;
         }
@@ -467,7 +581,12 @@ void Application::setupUI()
 
         if (m_playerRole == PlayerRole::Fighter)
         {
-            note("Two wingtip rounds, fired right rail first; both can be in the air at once. Each leaves at the fighter's speed: no vertical hop, no booster multiplier, no terrain avoidance. S pulls and W pushes. A and D command roll rate, so a tap sets the bank and holding the key keeps rolling. Q and E rudder, Shift and Ctrl throttle, X afterburner, G rearm, F launch, R uncage.");
+            note("Two wingtip rounds, fired right rail first; both can be in the air at once. Each leaves at the fighter's speed: no vertical hop, no booster multiplier, no terrain avoidance. S pulls and W pushes. A and D command roll rate, so a tap sets the bank and holding the key keeps rolling. Q and E rudder, Shift and Ctrl throttle, X afterburner, G rearm, F launch. The radar always searches. T locks the contact nearest the nose, then the next, then back to search; that one lock is shared by both weapons: the radar round fires on it, and the heat seeker is slaved to it. R uncages the heat seeker to search along the nose instead. B switches weapon, Y the scope range, Z releases chaff.");
+            if (ui::toggleRow("Hostile radar", &m_hostileRadar,
+                              "The lead aircraft uses the same scan and can fire two radar rounds. It waits for its own track. N toggles it."))
+            {
+                m_world->setRedRadar(m_hostileRadar);
+            }
 
             ui::sectionLabel("AIRCRAFT");
             note("The picture stays models/jet.obj. Choosing a name replaces the whole flight model. A faint row is not a published number.");
@@ -578,6 +697,51 @@ void Application::setupUI()
             {
                 ui::sectionLabel(selected->displayName);
                 drawFox2Card(*selected);
+            }
+
+            ui::sectionLabel("FOX 3");
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1.0f, 1.0f, 1.0f, 0.03f));
+            ImGui::BeginChild("##fox3-catalog", ImVec2(0.0f, ui::px(280.0f)), ImGuiChildFlags_Borders);
+            const char *const fox3Families[] = {
+                "Reference", "United States", "Europe", "Russia", "Israel",
+                "Turkey", "India", "China", "Japan", "Iran"};
+            const int fox3Count = missilesim::fox3::catalogCount();
+            const missilesim::fox3::Spec *fox3Rounds = missilesim::fox3::catalog();
+            auto drawFox3 = [&](const missilesim::fox3::Spec &round)
+            {
+                ImGui::PushID(round.id);
+                const bool selectedFox3 = m_fox3Id == round.id;
+                if (ImGui::Selectable(round.displayName, selectedFox3, ImGuiSelectableFlags_None, ImVec2(0.0f, ui::px(26.0f))))
+                {
+                    selectFox3(round.id);
+                }
+                ImGui::PopID();
+            };
+            for (const char *family : fox3Families)
+            {
+                bool any = false;
+                for (int roundIndex = 0; roundIndex < fox3Count; ++roundIndex)
+                {
+                    if (fox3Rounds[roundIndex].family != nullptr && std::strcmp(fox3Rounds[roundIndex].family, family) == 0)
+                    {
+                        if (!any)
+                        {
+                            ui::sectionLabel(family);
+                            any = true;
+                        }
+                        drawFox3(fox3Rounds[roundIndex]);
+                    }
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            note("B still selects the heat round. A card that does not fly stays on the list, and launch says why. The lead aircraft always fires the reference round.");
+
+            const missilesim::fox3::Spec *selectedFox3 = missilesim::fox3::find(m_fox3Id.c_str());
+            if (selectedFox3 != nullptr)
+            {
+                ui::sectionLabel(selectedFox3->displayName);
+                drawFox3Card(*selectedFox3);
             }
             break;
         }

@@ -114,6 +114,35 @@ void Application::updateAudioFrame(float deltaTime)
         }
     }
 
+    struct ChaffListing
+    {
+        std::uint32_t id = 0;
+        AudioChaffState state;
+    };
+    std::vector<ChaffListing> chaffListings;
+    if (m_world)
+    {
+        for (const missilesim::sim::ChaffRound &round : m_world->chaffRounds())
+        {
+            if (!round.alive || round.birthRcsM2 <= 0.0f)
+            {
+                continue;
+            }
+            ChaffListing listing;
+            listing.id = round.id.value;
+            listing.state.position = round.position;
+            listing.state.velocity = round.velocity;
+            listing.state.bloom = glm::clamp(round.rcsM2 / round.birthRcsM2, 0.0f, 1.0f);
+            chaffListings.push_back(listing);
+        }
+    }
+    std::vector<AudioChaffSource> activeChaff;
+    activeChaff.reserve(chaffListings.size());
+    for (const ChaffListing &listing : chaffListings)
+    {
+        activeChaff.push_back(AudioChaffSource{listing.id, &listing.state});
+    }
+
     std::vector<AudioMissileSource> shotsInFlight;
     if (m_world)
     {
@@ -124,21 +153,36 @@ void Application::updateAudioFrame(float deltaTime)
         }
     }
 
-    // The seeker tone belongs to the uncaged round waiting to fire.
+    // The seeker tone belongs to the round waiting to fire. The fighter's
+    // heat seeker sounds what its head sees (fire control); the SAM's screen
+    // cue sounds what sits near the middle of the view.
     const Missile *readyRound = m_world ? m_world->readyRound() : nullptr;
-    const bool seekerPowered = readyRound != nullptr &&
-                               m_guidanceEnabled &&
-                               readyRound->isGuidanceEnabled() &&
-                               seekerUncaged();
-    Target *lockedTarget = seekerPowered ? readyRound->getTargetObject() : nullptr;
-    if (lockedTarget != nullptr && !lockedTarget->isActive())
-    {
-        lockedTarget = nullptr;
-    }
-    const bool seekerLocked = seekerPowered && lockedTarget != nullptr;
-
+    const bool fighterRole = m_playerRole == PlayerRole::Fighter && m_world != nullptr;
+    bool seekerPowered = false;
+    bool seekerLocked = false;
     float seekerSignalStrength = 0.0f;
-    if (seekerPowered)
+    Target *lockedTarget = nullptr;
+    if (fighterRole)
+    {
+        using missilesim::sim::SeekerState;
+        const missilesim::sim::SeekerPicture seeker = m_world->fireControl().seeker;
+        seekerPowered = seeker.family == missilesim::sim::SensorFamily::Infrared && seeker.state != SeekerState::Off &&
+                        seeker.state != SeekerState::Caged;
+        seekerLocked = seekerPowered && seeker.state == SeekerState::Locked;
+        seekerSignalStrength = seekerPowered ? seeker.tone : 0.0f;
+    }
+    else
+    {
+        seekerPowered = readyRound != nullptr && m_guidanceEnabled && readyRound->isGuidanceEnabled() && seekerUncaged();
+        lockedTarget = seekerPowered ? readyRound->getTargetObject() : nullptr;
+        if (lockedTarget != nullptr && !lockedTarget->isActive())
+        {
+            lockedTarget = nullptr;
+        }
+        seekerLocked = seekerPowered && lockedTarget != nullptr;
+    }
+
+    if (seekerPowered && !fighterRole)
     {
         const float searchCueRadiusPixels = std::max(m_seekerCueRadiusPixels * 3.0f, m_seekerCueRadiusPixels + 1.0f);
         float bestPixelDistance = std::numeric_limits<float>::max();
@@ -195,7 +239,74 @@ void Application::updateAudioFrame(float deltaTime)
 
     bool mawsThreatActive = false;
     float mawsUrgency = 0.0f;
-    if (cockpitTarget != nullptr && cockpitTarget->isMissileWarningActive())
+    HeadsetAlert alert = HeadsetAlert::None;
+    if (m_playerRole == PlayerRole::Fighter && m_world != nullptr)
+    {
+        // Tones come only from the warning picture. A search beep, a track beep,
+        // a launch run, a seeker warble, and an approach warble are different,
+        // and none of them names the aircraft that caused it. The most urgent
+        // kind sounds; among equals, the nearest sets the urgency.
+        using missilesim::sim::WarningKind;
+        const missilesim::sim::WarningPicture &picture = m_world->warnings();
+        const auto rankOf = [](WarningKind kind) {
+            switch (kind)
+            {
+            case WarningKind::RadarSearch:
+                return 1;
+            case WarningKind::RadarTrack:
+                return 2;
+            case WarningKind::RadarLaunch:
+                return 3;
+            case WarningKind::Approach:
+                return 4;
+            case WarningKind::MissileSeeker:
+                return 5;
+            }
+            return 0;
+        };
+        const auto alertOf = [](WarningKind kind) {
+            switch (kind)
+            {
+            case WarningKind::RadarSearch:
+                return HeadsetAlert::RadarSearch;
+            case WarningKind::RadarTrack:
+                return HeadsetAlert::RadarTrack;
+            case WarningKind::RadarLaunch:
+                return HeadsetAlert::RadarLaunch;
+            case WarningKind::Approach:
+                return HeadsetAlert::Approach;
+            case WarningKind::MissileSeeker:
+                return HeadsetAlert::MissileSeeker;
+            }
+            return HeadsetAlert::None;
+        };
+        int rank = 0;
+        float rangeM = 0.0f;
+        const auto consider = [&](const missilesim::sim::Warning &warning) {
+            const int warningRank = rankOf(warning.kind);
+            if (warningRank > rank || (warningRank == rank && warning.rangeM < rangeM))
+            {
+                rank = warningRank;
+                rangeM = warning.rangeM;
+                alert = alertOf(warning.kind);
+            }
+        };
+        for (const missilesim::sim::Warning &warning : picture.radar)
+        {
+            consider(warning);
+        }
+        for (const missilesim::sim::Warning &warning : picture.approach)
+        {
+            consider(warning);
+        }
+        if (alert != HeadsetAlert::None)
+        {
+            const bool missile = alert == HeadsetAlert::Approach || alert == HeadsetAlert::MissileSeeker;
+            const float scale = missile ? 8000.0f : 20000.0f;
+            mawsUrgency = 1.0f - std::clamp(rangeM / scale, 0.0f, 1.0f);
+        }
+    }
+    else if (cockpitTarget != nullptr && cockpitTarget->isMissileWarningActive())
     {
         mawsThreatActive = true;
         mawsUrgency = computeMawsUrgency(*cockpitTarget);
@@ -219,6 +330,7 @@ void Application::updateAudioFrame(float deltaTime)
     cues.seekerSignal = seekerSignalStrength;
     cues.missileWarning = mawsThreatActive;
     cues.missileWarningUrgency = mawsUrgency;
+    cues.alert = alert;
 
     m_audioSystem->beginFrame(world, dt);
     m_audioSystem->setListener(m_renderer->getCameraPosition(),
@@ -227,6 +339,7 @@ void Application::updateAudioFrame(float deltaTime)
     m_audioSystem->syncMissiles(shotsInFlight);
     m_audioSystem->syncTargets(activeTargets);
     m_audioSystem->syncFlares(activeFlares);
+    m_audioSystem->syncChaff(activeChaff);
     m_audioSystem->syncCockpitCues(cues);
     m_audioSystem->endFrame();
 }
@@ -334,4 +447,26 @@ void Application::emitFrameVisualEffects(float deltaTime)
                                     flare->getVelocity(),
                                     heatFraction);
     }
+
+    // One streak per rendered frame. Several simulation steps can land in that
+    // frame, and chaff has no interpolated previous position of its own.
+    std::unordered_map<std::uint32_t, glm::vec3> nextChaffOrigin;
+    if (m_world)
+    {
+        for (const missilesim::sim::ChaffRound &round : m_world->chaffRounds())
+        {
+            if (!round.alive || round.birthRcsM2 <= 0.0f)
+            {
+                continue;
+            }
+            const float bloom = glm::clamp(round.rcsM2 / round.birthRcsM2, 0.0f, 1.0f);
+            // A short segment is not a birth: frames with no simulation step have none.
+            const auto previous = m_chaffDrawOrigin.find(round.id.value);
+            const bool birth = previous == m_chaffDrawOrigin.end();
+            const glm::vec3 start = birth ? round.position : previous->second;
+            m_renderer->emitChaffEffect(start, round.position, round.velocity, bloom, birth);
+            nextChaffOrigin.emplace(round.id.value, round.position);
+        }
+    }
+    m_chaffDrawOrigin.swap(nextChaffOrigin);
 }

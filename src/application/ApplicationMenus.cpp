@@ -44,7 +44,12 @@ namespace
         {"Shift|Ctrl", "Fighter: throttle up / down (past 100% is afterburner)"},
         {"X", "Fighter: afterburner on / off"},
         {"F", "Launch the missile"},
-        {"R", "Toggle the seeker cue before launch"},
+        {"B", "Fighter: heat seeker or radar round"},
+        {"T", "Fighter: radar lock, nearest the nose first; again for the next, then search"},
+        {"R", "Uncage the heat seeker (a radar lock slaves it on its own)"},
+        {"Y", "Fighter: radar scope range, 10, 20 or 40 km"},
+        {"Z", "Fighter: release chaff"},
+        {"N", "Fighter: hostile radar on / off"},
         {"G", "Rearm the wingtip rails"},
         {"Enter", "Pause or resume the simulation"},
     };

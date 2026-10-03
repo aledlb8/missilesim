@@ -504,6 +504,7 @@ void Application::update(float deltaTime)
         processSimEvents();
 
         m_launchNoticeTimer = std::max(m_launchNoticeTimer - frame, 0.0f);
+        m_shotEndNoticeTimer = std::max(m_shotEndNoticeTimer - frame, 0.0f);
 
         // The hold is presentation: wall-clock, independent of the sim speed.
         if (m_detonationHoldActive)

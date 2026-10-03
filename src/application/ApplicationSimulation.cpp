@@ -15,6 +15,7 @@
 #include "physics/PhysicsEngine.h"
 #include "rendering/Renderer.h"
 #include "sim/Fox2Catalog.h"
+#include "sim/Fox3Catalog.h"
 
 using missilesim::application::detail::safeNormalize;
 namespace sim = missilesim::sim;
@@ -139,11 +140,13 @@ void Application::restartWorld()
         }
         // Targets first: the fighter starts pointed at the lead aircraft.
         m_world->placeFighterAtEngagement();
+        m_world->setRedRadar(m_hostileRadar);
     }
     else if (m_world->role() != sim::PlayerRole::Sam)
     {
         m_world->setRoleSam(customRoundSpec());
     }
+    m_world->setFox3(m_fox3Id);
     m_world->drainEvents();
 
     m_clock.setStep(m_world->fixedStep());
@@ -153,6 +156,9 @@ void Application::restartWorld()
     m_detonationHoldTimer = 0.0f;
     m_launchNotice = sim::LaunchBlock::None;
     m_launchNoticeTimer = 0.0f;
+    m_shotEndNotice.clear();
+    m_shotEndNoticeTimer = 0.0f;
+    m_chaffDrawOrigin.clear();
     if (m_renderer)
     {
         m_renderer->clearEffects();
@@ -173,6 +179,10 @@ void Application::resetTargets()
 
     m_world->setTargetAIConfig(m_targetAIConfig);
     m_world->respawnTargets(m_targetCount);
+    if (m_playerRole == PlayerRole::Fighter && m_hostileRadar)
+    {
+        m_world->rearmHostileRadar();
+    }
     if (m_renderer)
     {
         m_renderer->clearEffects();
@@ -194,6 +204,7 @@ void Application::setPlayerRole(PlayerRole role)
     {
         m_fox2Id = "custom";
         m_world->setRoleSam(customRoundSpec());
+        m_world->setRedRadar(false);
         return;
     }
 
@@ -204,6 +215,8 @@ void Application::setPlayerRole(PlayerRole role)
     m_world->selectAircraft(m_aircraftId);
     m_aircraftId = m_world->aircraftId();
     m_world->setRoleFighter(m_fox2Id);
+    m_world->setRedRadar(m_hostileRadar);
+    m_world->setFox3(m_fox3Id);
     setCameraMode(CameraMode::FIGHTER_JET);
     resetAimCamera();
 }
@@ -216,6 +229,20 @@ void Application::selectFox2(const char *id)
     }
     m_fox2Id = id;
     m_world->selectFox2(m_fox2Id);
+}
+
+void Application::selectFox3(const char *id)
+{
+    if (id == nullptr || missilesim::fox3::find(id) == nullptr || !m_world)
+    {
+        return;
+    }
+    m_fox3Id = id;
+    m_world->setFox3(m_fox3Id);
+    if (m_playerRole == PlayerRole::Fighter)
+    {
+        m_world->setFighterWeapon(sim::FighterWeapon::RadarRound);
+    }
 }
 
 void Application::selectAircraft(const char *id)
@@ -328,6 +355,8 @@ void Application::handleSimEvent(const sim::SimEvent &event, std::vector<sim::En
                 beginDetonationHold(event.position);
             }
         }
+        m_shotEndNotice = sim::shotEndReasonName(reason);
+        m_shotEndNoticeTimer = 4.0f;
         std::cout << "Shot " << event.subject.value << " ended: " << sim::shotEndReasonName(reason);
         if (event.value >= 0.0f)
         {

@@ -1,6 +1,7 @@
-// Player weapon presentation: launch requests, the seeker cue, seeker labels,
-// the in-flight seeker x-ray and the camera hold when the followed shot ends.
-// Launch, staging and flight rules live in sim::World.
+// Player weapon presentation: launch requests, the SAM's seeker cue, seeker
+// labels, the in-flight seeker x-ray and the camera hold when the followed shot
+// ends. Launch, staging and flight rules live in sim::World. The fighter's
+// seeker circle and radar lock are part of the HUD (ApplicationHUD.cpp).
 #include "Application.h"
 #include "ApplicationDetail.h"
 
@@ -289,8 +290,11 @@ void Application::updatePreLaunchSeekerLock()
 
 void Application::renderPreLaunchSeekerCue() const
 {
+    // The SAM aims with the middle of the view. The fighter's seeker looks
+    // where its head points, and the HUD draws that circle.
     const Missile *round = m_world ? m_world->readyRound() : nullptr;
-    if (!seekerUncaged() || !m_renderer || round == nullptr || ImGui::GetCurrentContext() == nullptr)
+    if (m_playerRole != PlayerRole::Sam || !seekerUncaged() || !m_renderer || round == nullptr ||
+        ImGui::GetCurrentContext() == nullptr)
     {
         return;
     }
@@ -307,22 +311,11 @@ void Application::renderPreLaunchSeekerCue() const
     const ImU32 ringColor = hasLock ? ui::toU32(ui::color::danger) : ui::toU32(ui::color::text, 0.85f);
     ImDrawList *drawList = ImGui::GetBackgroundDrawList();
     const float tick = ui::px(6.0f);
-    const float cueRadius = round->isFox2() ? fox2SeekerCueRadiusPixels() : m_seekerCueRadiusPixels;
+    const float cueRadius = m_seekerCueRadiusPixels;
     drawList->AddCircle(cueCenter, cueRadius, ringColor, 64, ui::px(1.8f));
     drawList->AddLine(ImVec2(cueCenter.x - tick, cueCenter.y), ImVec2(cueCenter.x + tick, cueCenter.y), ringColor, ui::px(1.2f));
     drawList->AddLine(ImVec2(cueCenter.x, cueCenter.y - tick), ImVec2(cueCenter.x, cueCenter.y + tick), ringColor, ui::px(1.2f));
     const char *label = hasLock ? "SEEKER LOCK" : "SEEKER SEARCH";
-    if (round->isFox2())
-    {
-        if (round->hasFox2InfraredLock())
-        {
-            label = "IR LOCK";
-        }
-        else if (round->hasTarget())
-        {
-            label = "DESIGNATED";
-        }
-    }
     const float labelWidth = ui::measureTracked(ui::fonts().display, ui::px(12.5f), label, 0.16f).x;
     ui::drawTracked(drawList, ui::fonts().display, ui::px(12.5f),
                     ImVec2(cueCenter.x - labelWidth * 0.5f, cueCenter.y + cueRadius + ui::px(8.0f)),
@@ -345,27 +338,13 @@ void Application::renderSeekerXrayOverlay() const
         return;
     }
 
-    // Corner-bracket box centred on a screen point. Drawn on the background
-    // draw list after the scene, so it sits on top of it regardless of depth -
-    // that "through walls / terrain" behaviour is the whole point of the x-ray.
-    auto drawBracket = [](ImDrawList *drawList, const ImVec2 &center, float half, ImU32 color, float thickness)
-    {
-        const float leg = half * 0.45f;
-        const float left = center.x - half;
-        const float right = center.x + half;
-        const float top = center.y - half;
-        const float bottom = center.y + half;
-        drawList->AddLine(ImVec2(left, top), ImVec2(left + leg, top), color, thickness);
-        drawList->AddLine(ImVec2(left, top), ImVec2(left, top + leg), color, thickness);
-        drawList->AddLine(ImVec2(right, top), ImVec2(right - leg, top), color, thickness);
-        drawList->AddLine(ImVec2(right, top), ImVec2(right, top + leg), color, thickness);
-        drawList->AddLine(ImVec2(left, bottom), ImVec2(left + leg, bottom), color, thickness);
-        drawList->AddLine(ImVec2(left, bottom), ImVec2(left, bottom - leg), color, thickness);
-        drawList->AddLine(ImVec2(right, bottom), ImVec2(right - leg, bottom), color, thickness);
-        drawList->AddLine(ImVec2(right, bottom), ImVec2(right, bottom - leg), color, thickness);
-    };
-
+    // Corner brackets are drawn on the background draw list after the scene,
+    // so they sit on top of it regardless of depth - that "through walls /
+    // terrain" behaviour is the whole point of the x-ray.
     namespace ui = missilesim::ui;
+    const auto drawBracket = [](ImDrawList *drawList, const ImVec2 &center, float half, ImU32 color, float thickness) {
+        ui::drawCornerBrackets(drawList, center, half, color, thickness, 0.45f);
+    };
     ImDrawList *drawList = ImGui::GetBackgroundDrawList();
 
     // The bold marker tracks the missile's actual aimpoint - the airframe while
