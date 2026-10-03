@@ -1,56 +1,51 @@
 ## Aircraft and missile models
 
-The current `models/jet.obj` is an original Rafale C visual prototype authored
-through the **local Blender MCP** add-on in Blender 5.2.2. It uses the current
-Dassault length (15.30 m) and span (10.90 m) recorded in
-`../modeling_notes/fighters/rafale-c.md`: single-seat land variant, clean,
-gear up, delta wing, close-coupled canards, one fin and two nozzles.
-All unpublished lofts, stations, details and paint colors are artist
-approximations, not measured aircraft geometry. The published 5.30 m height
-is not forced onto the gear-up mesh because its datum is unpublished.
+All thirteen flight-catalog fighters now have distinct exterior assets authored
+through the **local Blender MCP** in Blender 5.2.2. The Rafale C was rebuilt.
 
-- Editable source: `models/rafale-c.blend`, scene `Rafale C | game prototype`.
-- Portable PBR asset: `models/rafale-c.glb`, root `FIGHTER`, nose-tip origin.
-- Construction: `../tools/build_rafale.py`; review/export: `../tools/review_rafale.py`.
-- Run scripts in the local Blender MCP with `python tools/blender_mcp_call.py
-  execute_blender_code --code-file tools/build_rafale.py`, then the review script.
-- Runtime export: `python tools/export_aircraft_obj.py assets/models/rafale-c.glb --only FIGHTER`.
-- Runtime count: 13,214 triangles, including two recessed exhaust baffles.
-- Source mesh: 13,118 triangles, no degenerate triangles, 126 editable mesh parts.
+- Per-aircraft source/export/runtime files: `models/fighters/<catalog-id>.blend`,
+  `.glb`, and `.obj`.
+- Geometry and scale provenance: `models/fighters/manifest.json`.
+- Construction: `../tools/fighter_shapes.py`, `../tools/build_fighter_fleet.py`.
+- Rebuild: `python tools/generate_fighters.py --render`.
+- Integration/accuracy/review details: [Fighter assets](../docs/FIGHTER_ASSETS.md).
+- Runtime geometry: 38,092Ã¢â‚¬â€œ64,130 triangles per aircraft, 128Ã¢â‚¬â€œ177 editable parts.
 
-The unchanged `models/missile.obj` and the earlier fictional fighter are original
-visual assets previously authored through Higgsfield. Their retained sources are:
+The selected player flight card chooses its own mesh, materials and exhaust
+sockets. Player aircraft use the authored scale. `models/jet.obj` is the rebuilt
+Rafale fallback for unclassified AI targets; those retain their old scale
+convention. `models/rafale-c.blend` and `.glb` mirror the fleet Rafale source.
 
-- Editable source: `models/aircraft.blend` (separate `FIGHTER` and `MISSILE` roots).
-- Portable PBR scene: `models/aircraft.glb`.
-- Blender construction script: `../tools/build_aircraft_assets.py`.
-- Missile-only export: `python tools/export_aircraft_obj.py assets/models/aircraft.glb --only MISSILE`
-  from the repository root, with Python and NumPy installed. Exporting both roots
-  from this older file would replace the Rafale with the fictional fighter.
-- [Editable remote scene](https://higgsfield.ai/3d-jutsu/12597aeb-31f2-4198-9b7b-70204216fa38), revision 2.
+These are detailed exterior reconstructions, **not verified AAA replicas**.
+Published length/span choices come from the modeling notes. Unpublished contours,
+stations, details and colors are artist estimates. Su-57 and J-20A have no
+verified dimensions and explicitly use arbitrary presentation scales. The
+canopies use reflective opaque coating; there are no baked texture atlases,
+full cockpit interiors or animated control surfaces. See the accuracy document
+for the remaining work toward close-up production assets.
 
-All models use the repository's public-domain license. The earlier fictional
-fighter has 19,136 triangles; the missile has 9,084. The exporter preserves
-normals and linear base colors using the OBJ vertex-color extension. Comments
-of the form `# pbr metallic roughness` preserve each part's material factors
-for the simulator. Standard OBJ readers ignore these comments. The PBR path
-uses all three material properties; the legacy path uses diffuse vertex colors.
-The canopy uses an opaque reflective coating, not refractive transparency.
-No external textures are required. The Rafale script creates a separate scene;
-the older construction script expects an empty scene. The export script strips
-presentation offsets and converts axes to the runtime conventions. The existing
-game normalization to a 2 m mesh followed by object scaling remains: this is a
-visual replacement and does not implement Rafale flight physics or true-size
-runtime scaling. The canopy is a reflective opaque approximation for the OBJ path.
+All fighter meshes are original geometry under the repository's public-domain
+license. The exporter preserves normals, linear vertex colors and per-part
+metallic/roughness with `# pbr` comments. `# exhaust` comments carry explicit
+nozzle attachments. No external texture files are needed. Blender renders and
+actual game front/rear/top captures are written under `build/fighter-review/`.
 
-Validation: `python tools/verify_exhaust.py` checks the actual OpenGL renderer,
-geometry-derived Rafale nozzle sockets, banking, pause, cutoff, fuel and OpenGL
-errors. Blender review images and game captures are written under `build/`.
+The unchanged `models/missile.obj` and the historical fictional fighter retain
+these sources:
 
-The models replace these historical CC0 placeholders (not included in the new models):
+- `models/aircraft.blend` and `models/aircraft.glb` (FIGHTER and MISSILE roots).
+- `../tools/build_aircraft_assets.py`.
+- Missile-only export: `python tools/export_aircraft_obj.py assets/models/aircraft.glb --only MISSILE`.
+- [Historical remote scene](https://higgsfield.ai/3d-jutsu/12597aeb-31f2-4198-9b7b-70204216fa38), revision 2.
 
-- [Simple Missile](https://opengameart.org/content/simple-missile), tbbk.
-- [Funky Aircraft](https://opengameart.org/content/funky-aircraft), Savino.
+Do not export both roots from that historical file: it would overwrite the
+Rafale fallback with the fictional fighter. The missile has 9,084 triangles.
+The earlier `build_rafale.py` and `review_rafale.py` are historical prototype
+scripts; use `generate_fighters.py` to update the current Rafale.
+
+The models replace historical CC0 placeholders (not included):
+[Simple Missile](https://opengameart.org/content/simple-missile), tbbk, and
+[Funky Aircraft](https://opengameart.org/content/funky-aircraft), Savino.
 
 ## Fonts
 

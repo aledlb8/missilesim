@@ -1,6 +1,12 @@
 # Modeling notes
 
-Open-source exterior sheets for Blender. Nothing in `src/` was changed. The current `assets/models` fighter and missile are still the fictional meshes described in `assets/assets.md`. These notes are the dimension source for replacements.
+Open-source exterior sheets for Blender. These research sheets were compiled without changing `src/`.
+
+**Implementation update (2026-10-02):** all thirteen fighters now have separate
+local-Blender-authored exterior assets, and aircraft selection changes the player
+mesh. See [fighter asset status](../docs/FIGHTER_ASSETS.md) for published envelope
+choices, unverified dimensions, artist approximations, and remaining quality
+limitations. The missile remains the earlier fictional mesh.
 
 Every length below is a starting lock. Conflicting prints are left as separate rows in the sheet and were not averaged. A cell marked **NOT PUBLISHED** has no opened source. Do not fill it from a photograph.
 
@@ -14,7 +20,10 @@ Matches `tools/build_aircraft_assets.py`.
 - Sheets use `aft_m` or `aft_mm`, positive aft of that tip. Blender `Y = -aft_m`.
 - `up_m` zero is the nose tip unless a sheet says a waterline was actually printed. Most sheets did not find that offset.
 
-The current game loader scales both `models/jet.obj` and `models/missile.obj` so the longest bounding-box side becomes 2 m (`Renderer::normalizeMesh` with target extent `2.0`). A true-size mesh will not stay true-size until that normalize step is changed. Model in real metres anyway.
+The legacy loader scales `models/jet.obj` and `models/missile.obj` so the longest
+bounding-box side becomes 2 m (`Renderer::normalizeMesh` with target extent `2.0`).
+The new `models/fighters/<id>.obj` player assets bypass that normalization and
+retain their authored dimensions. Su-57/J-20 presentation scales remain unverified.
 
 Tags used in the sheets: **OFFICIAL** (manufacturer or service), **PRIMARY** (manual, NASA, technical order), **SECONDARY**, **WIKI-ONLY**, **DERIVED** (arithmetic on a printed number, or a stated model scale), **NOT PUBLISHED**.
 
