@@ -62,7 +62,7 @@ void Application::processInput(float deltaTime)
     static constexpr int kLatchedKeys[] = {GLFW_KEY_TAB, GLFW_KEY_H, GLFW_KEY_V, GLFW_KEY_ENTER,
                                            GLFW_KEY_KP_ENTER, GLFW_KEY_C, GLFW_KEY_R, GLFW_KEY_F,
                                            GLFW_KEY_G, GLFW_KEY_X, GLFW_KEY_B, GLFW_KEY_T, GLFW_KEY_Z,
-                                           GLFW_KEY_N, GLFW_KEY_Y};
+                                           GLFW_KEY_N, GLFW_KEY_Y, GLFW_KEY_SPACE};
     static bool keyHeld[std::size(kLatchedKeys)] = {};
     bool keyPressed[std::size(kLatchedKeys)] = {};
     for (size_t i = 0; i < std::size(kLatchedKeys); ++i)
@@ -82,10 +82,21 @@ void Application::processInput(float deltaTime)
         }
         return false;
     };
+    // Countermeasure keys repeat while held, but only once pressed in play: a
+    // key still down as a menu closes does not start dispensing.
+    static bool chaffHeld = false;
+    static bool flaresHeld = false;
+    auto heldSincePress = [&](int key, bool &held)
+    {
+        held = pressed(key) || (held && glfwGetKey(m_window, key) == GLFW_PRESS);
+        return held;
+    };
 
     // Title screen and menus own the keyboard (handled in ApplicationMenus.cpp).
     if (!gameplayInputEnabled())
     {
+        chaffHeld = false;
+        flaresHeld = false;
         updateCursorCapture();
         sampleFighterControls(deltaTime);
         return;
@@ -204,9 +215,16 @@ void Application::processInput(float deltaTime)
     {
         cycleRadarRangeScale();
     }
-    if (pressed(GLFW_KEY_Z) && m_world && m_playerRole == PlayerRole::Fighter)
+    // The dispensers pace a held key themselves (World::dispenseChaff/Flares).
+    // Space is the free camera's climb, so flares wait for another camera.
+    if (heldSincePress(GLFW_KEY_Z, chaffHeld) && m_world && m_playerRole == PlayerRole::Fighter)
     {
         m_world->dispenseChaff();
+    }
+    if (heldSincePress(GLFW_KEY_SPACE, flaresHeld) && m_world && m_playerRole == PlayerRole::Fighter &&
+        m_cameraMode != CameraMode::FREE)
+    {
+        m_world->dispenseFlares();
     }
     if (pressed(GLFW_KEY_N) && m_world && m_playerRole == PlayerRole::Fighter)
     {

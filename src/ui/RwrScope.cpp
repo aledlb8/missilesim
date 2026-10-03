@@ -250,14 +250,25 @@ namespace missilesim::ui
             }
         }
 
-        // "<caption>  <status>", chaff and detail lines on one glass plate under the disc.
+        // "<caption>  <status>", the dispenser stores and a detail line on one
+        // glass plate under the disc. Each store turns red once it is empty.
         const char *caption = view.caption != nullptr ? view.caption : "";
         char chaffLine[32];
         chaffLine[0] = '\0';
         if (view.chaff >= 0)
         {
-            std::snprintf(chaffLine, sizeof(chaffLine), "CHAFF  %d", view.chaff);
+            std::snprintf(chaffLine, sizeof(chaffLine), "CHAFF %d", view.chaff);
         }
+        char flareLine[32];
+        flareLine[0] = '\0';
+        if (view.flares >= 0)
+        {
+            std::snprintf(flareLine, sizeof(flareLine), "FLARE %d", view.flares);
+        }
+        const bool hasStores = chaffLine[0] != '\0' || flareLine[0] != '\0';
+        const float storesGap = px(16.0f);
+        float chaffWidth = 0.0f;
+        float flareWidth = 0.0f;
         const bool hasDetail = view.detail != nullptr && view.detail[0] != '\0';
         const float statusSize = px(14.0f);
         const float lineSize = px(12.5f);
@@ -268,10 +279,9 @@ namespace missilesim::ui
         float plateWidth = headWidth;
         if (font.mono != nullptr)
         {
-            if (chaffLine[0] != '\0')
-            {
-                plateWidth = std::max(plateWidth, font.mono->CalcTextSizeA(lineSize, FLT_MAX, 0.0f, chaffLine).x);
-            }
+            chaffWidth = chaffLine[0] != '\0' ? font.mono->CalcTextSizeA(lineSize, FLT_MAX, 0.0f, chaffLine).x : 0.0f;
+            flareWidth = flareLine[0] != '\0' ? font.mono->CalcTextSizeA(lineSize, FLT_MAX, 0.0f, flareLine).x : 0.0f;
+            plateWidth = std::max(plateWidth, chaffWidth + flareWidth + (chaffWidth > 0.0f && flareWidth > 0.0f ? storesGap : 0.0f));
             if (hasDetail)
             {
                 plateWidth = std::max(plateWidth, font.mono->CalcTextSizeA(lineSize, FLT_MAX, 0.0f, view.detail).x);
@@ -279,7 +289,7 @@ namespace missilesim::ui
         }
         plateWidth += px(28.0f);
         const float plateTop = centre.y + rim + px(8.0f);
-        const float plateHeight = px(10.0f) + px(19.0f) + (chaffLine[0] != '\0' ? px(18.0f) : 0.0f) + (hasDetail ? px(18.0f) : 0.0f) +
+        const float plateHeight = px(10.0f) + px(19.0f) + (hasStores ? px(18.0f) : 0.0f) + (hasDetail ? px(18.0f) : 0.0f) +
                                   px(4.0f);
         const ImVec2 plateMin(std::round(centre.x - plateWidth * 0.5f), std::round(plateTop));
         const ImVec2 plateMax(std::round(centre.x + plateWidth * 0.5f), std::round(plateTop + plateHeight));
@@ -297,9 +307,21 @@ namespace missilesim::ui
             drawTracked(drawList, font.display, statusSize, ImVec2(x + headWidth - statusWidth, y), toU32(statusTone), status, 0.14f);
         }
         y += px(19.0f);
-        if (chaffLine[0] != '\0')
+        if (hasStores && font.mono != nullptr)
         {
-            drawCentred(drawList, font.mono, lineSize, centre.x, y, toU32(view.chaff > 0 ? color::textMuted : color::danger), chaffLine);
+            const float storesWidth = chaffWidth + flareWidth + (chaffWidth > 0.0f && flareWidth > 0.0f ? storesGap : 0.0f);
+            float x = std::round(centre.x - storesWidth * 0.5f);
+            if (chaffLine[0] != '\0')
+            {
+                drawList->AddText(font.mono, lineSize, ImVec2(x, std::round(y)), toU32(view.chaff > 0 ? color::textMuted : color::danger),
+                                  chaffLine);
+                x += chaffWidth + storesGap;
+            }
+            if (flareLine[0] != '\0')
+            {
+                drawList->AddText(font.mono, lineSize, ImVec2(x, std::round(y)), toU32(view.flares > 0 ? color::textMuted : color::danger),
+                                  flareLine);
+            }
             y += px(18.0f);
         }
         if (hasDetail)

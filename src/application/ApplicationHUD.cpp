@@ -1216,8 +1216,8 @@ void Application::renderHud()
             static const char *const fighterHints[][2] = {{"Mouse", "Aim"},          {"RMB", "Free look"},     {"Shift", "Throttle up"},
                                                           {"Ctrl", "Throttle down"}, {"X", "Afterburner"},     {"B", "Weapon"},
                                                           {"T", "Radar lock"},       {"R", "Uncage seeker"},   {"Y", "Radar range"},
-                                                          {"Z", "Chaff"},            {"N", "Hostile radar"},   {"F", "Fire"},
-                                                          {"V", "Camera"},           {"Esc", "Menu"}};
+                                                          {"Z", "Chaff"},            {"Space", "Flares"},      {"N", "Hostile radar"},
+                                                          {"F", "Fire"},             {"V", "Camera"},          {"Esc", "Menu"}};
             const auto *hints = fighterRole ? fighterHints : samHints;
             const size_t hintCount = fighterRole ? std::size(fighterHints) : std::size(samHints);
             float y = origin.y + height - margin - ui::px(24.0f) * static_cast<float>(hintCount);
@@ -1259,6 +1259,7 @@ void Application::renderHud()
                 view.threats.push_back(threat);
             }
             view.chaff = m_world->chaffRemaining();
+            view.flares = m_world->flaresRemaining();
         }
         else
         {

@@ -30,6 +30,7 @@ namespace missilesim::ui
         std::vector<RwrThreat> threats;
         const char *caption = "RWR";  // the receiver's name on the status plate
         int chaff = -1;               // < 0 hides the counter
+        int flares = -1;              // < 0 hides the counter
         const char *detail = nullptr; // optional line under the status (SAM: range and closest approach)
         float time = 0.0f;            // seconds, drives the flashing
     };

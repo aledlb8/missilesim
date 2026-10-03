@@ -96,7 +96,8 @@ namespace
                                  contact(3, 17600.0f, 3.0f, ui::ScopeLife::Tentative, 17000.0f, 3.0f),
                                  contact(4, 6300.0f, -21.0f, ui::ScopeLife::Coasting, 6100.0f, -26.0f)};
         search.rwr.threats = {{ui::RwrKind::Search, deg(20.0f), 1.0f}, {ui::RwrKind::Search, deg(-95.0f), 0.5f}};
-        search.rwr.chaff = 12;
+        search.rwr.chaff = 120;
+        search.rwr.flares = 120;
         list.push_back(search);
 
         Picture lock{"lock", {}, {}};
@@ -111,7 +112,8 @@ namespace
         lock.scope.lockRangeM = 9800.0f;
         lock.scope.lockClosingMps = 412.0f;
         lock.rwr.threats = {{ui::RwrKind::Track, deg(20.0f), 1.0f}, {ui::RwrKind::Search, deg(-95.0f), 1.0f}};
-        lock.rwr.chaff = 12;
+        lock.rwr.chaff = 87;
+        lock.rwr.flares = 104;
         list.push_back(lock);
 
         Picture missile{"missile", {}, {}};
@@ -122,6 +124,7 @@ namespace
                                {ui::RwrKind::Approach, deg(-140.0f), 1.0f},
                                {ui::RwrKind::Search, deg(-60.0f), 0.6f}};
         missile.rwr.chaff = 0;
+        missile.rwr.flares = 36;
         missile.rwr.time = 0.05f;
         list.push_back(missile);
 
