@@ -139,7 +139,7 @@ void render(Renderer &renderer, PhysicsObject &object) {
 void sceneChecks(bool motion) {
     Renderer renderer;
     renderer.setViewportSize(width, height);
-    renderer.setWorldGuidesEnabled(false); renderer.setPBRFogDensityScale(.2f);
+    renderer.setPBRFogDensityScale(.2f);
     ReviewTarget jet({0, 100, 0}, 5); jet.setVelocity({0, 0, 240});
     Missile missile({0, 100, 0}, {0, 0, 240});
     missile.setThrustEnabled(true); missile.setThrottle(1); missile.setFuel(100);
@@ -147,11 +147,12 @@ void sceneChecks(bool motion) {
     for (const auto &socket : sockets)
         std::cout << "Jet socket " << socket.position.x << ' ' << socket.position.y << ' '
                   << socket.position.z << " radius " << socket.radius << '\n';
-    // Rafale C: 15.30 m length, 0.365 m outlet radius and +/-0.630 m spacing.
+    // Fleet Rafale C: 15.30 m length, artist-authored 0.309825 m outlet
+    // radius and +/-0.6273 m spacing (not published nozzle dimensions).
     // The loader normalizes to 2 m, then ReviewTarget's scale is 5.
-    require(sockets.size() == 2 && std::abs(sockets[0].radius - .365f * 10.f / 15.30f) < 1e-5f &&
+    require(sockets.size() == 2 && std::abs(sockets[0].radius - .309825f * 10.f / 15.30f) < 1e-5f &&
             std::abs(sockets[0].position.z + 5.f) < 1e-4f &&
-            std::abs(glm::distance(sockets[0].position, sockets[1].position) - 1.26f * 10.f / 15.30f) < 1e-4f,
+            std::abs(glm::distance(sockets[0].position, sockets[1].position) - 1.2546f * 10.f / 15.30f) < 1e-4f,
             "Rafale sockets match normalized outlet geometry");
     jet.acceleration = {22, 0, 0};
     auto banked = renderer.getExhaustSockets(jet);
@@ -178,7 +179,9 @@ void sceneChecks(bool motion) {
             capture(object->getType() + "-" + std::to_string(view));
         }
     }
-    missile.setVelocity({0, 0, 240}); renderer.setCameraPosition({3, 100, -.7f}); renderer.setCameraTarget({0, 100, -.8f});
+    // Aim below the horizon for exact pause/cutoff comparisons: the sky's
+    // clouds intentionally advance on wall time even when effects are paused.
+    missile.setVelocity({0, 0, 240}); renderer.setCameraPosition({3, 104, -.7f}); renderer.setCameraTarget({0, 100, -.8f});
     render(renderer, missile); auto firing = readPixels();
     render(renderer, missile);
     require(difference(firing, readPixels()) == 0, "PBR paused engine and local lights stay stable");

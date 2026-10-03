@@ -12,6 +12,7 @@ std::vector<Renderer::ExhaustSocket> Renderer::getExhaustSockets(const PhysicsOb
     const bool jet = object.getType() == "Target" || object.getType() == "Fighter";
     const auto *local = object.getType() == "Missile" ? &m_missileExhaustSockets :
                         jet ? &m_targetExhaustSockets : nullptr;
+    if (const AircraftMesh *aircraft = aircraftMesh(object)) local = &aircraft->sockets;
     if (!local) return {};
     const glm::mat4 model = buildObjectModelMatrix(object);
     std::vector<ExhaustSocket> sockets = *local;

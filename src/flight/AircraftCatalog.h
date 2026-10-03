@@ -1,6 +1,7 @@
 #pragma once
 
-// Which flight card the player is flying. The picture is always models/jet.obj.
+// Which flight card the player is flying. Exterior assets use the same id
+// under models/fighters/<id>.obj; the renderer resolves them per object.
 // The F-16 card is the NASA TP-1538 model in src/flight. Every other card is a
 // point mass in CardAirframe, fed only by the numbers below. A faint UI row is
 // not a published figure. Stand-ins live in the integrator, not in these cells.

@@ -191,6 +191,30 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/skyboxes
 )
 
+# Fleet assets are build inputs in their own right. Refresh copied runtime
+# meshes even when only a Blender export changed and the executable is current.
+file(GLOB FIGHTER_RUNTIME_MODELS CONFIGURE_DEPENDS "assets/models/fighters/*.obj")
+if(FIGHTER_RUNTIME_MODELS)
+    add_custom_target(fighter_assets ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/fighters
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FIGHTER_RUNTIME_MODELS}
+                $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/fighters
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/fighters/manifest.json
+                $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/fighters/manifest.json
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/jet.obj
+                $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/models/jet.obj
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/assets.md
+                $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/assets.md
+        COMMENT "Synchronizing fighter runtime meshes")
+else()
+    # No exported obj yet. An empty copy_if_different list is not a valid cmake -E command.
+    add_custom_target(fighter_assets)
+endif()
+add_dependencies(${PROJECT_NAME} fighter_assets)
+
 # ---------------------------------------------------------------------------
 # Packaging: `cmake --install` / `cpack` produce a folder you can zip and send.
 # Everything goes into the "game" component so install rules from fetched

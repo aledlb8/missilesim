@@ -35,6 +35,7 @@ public:
     };
     // World-space sockets use the very same matrix as the rendered mesh.
     std::vector<ExhaustSocket> getExhaustSockets(const PhysicsObject &object) const;
+    bool hasAircraftModel(const char *aircraftId) const;
     Renderer();
     ~Renderer();
 
@@ -193,6 +194,7 @@ private:
     void createMissileModel();
     void createFloor();
     void createTargetModel();
+    void createAircraftModels();
     void createExplosionModel();
     void createLineRendering();
     void createAALineRendering();
@@ -273,6 +275,17 @@ private:
     GLuint m_targetEBO;
     std::vector<Vertex> m_targetVertices;
     std::vector<unsigned int> m_targetIndices;
+
+    struct AircraftMesh
+    {
+        GLuint vao = 0, vbo = 0, ebo = 0;
+        GLsizei indexCount = 0;
+        std::vector<ExhaustSocket> sockets;
+    };
+    // Immutable GPU meshes, keyed by the same id as the flight catalog. Both
+    // render paths and exhaust effects resolve the current object's id.
+    std::unordered_map<std::string, AircraftMesh> m_aircraftMeshes;
+    const AircraftMesh *aircraftMesh(const PhysicsObject &object) const;
 
     // Explosion resources
     GLuint m_explosionVAO;

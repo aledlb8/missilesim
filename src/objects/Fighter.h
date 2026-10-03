@@ -8,7 +8,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
-// Player fighter. The mesh is always models/jet.obj. The F-16 card flies the
+// Player fighter. The mesh follows jet().aircraftId(). The F-16 card flies the
 // NASA TP-1538 airframe; every other card flies that card's point mass.
 // Integrated by Application, not by PhysicsEngine::m_objects; this class
 // mirrors the jet's state into PhysicsObject for the renderer, HUD and audio.
