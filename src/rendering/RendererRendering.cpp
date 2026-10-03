@@ -219,7 +219,10 @@ glm::mat4 Renderer::buildObjectModelMatrix(const PhysicsObject &object) const
         rotation[1] = glm::vec4(forward, 0.0f);
         rotation[2] = glm::vec4(-up, 0.0f);
         model *= rotation;
-        model = glm::scale(model, glm::vec3(std::max(fighter.getRadius(), 1.0f)));
+        // Fleet assets are centered metre-scale meshes. Only the legacy
+        // missing-asset fallback uses the old 2 m mesh / radius convention.
+        if (!aircraftMesh(object))
+            model = glm::scale(model, glm::vec3(std::max(fighter.getRadius(), 1.0f)));
     }
     else if (glm::length2(velocity) > 0.000001f)
         model *= buildAxisOrientationMatrix(velocity);
@@ -269,10 +272,13 @@ void Renderer::render(PhysicsObject *object)
     }
     else if (object->getType() == "Target" || object->getType() == "Fighter")
     {
+        const AircraftMesh *aircraft = aircraftMesh(*object);
+        const GLuint vao = aircraft ? aircraft->vao : m_targetVAO;
+        const GLsizei count = aircraft ? aircraft->indexCount : static_cast<GLsizei>(m_targetIndices.size());
         if (isPBRActive())
         {
             m_pbrPipeline->submitLegacyMesh(
-                m_targetVAO, static_cast<GLsizei>(m_targetIndices.size()), model,
+                vao, count, model,
                 glm::vec3(0.7f, 0.72f, 0.74f), 0.2f, 0.4f, true, true);
             return;
         }
@@ -288,8 +294,8 @@ void Renderer::render(PhysicsObject *object)
         if (m_fogDensityLoc != -1)
             glUniform1f(m_fogDensityLoc, computeFogDensity(m_sceneFarPlane));
 
-        glBindVertexArray(m_targetVAO);
-        glDrawElements(GL_TRIANGLES, m_targetIndices.size(), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(vao);
+        glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
     else

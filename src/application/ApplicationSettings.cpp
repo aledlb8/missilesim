@@ -34,6 +34,7 @@
 #include "physics/forces/Lift.h"
 #include "rendering/Renderer.h"
 #include "sim/Fox2Catalog.h"
+#include "sim/Fox3Catalog.h"
 
 using missilesim::application::detail::formatBoolValue;
 using missilesim::application::detail::formatVec3Value;
@@ -239,6 +240,8 @@ bool Application::loadSettings()
         m_playerRole = PlayerRole::Sam;
         m_fox2Id = "custom";
     }
+    const std::string fox3Id = readString("fox3_id", "reference");
+    m_fox3Id = missilesim::fox3::find(fox3Id.c_str()) != nullptr ? fox3Id : "reference";
 
     const std::string displayMode = readString("display_mode", displayModeName(m_displayMode));
     if (displayMode == displayModeName(DisplayMode::Borderless))
@@ -309,6 +312,7 @@ std::string Application::buildSettingsSnapshot() const
     output << "control_panel_visible=" << formatBoolValue(m_showUI) << "\n";
     output << "player_role=" << (m_playerRole == PlayerRole::Fighter ? "fighter" : "sam") << "\n";
     output << "fox2_id=" << m_fox2Id << "\n";
+    output << "fox3_id=" << m_fox3Id << "\n";
     output << "aircraft_id=" << m_aircraftId << "\n";
     output << "terrain=" << missilesim::sim::terrainKindName(m_terrainKind) << "\n";
 

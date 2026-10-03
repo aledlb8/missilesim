@@ -99,11 +99,20 @@ void PhysicsEngine::integrateStep(float deltaTime, float timeIntoUpdate)
                 const Atmosphere::State atmosphereState =
                     m_atmosphere ? m_atmosphere->sample(missile->getPosition().y) : Atmosphere::State{};
                 missile->setAmbientPressure(atmosphereState.pressurePascals);
-                missile->updateHeatSeeker(m_targets, m_flares, deltaTime);
-
-                if (missile->isGuidanceEnabled() && missile->hasTarget())
+                if (missile->usesExternalAcceleration())
                 {
-                    missile->applyGuidance(deltaTime, atmosphereState.densityKgPerCubicMeter);
+                    // The command is already perpendicular to velocity and capped.
+                    // Heat-seeker tracking would steer on a live Target* instead.
+                    missile->applyForce(missile->externalAcceleration() * missile->getMass());
+                }
+                else
+                {
+                    missile->updateHeatSeeker(m_targets, m_flares, deltaTime);
+
+                    if (missile->isGuidanceEnabled() && missile->hasTarget())
+                    {
+                        missile->applyGuidance(deltaTime, atmosphereState.densityKgPerCubicMeter);
+                    }
                 }
 
                 activeMissiles.push_back(missile);

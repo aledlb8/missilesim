@@ -54,4 +54,9 @@ namespace missilesim::ui
 
     // Full-screen translucent wash behind modal screens.
     void dimBackground(float alpha);
+
+    // Four corner marks around a point: the one target bracket every screen
+    // draws. Each mark runs legFraction of `half` along both edges.
+    void drawCornerBrackets(ImDrawList *drawList, ImVec2 centre, float half, ImU32 colour, float thickness,
+                            float legFraction = 0.44f);
 }

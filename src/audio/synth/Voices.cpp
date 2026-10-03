@@ -674,6 +674,67 @@ namespace missilesim::audio::synth
     }
 
     // ==================================================================
+    // Chaff
+    // ==================================================================
+
+    namespace
+    {
+        constexpr float kChaffRustleRms = 8.0f;   // Pa at 1 m at full bloom. The flare burn is 30.
+        constexpr float kChaffCrackPeak = 220.0f; // dispenser cartridge, sharper and smaller than the flare pop
+        constexpr float kChaffPuffPeak = 55.0f;   // mechanical puff, not the flare's ejection thump
+    }
+
+    ChaffVoice::ChaffVoice(uint64_t seed) : m_random(seed)
+    {
+        m_rustle.set(2000.0f, 12000.0f);
+        m_ticks.set(1400.0f, 8.0e-6f, 0.05e-3f);
+        m_rustleFlicker.setDepth(0.55f, 0.35f);
+    }
+
+    EmitterSpec ChaffVoice::spec()
+    {
+        EmitterSpec spec;
+        spec.lobeCount = 1;
+        spec.lobes[0] = DirectivityPattern::omni();
+        spec.historySeconds = 9.0f;
+        spec.reverbSend = 0.45f;
+        return spec;
+    }
+
+    void ChaffVoice::render(const SourceContext &context, float *const *lobes, int lobeCount, int frames)
+    {
+        (void)context;
+        (void)lobeCount;
+        const ChaffParams &params = m_params.read();
+        const float dt = static_cast<float>(frames) * kSampleSeconds;
+        m_bloom += (clampf(params.bloom, 0.0f, 1.0f) - m_bloom) * smoothingCoefficient(0.05f, static_cast<float>(frames));
+        if (m_released)
+        {
+            m_releaseGain = std::max(m_releaseGain - dt / 0.20f, 0.0f);
+        }
+
+        const float level = kChaffRustleRms * std::pow(m_bloom, 0.8f) * m_releaseGain *
+                            m_rustleFlicker.advance(m_random, frames);
+        const Ramp rustle(m_gainRustle, level * std::sqrt(0.72f), frames);
+        const Ramp ticks(m_gainTicks, level * std::sqrt(0.28f), frames);
+        m_gainRustle = rustle.at(frames);
+        m_gainTicks = ticks.at(frames);
+
+        float *out = lobes[0];
+        for (int i = 0; i < frames; ++i, ++m_sample)
+        {
+            const float t = static_cast<float>(m_sample) * kSampleSeconds;
+            float p = m_rustle.process(m_random) * rustle.at(i) +
+                      m_ticks.process(m_random) * ticks.at(i);
+            if (t < 0.025f)
+            {
+                p += kChaffCrackPeak * nWave(t, 0.00045f) + kChaffPuffPeak * pressurePulse(t - 0.0003f, 0.0035f);
+            }
+            out[i] += p;
+        }
+    }
+
+    // ==================================================================
     // Cold-launch ejection
     // ==================================================================
 

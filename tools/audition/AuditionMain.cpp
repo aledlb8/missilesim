@@ -570,7 +570,7 @@ namespace
             seeker->setParams(tone);
 
             MissileWarningParams maws;
-            maws.active = t > 9.0f && t < 15.5f;
+            maws.timbre = t > 9.0f && t < 15.5f ? WarningTimbre::Approach : WarningTimbre::Off;
             maws.urgency = glm::clamp((t - 9.0f) / 5.0f, 0.0f, 1.0f);
             warning->setParams(maws);
         });

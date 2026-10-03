@@ -43,6 +43,12 @@ Renderer::Renderer()
 
 Renderer::~Renderer()
 {
+    for (auto &[id, mesh] : m_aircraftMeshes)
+    {
+        glDeleteVertexArrays(1, &mesh.vao);
+        glDeleteBuffers(1, &mesh.vbo);
+        glDeleteBuffers(1, &mesh.ebo);
+    }
     // Cleanup OpenGL resources
     glDeleteVertexArrays(1, &m_vao);
     glDeleteBuffers(1, &m_vbo);
@@ -98,6 +104,7 @@ void Renderer::initialize()
     }
     createFloor();
     createTargetModel();
+    createAircraftModels();
     createExplosionModel();
     createLineRendering();
     m_sceneEffects = std::make_unique<SceneEffects>();

@@ -64,6 +64,14 @@ public:
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,
                          float heatFraction);
+    // Metallic-dipole cloud. bloomFraction is current RCS over RCS at release.
+    // birth adds the one-off cartridge burst. No heat haze: chaff is not a
+    // burning pellet.
+    void emitChaffEffect(const glm::vec3 &start,
+                         const glm::vec3 &end,
+                         const glm::vec3 &carrierVelocity,
+                         float bloomFraction,
+                         bool birth);
     void spawnMissileLaunch(const glm::vec3 &position,
                             const glm::vec3 &forward,
                             const glm::vec3 &carrierVelocity,

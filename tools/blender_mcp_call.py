@@ -14,10 +14,9 @@ import shutil
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-PROMPT = ('Using the blender MCP create the Rafale model so we can test that '
-          'everything looks good and works for the game. If you need more '
-          "information that isn't in the modeling markdown files research, you "
-          "can search yourself, but if it's there you start working.")
+PROMPT = ('Using the local Blender MCP, create all thirteen fighter jets in '
+          'modeling_notes/fighters, rebuild the Rafale, and integrate distinct '
+          'realistic aircraft models with aircraft selection in MissileSim.')
 
 
 async def main():

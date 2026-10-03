@@ -322,6 +322,19 @@ void Renderer::emitFlareEffect(const glm::vec3 &start,
     addEffectLight(light);
 }
 
+void Renderer::emitChaffEffect(const glm::vec3 &start,
+                               const glm::vec3 &end,
+                               const glm::vec3 &carrierVelocity,
+                               float bloomFraction,
+                               bool birth)
+{
+    // Dipoles glint. They do not burn, so this does not add the flare's warm light.
+    if (m_sceneEffects)
+    {
+        m_sceneEffects->emitChaffEffect(start, end, carrierVelocity, bloomFraction, birth);
+    }
+}
+
 void Renderer::spawnMissileLaunchEffect(const glm::vec3 &position,
                                         const glm::vec3 &forward,
                                         const glm::vec3 &carrierVelocity,

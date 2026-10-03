@@ -8,7 +8,7 @@
 //
 // Per rendered frame, in this order:
 //   beginFrame -> setListener -> syncMissiles / syncTargets / syncFlares
-//   -> syncCockpitCues -> endFrame
+//   / syncChaff -> syncCockpitCues -> endFrame
 // One-shot events (launch, explosion) and stop calls may happen at any point
 // of the frame.
 //
@@ -38,6 +38,17 @@ using AudioMissileSource = AudioSource<Missile>;
 using AudioTargetSource = AudioSource<Target>;
 using AudioFlareSource = AudioSource<Flare>;
 
+// A dispensed chaff bundle. Not a physics object: the game fills this from the
+// simulation each frame and the voice follows bloom (current RCS / birth RCS).
+struct AudioChaffState
+{
+    glm::vec3 position{0.0f};
+    glm::vec3 velocity{0.0f};
+    float bloom = 0.0f;
+};
+
+using AudioChaffSource = AudioSource<AudioChaffState>;
+
 struct AudioWorldState
 {
     bool paused = false;
@@ -48,6 +59,18 @@ struct AudioWorldState
     float masterVolume = 1.0f;
 };
 
+// Headset alerts the pilot can actually hear. None keeps the older missile-warning flag,
+// which the SAM camera still uses for its kinematic approach tone.
+enum class HeadsetAlert : std::uint8_t
+{
+    None = 0,
+    RadarSearch,
+    RadarTrack,
+    RadarLaunch,
+    MissileSeeker,
+    Approach,
+};
+
 struct CockpitCueState
 {
     bool seekerPowered = false;
@@ -55,6 +78,7 @@ struct CockpitCueState
     float seekerSignal = 0.0f; // 0..1
     bool missileWarning = false;
     float missileWarningUrgency = 0.0f; // 0..1
+    HeadsetAlert alert = HeadsetAlert::None;
 };
 
 class AudioSystem
@@ -77,6 +101,7 @@ public:
     void syncMissiles(const std::vector<AudioMissileSource> &missiles);
     void syncTargets(const std::vector<AudioTargetSource> &activeTargets);
     void syncFlares(const std::vector<AudioFlareSource> &activeFlares);
+    void syncChaff(const std::vector<AudioChaffSource> &activeChaff);
     void syncCockpitCues(const CockpitCueState &cues);
     void endFrame();
 

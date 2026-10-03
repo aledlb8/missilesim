@@ -2,9 +2,11 @@
 
 #include <glm/glm.hpp>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "objects/Target.h"
 #include "sim/EntityId.h"
@@ -80,6 +82,18 @@ private:
     struct HudTracker
     {
         float engagementTime = 0.0f;
+    };
+
+    // A threat the RWR still shows. It is held a moment after it was last
+    // heard so a sweeping radar reads as one steady symbol (ApplicationHUD.cpp).
+    // A missile can be both a radar seeker and an approach, so they are kept apart.
+    struct RwrMemory
+    {
+        std::uint32_t source = 0;
+        bool approach = false;
+        missilesim::sim::WarningKind kind = missilesim::sim::WarningKind::RadarSearch;
+        float azimuthRad = 0.0f;
+        double heardTime = 0.0; // simulation time
     };
 
     // Last windowed client rect, restored when leaving borderless/fullscreen.
@@ -177,6 +191,9 @@ private:
     // In-engagement HUD (ApplicationHUD.cpp)
     void renderHud();
     void updateHudTracker(float deltaTime);
+    void updateRwrMemory();
+    // Y: the radar scope's range scale, 10, 20 or 40 km.
+    void cycleRadarRangeScale();
     const char *missionStateLabel() const;
     float hudRightInset() const;
 
@@ -241,12 +258,12 @@ private:
     void launchMissile();
     void setPlayerRole(PlayerRole role);
     void selectFox2(const char *id);
+    void selectFox3(const char *id);
     void selectAircraft(const char *id);
     void rearm();
     void sampleFighterControls(float deltaTime);
     void renderFighter();
     void emitFighterVisuals();
-    float fox2SeekerCueRadiusPixels() const;
     Target *findBestTarget() const;
     bool projectWorldPointToScreen(const glm::vec3 &worldPosition, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
     bool projectTargetToSeekerScreen(const Target *target, ImVec2 &screenPosition, float *pixelDistanceFromCenter = nullptr) const;
@@ -349,6 +366,14 @@ private:
     // Why the last launch request was refused, shown briefly on the HUD.
     missilesim::sim::LaunchBlock m_launchNotice = missilesim::sim::LaunchBlock::None;
     float m_launchNoticeTimer = 0.0f;
+    // Why the last followed shot stopped. A shot ending is not a mission result.
+    std::string m_shotEndNotice;
+    float m_shotEndNoticeTimer = 0.0f;
+    // Lead aircraft uses the same scan and radar round. Headless Fox 2 scenarios leave it off.
+    bool m_hostileRadar = true;
+    // Radar scope range scale (m) and the RWR's held threats.
+    float m_radarRangeScaleM = 20000.0f;
+    std::vector<RwrMemory> m_rwrMemory;
 
     // Camera hold on the followed shot's end point.
     bool m_detonationHoldActive = false;
@@ -409,6 +434,11 @@ private:
     // SAM keeps the custom round. Fighter carries catalog Fox 2s on the wingtips.
     PlayerRole m_playerRole = PlayerRole::Sam;
     std::string m_fox2Id = "custom";
+    // Radar-round card. "reference" is the declared archetype, not a named missile.
+    std::string m_fox3Id = "reference";
+    // Last position drawn for each chaff bundle, so the cloud streaks across frames.
+    // Chaff is not a physics object and has no render interpolation.
+    std::unordered_map<std::uint32_t, glm::vec3> m_chaffDrawOrigin;
     missilesim::sim::TerrainKind m_terrainKind = missilesim::sim::TerrainKind::Flat;
     std::string m_aircraftId = "f-16c-block-50";
 

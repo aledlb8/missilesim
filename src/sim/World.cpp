@@ -145,11 +145,25 @@ namespace missilesim::sim
         case LaunchBlock::Reloading:
             return "Reloading";
         case LaunchBlock::SeekerCaged:
-            return "Seeker caged";
+            return "Seeker caged: uncage it or lock with the radar";
         case LaunchBlock::NoDesignation:
             return "No target in the seeker";
         case LaunchBlock::NeedsInfraredLock:
             return "Needs an infrared lock";
+        case LaunchBlock::NoLaunchQuality:
+            return "No launch-quality track";
+        case LaunchBlock::RadarMagazineEmpty:
+            return "No radar rounds left";
+        case LaunchBlock::SemiActiveNotInBuild:
+            return "Semi-active midcourse is not in this build";
+        case LaunchBlock::ThrustModelUnpublished:
+            return "Ducted-rocket thrust is unpublished";
+        case LaunchBlock::SeekerUnresolved:
+            return "Seeker identity is unresolved";
+        case LaunchBlock::SecondarySource:
+            return "Only a secondary source was opened";
+        case LaunchBlock::NoPerformanceCard:
+            return "No published performance card";
         }
         return "Unavailable";
     }
@@ -172,7 +186,7 @@ namespace missilesim::sim
         m_targetSpawnRandom = m_random.stream("targets.spawn");
         m_launcherSiteId = allocateId();
         m_scenarioSiteId = allocateId();
-        setRoleSam(m_customSpec);
+        setRoleSam(m_customSpec); // also resets the radar stores
     }
 
     World::~World()
@@ -218,6 +232,7 @@ namespace missilesim::sim
         m_scenarioSiteId = allocateId();
         m_seekerUncaged = false;
 
+        // Either role resets the radar stores.
         if (m_role == PlayerRole::Fighter)
         {
             setRoleFighter(m_fox2Id);
@@ -842,6 +857,7 @@ namespace missilesim::sim
         stepFighter();
         stepStations();
         stepColdLaunches();
+        stepRadarBeforePhysics();
 
         m_physics->update(m_fixedStep);
 
@@ -864,6 +880,7 @@ namespace missilesim::sim
             stepShotBookkeeping(*shot);
         }
         resolveShotOutcomes(motions);
+        stepRadarAfterOutcomes();
         retireEndedShots();
 
         collectFlareLaunches();

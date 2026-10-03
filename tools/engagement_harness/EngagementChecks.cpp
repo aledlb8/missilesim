@@ -11,6 +11,13 @@
 #include "sim/Random.h"
 #include "sim/Sweep.h"
 #include "sim/Terrain.h"
+#include "sim/Fox3Catalog.h"
+#include "sim/defense/Warnings.h"
+#include "sim/guidance/RadarHoming.h"
+#include "sim/sensors/ScanRadar.h"
+#include "sim/sensors/SensorScheduler.h"
+#include "sim/sensors/SensorTypes.h"
+#include "sim/tracking/TrackStore.h"
 
 #include <algorithm>
 #include <chrono>
@@ -870,6 +877,683 @@ namespace harness
             std::error_code ignored;
             fs::remove_all(directory, ignored);
         }
+
+        // ---- Sensors --------------------------------------------------------------------
+
+        sim::RadarSet referenceRadar()
+        {
+            sim::RadarSet radar;
+            radar.peakPowerW = 10000.0f;
+            radar.gainTransmit = 1000.0f;
+            radar.gainReceive = 1000.0f;
+            radar.wavelengthM = 0.03f;
+            radar.pulseWidthS = 1.0e-6f;
+            radar.systemTemperatureK = 290.0f;
+            radar.systemLoss = 1.0f;
+            radar.snrThreshold = 10.0f;
+            radar.revisitS = 0.5;
+            return radar;
+        }
+
+        sim::SensorBody ownshipAtOrigin()
+        {
+            sim::SensorBody ownship;
+            ownship.id = sim::EntityId{1};
+            ownship.forward = glm::vec3(0.0f, 0.0f, 1.0f);
+            ownship.up = glm::vec3(0.0f, 1.0f, 0.0f);
+            return ownship;
+        }
+
+        void checkSensorModel(Checks &checks)
+        {
+            const glm::vec3 origin(0.0f);
+            const glm::vec3 nose(0.0f, 0.0f, 1.0f);
+            const float ahead = sim::aspectFromNoseRad(origin, nose, glm::vec3(0.0f, 0.0f, 1000.0f));
+            const float abeam = sim::aspectFromNoseRad(origin, nose, glm::vec3(1000.0f, 0.0f, 0.0f));
+            const float astern = sim::aspectFromNoseRad(origin, nose, glm::vec3(0.0f, 0.0f, -1000.0f));
+            sim::RadarCrossSectionProfile shape;
+            shape.noseM2 = 1.0f;
+            shape.beamM2 = 10.0f;
+            shape.tailM2 = 4.0f;
+            checks.expect(ahead < 1.0e-4f && std::abs(abeam - 1.5707963f) < 1.0e-4f && std::abs(astern - 3.14159265f) < 1.0e-3f &&
+                              sim::meanRadarCrossSectionM2(shape, ahead) == 1.0f &&
+                              std::abs(sim::meanRadarCrossSectionM2(shape, abeam) - 10.0f) < 1.0e-4f &&
+                              std::abs(sim::meanRadarCrossSectionM2(shape, astern) - 4.0f) < 1.0e-4f,
+                          "aspect: the nose sets the radar cross section",
+                          "ahead 1 m2, abeam 10 m2, astern 4 m2");
+
+            sim::RadarSet radar = referenceRadar();
+            sim::RadarCrossSectionProfile unit;
+            unit.noseM2 = unit.beamM2 = unit.tailM2 = 1.0f;
+            const double snr10km = sim::monostaticSnr(radar, 1.0f, 10000.0f);
+            const double snr20km = sim::monostaticSnr(radar, 1.0f, 20000.0f);
+            const double snrTwiceRcs = sim::monostaticSnr(radar, 2.0f, 10000.0f);
+            radar.systemLoss = 2.0f;
+            const double snrTwiceLoss = sim::monostaticSnr(radar, 1.0f, 10000.0f);
+            radar.systemLoss = 1.0f;
+            // Wavelength is a float, so the absolute SNR sits a few parts in 1e8
+            // under the same expression evaluated in pure double. The ratio
+            // checks below are exact.
+            checks.expect(std::abs(snr10km - 113.274365138491) / 113.274365138491 < 1.0e-6, "radar: reference SNR at 10 km is 113.27",
+                          format("SNR %.6f", snr10km));
+            checks.expect(std::abs(snr10km / snr20km - 16.0) < 1.0e-9, "radar: doubling range divides SNR by 16",
+                          format("ratio %.6f", snr10km / snr20km));
+            checks.expect(std::abs(snrTwiceRcs / snr10km - 2.0) < 1.0e-9 && std::abs(snr10km / snrTwiceLoss - 2.0) < 1.0e-9,
+                          "radar: RCS and system loss scale SNR once each");
+
+            sim::InfraredSignatureProfile infraredShape;
+            infraredShape.skinWPerSr = 20.0f;
+            infraredShape.tailpipeWPerSr = 80.0f;
+            infraredShape.plumeBeamWPerSr = 40.0f;
+            infraredShape.afterburnerScale = 3.0f;
+            const float noseIdle = sim::infraredIntensityWPerSr(infraredShape, ahead, 0.0f, false);
+            const float noseReheat = sim::infraredIntensityWPerSr(infraredShape, ahead, 1.0f, true);
+            const float tailMilitary = sim::infraredIntensityWPerSr(infraredShape, astern, 1.0f, false);
+            const float tailReheat = sim::infraredIntensityWPerSr(infraredShape, astern, 0.2f, true);
+            const float beamMilitary = sim::infraredIntensityWPerSr(infraredShape, abeam, 1.0f, false);
+            const double nearIrradiance = sim::infraredIrradianceWPerM2(tailMilitary, 1000.0f);
+            const double farIrradiance = sim::infraredIrradianceWPerM2(tailMilitary, 2000.0f);
+            checks.expect(std::abs(noseIdle - 20.0f) < 1.0e-3f && std::abs(noseReheat - 20.0f) < 1.0e-3f,
+                          "infrared: the nose stays skin in afterburner");
+            checks.expect(std::abs(tailMilitary - 100.0f) < 1.0e-3f && std::abs(tailReheat - 260.0f) < 1.0e-2f &&
+                              std::abs(beamMilitary - 60.0f) < 1.0e-3f,
+                          "infrared: throttle and reheat move only the hot lobes",
+                          format("tail %.0f, reheat %.0f, beam %.0f", tailMilitary, tailReheat, beamMilitary));
+            checks.expect(std::abs(nearIrradiance - 1.0e-4) < 1.0e-12 && std::abs(nearIrradiance / farIrradiance - 4.0) < 1.0e-9,
+                          "infrared: irradiance falls with range squared");
+
+            // The ridge masks the low path and leaves the high path clear. The
+            // sensor uses that same line of sight; it has no second terrain.
+            sim::TerrainConfig ridgeConfig;
+            ridgeConfig.kind = sim::TerrainKind::Ridge;
+            ridgeConfig.baseHeightM = 0.0f;
+            ridgeConfig.ridgeHeightM = 400.0f;
+            ridgeConfig.ridgeDistanceM = 2000.0f;
+            ridgeConfig.ridgeHalfWidthM = 600.0f;
+            ridgeConfig.ridgeBearingDeg = 0.0f;
+            ridgeConfig.hillAmplitudeM = 0.0f;
+            const sim::Terrain ridge(ridgeConfig);
+            sim::TerrainConfig flatConfig;
+            flatConfig.kind = sim::TerrainKind::Flat;
+            const sim::Terrain flat(flatConfig);
+
+            sim::SensorBody ownship = ownshipAtOrigin();
+            ownship.position = glm::vec3(0.0f, 50.0f, 0.0f);
+            sim::SensorBody contact;
+            contact.id = sim::EntityId{42};
+            contact.position = glm::vec3(0.0f, 50.0f, 4000.0f);
+            contact.forward = glm::vec3(0.0f, 0.0f, 1.0f);
+            const bool lowBlocked = !ridge.lineOfSight(ownship.position, contact.position);
+
+            sim::SensorScheduler masked;
+            masked.setRadar(referenceRadar(), unit);
+            const sim::SensorProducts lowLook = masked.update(0.0, ridge, ownship, {contact});
+            const bool lowMasked = lowLook.observations.empty() && lowLook.debug.size() == 1 &&
+                                   lowLook.debug.front().reason == sim::LookFail::Masked &&
+                                   lowLook.debug.front().truthPlatform == contact.id;
+
+            ownship.position.y = 900.0f;
+            contact.position.y = 900.0f;
+            const bool highClear = ridge.lineOfSight(ownship.position, contact.position);
+            sim::SensorScheduler clear;
+            clear.setRadar(referenceRadar(), unit);
+            const sim::SensorProducts highLook = clear.update(0.0, ridge, ownship, {contact});
+            const bool highDetected = highLook.observations.size() == 1 && highLook.debug.size() == 1 &&
+                                      highLook.debug.front().detected &&
+                                      std::abs(highLook.observations.front().azimuthRad) < 1.0e-4f &&
+                                      std::abs(highLook.observations.front().elevationRad) < 1.0e-4f;
+            checks.expect(lowBlocked && lowMasked && highClear && highDetected,
+                          "radar: a ridge masks the path the terrain blocks",
+                          format("low blocked %.0f, high clear %.0f", lowBlocked ? 1.0 : 0.0, highClear ? 1.0 : 0.0));
+
+            // Timing is the sample clock. Between grid times nothing is emitted
+            // and tracks are not aged. A jump that crosses two grid times still
+            // looks once, at the pose it was given.
+            ownship = ownshipAtOrigin();
+            contact.position = glm::vec3(0.0f, 0.0f, 1000.0f);
+            contact.forward = glm::vec3(0.0f, 0.0f, -1.0f); // nose toward the shooter; the cross section is uniform
+            sim::SensorScheduler grid;
+            grid.setRadar(referenceRadar(), unit);
+            int looks = 0;
+            bool gapEmitted = false;
+            const double samples[] = {0.0, 0.1, 0.49, 0.5};
+            for (double sample : samples)
+            {
+                const sim::SensorProducts products = grid.update(sample, flat, ownship, {contact});
+                if (sample == 0.1 || sample == 0.49)
+                {
+                    gapEmitted = gapEmitted || !products.observations.empty();
+                }
+                else
+                {
+                    looks += products.observations.empty() ? 0 : 1;
+                }
+            }
+            sim::SensorScheduler jumped;
+            jumped.setRadar(referenceRadar(), unit);
+            jumped.update(0.0, flat, ownship, {contact});
+            const sim::SensorProducts late = jumped.update(1.2, flat, ownship, {contact});
+            checks.expect(!gapEmitted && looks == 2 && late.observations.size() == 1 && late.droppedLooks == 1 &&
+                              late.observations.front().time == 1.2 && late.observations.front().sensor == ownship.id &&
+                              jumped.radarTracks().tracks().size() == 1 &&
+                              jumped.radarTracks().tracks().front().hitCount == 2,
+                          "scheduler: looks land on the grid, a late sample once",
+                          format("%.0f on-grid looks, %.0f dropped", static_cast<double>(looks),
+                                 static_cast<double>(late.droppedLooks)));
+
+            sim::SensorScheduler quiet;
+            quiet.setRadar(referenceRadar(), unit);
+            quiet.radarTracks().setCoastLimit(2.0);
+            quiet.update(0.0, flat, ownship, {contact});
+            const sim::SensorProducts between = quiet.update(0.25, flat, ownship, {contact});
+            const bool held = between.observations.empty() && quiet.radarTracks().tracks().size() == 1 &&
+                              quiet.radarTracks().tracks().front().life == sim::TrackLife::Tentative &&
+                              quiet.radarTracks().tracks().front().lastMeasurementTime == 0.0;
+            const sim::SensorProducts missed = quiet.update(0.5, flat, ownship, {});
+            const bool coasted = missed.observations.empty() && missed.debug.empty() &&
+                                 quiet.radarTracks().tracks().size() == 1 &&
+                                 quiet.radarTracks().tracks().front().life == sim::TrackLife::Coasting &&
+                                 quiet.radarTracks().tracks().front().hitCount == 1;
+            checks.expect(held && coasted, "scheduler: a quiet look coasts, a gap does not");
+
+            // Infrared power does not follow the radar set, and a second run of
+            // the same samples repeats. Nothing in the call is a camera.
+            sim::InfraredSet eye;
+            eye.neiWPerM2 = 1.0e-8f;
+            eye.snrMin = 5.0f;
+            eye.revisitS = 0.5;
+            contact.throttle = 1.0f;
+            contact.afterburner = false;
+            contact.forward = glm::vec3(0.0f, 0.0f, 1.0f); // nose downrange, so the shooter sees the tail
+            sim::SensorScheduler firstEye;
+            sim::SensorScheduler secondEye;
+            sim::RadarSet louder = referenceRadar();
+            louder.peakPowerW = 80000.0f;
+            firstEye.setRadar(referenceRadar(), unit);
+            secondEye.setRadar(louder, unit);
+            firstEye.setInfrared(eye, infraredShape);
+            secondEye.setInfrared(eye, infraredShape);
+            const sim::SensorProducts firstProducts = firstEye.update(0.0, flat, ownship, {contact});
+            const sim::SensorProducts secondProducts = secondEye.update(0.0, flat, ownship, {contact});
+            const sim::Observation *firstInfrared = nullptr;
+            const sim::Observation *secondInfrared = nullptr;
+            for (const sim::Observation &observation : firstProducts.observations)
+            {
+                if (observation.family == sim::SensorFamily::Infrared)
+                {
+                    firstInfrared = &observation;
+                }
+            }
+            for (const sim::Observation &observation : secondProducts.observations)
+            {
+                if (observation.family == sim::SensorFamily::Infrared)
+                {
+                    secondInfrared = &observation;
+                }
+            }
+            checks.expect(firstInfrared != nullptr && secondInfrared != nullptr &&
+                              firstInfrared->irradianceWPerM2 == secondInfrared->irradianceWPerM2 &&
+                              std::abs(firstInfrared->irradianceWPerM2 - 1.0e-4) < 1.0e-8,
+                          "infrared: radar power does not change irradiance");
+
+            // The track is built from the measurements. Platform 42 is on the
+            // debug look only; the coasted point follows the measured step,
+            // not a later true position the store was never given.
+            sim::TrackStore tracks;
+            tracks.setConfirmHits(2);
+            tracks.setCoastLimit(1.5);
+            tracks.setGateRadius(1000.0f);
+            sim::Observation firstMeasurement;
+            firstMeasurement.position = glm::vec3(0.0f, 1000.0f, 0.0f);
+            firstMeasurement.time = 0.0;
+            sim::Observation secondMeasurement = firstMeasurement;
+            secondMeasurement.position = glm::vec3(200.0f, 1000.0f, 0.0f);
+            secondMeasurement.time = 1.0;
+            tracks.onLook(0.0, {firstMeasurement});
+            const bool tentative = tracks.tracks().size() == 1 && tracks.tracks().front().life == sim::TrackLife::Tentative &&
+                                   tracks.tracks().front().id == sim::EntityId{1} && tracks.tracks().front().id != contact.id;
+            tracks.onLook(1.0, {secondMeasurement});
+            const sim::TrackEstimate confirmed = tracks.tracks().front();
+            tracks.onLook(2.0, {});
+            const sim::TrackEstimate coasting = tracks.tracks().front();
+            const glm::vec3 unreadTruth(400.0f, 1000.0f, 500.0f);
+            const bool predicted = coasting.life == sim::TrackLife::Coasting &&
+                                   glm::length(coasting.position - glm::vec3(400.0f, 1000.0f, 0.0f)) < 1.0e-3f &&
+                                   glm::length(coasting.position - unreadTruth) > 100.0f;
+            sim::Observation refresh = secondMeasurement;
+            refresh.position = glm::vec3(450.0f, 1000.0f, 20.0f);
+            refresh.time = 2.5;
+            tracks.onLook(2.5, {refresh});
+            const sim::TrackEstimate refreshed = tracks.tracks().front();
+            tracks.onLook(4.5, {});
+            const bool lost = tracks.tracks().front().life == sim::TrackLife::Lost;
+            checks.expect(tentative && confirmed.life == sim::TrackLife::Confirmed && confirmed.hitCount == 2 &&
+                              glm::length(confirmed.velocity - glm::vec3(200.0f, 0.0f, 0.0f)) < 1.0e-3f && predicted &&
+                              refreshed.life == sim::TrackLife::Confirmed &&
+                              glm::length(refreshed.position - refresh.position) < 1.0e-3f && lost,
+                          "tracks: measurements confirm, coast, refresh, and end",
+                          "platform 42 is not the track id");
+        }
+
+        void checkRadarEngagement(Checks &checks, const sim::SimulationConfig &config)
+        {
+            using sim::EntityId;
+            using sim::FighterWeapon;
+            using sim::LaunchBlock;
+            using sim::LaunchResult;
+            using sim::PlatformSnapshot;
+            using sim::ScriptedLaunch;
+            using sim::Shot;
+            using sim::Team;
+            using sim::TerrainConfig;
+            using sim::TerrainKind;
+            using sim::TrackEstimate;
+            using sim::TrackLife;
+            using sim::Warning;
+            using sim::WarningKind;
+
+            TerrainConfig flatConfig;
+            flatConfig.kind = TerrainKind::Flat;
+
+            World world(config, 101);
+            world.setTraceRecording(true);
+            world.setTerrain(flatConfig);
+            world.setRoleFighter("aim-9x-blk2");
+            const EntityId targetId = world.spawnTarget(glm::vec3(0.0f, 3000.0f, 8000.0f), 8.0f);
+            world.placeFighterAtEngagement();
+            world.setFighterWeapon(FighterWeapon::RadarRound);
+
+            bool designated = false;
+            LaunchResult fired;
+            for (int step = 0; step < 800 && !fired.launched(); ++step)
+            {
+                world.step();
+                if (!designated)
+                {
+                    for (const TrackEstimate &track : world.playerRadar().tracks().tracks())
+                    {
+                        if (track.life != TrackLife::Lost)
+                        {
+                            world.cycleRadarDesignation();
+                            designated = true;
+                            break;
+                        }
+                    }
+                }
+                if (designated && world.launchClearance() == LaunchBlock::None)
+                {
+                    fired = world.launch(glm::vec3(0.0f, 0.0f, 1.0f));
+                }
+            }
+
+            const Shot *shot = world.findShot(fired.shot);
+            const bool supported = shot != nullptr && shot->radarGuided && shot->supportTrack.valid() && shot->supportTrack != targetId &&
+                                   shot->missile != nullptr && shot->missile->getTargetObject() == nullptr;
+            bool announced = false;
+            for (const SimEvent &event : world.trace())
+            {
+                if (event.type == EventType::WeaponLaunched && event.subject == fired.shot && event.other != targetId)
+                {
+                    announced = true;
+                }
+            }
+            checks.expect(fired.launched() && supported && announced, "radar: track launch does not carry a platform id");
+
+            bool teleported = false;
+            bool gainedTarget = false;
+            if (shot != nullptr && shot->missile != nullptr)
+            {
+                world.removeTarget(targetId);
+                glm::vec3 previous = shot->missile->getPosition();
+                for (int step = 0; step < 2000; ++step)
+                {
+                    world.step();
+                    const Shot *flying = world.findShot(fired.shot);
+                    if (flying == nullptr || flying->missile == nullptr)
+                    {
+                        shot = nullptr;
+                        break;
+                    }
+                    if (flying->missile->getTargetObject() != nullptr)
+                    {
+                        gainedTarget = true;
+                    }
+                    const float jump = glm::length(flying->missile->getPosition() - previous);
+                    if (jump > 150.0f)
+                    {
+                        teleported = true;
+                    }
+                    previous = flying->missile->getPosition();
+                    shot = flying;
+                }
+            }
+            checks.expect(fired.launched() && !teleported && !gainedTarget && shot == nullptr,
+                          "radar: a removed target does not teleport the round, and the shot ends");
+
+            // Pulse-Doppler must not cost a clean shot: a target that is not
+            // beaming stays in the seeker's velocity gate all the way in.
+            {
+                World clean(config, 700);
+                clean.setTerrain(flatConfig);
+                clean.setRoleFighter("aim-9x-blk2");
+                const EntityId bandit = clean.spawnTarget(glm::vec3(0.0f, 3000.0f, 8000.0f), 8.0f);
+                clean.placeFighterAtEngagement();
+                clean.setFighterWeapon(FighterWeapon::RadarRound);
+                LaunchResult cleanShot;
+                bool locked = false;
+                for (int step = 0; step < 800 && !cleanShot.launched(); ++step)
+                {
+                    clean.step();
+                    if (!locked && !clean.playerRadar().tracks().tracks().empty())
+                    {
+                        clean.cycleRadarDesignation();
+                        locked = true;
+                    }
+                    if (locked && clean.launchClearance() == LaunchBlock::None)
+                    {
+                        cleanShot = clean.launch(glm::vec3(0.0f, 0.0f, 1.0f));
+                    }
+                }
+                bool droppedTrack = false;
+                for (int step = 0; step < 3000; ++step)
+                {
+                    clean.step();
+                    const Shot *flying = clean.findShot(cleanShot.shot);
+                    if (flying == nullptr)
+                    {
+                        break;
+                    }
+                    droppedTrack = droppedTrack || flying->homing.state().phase == sim::RadarHomingState::Phase::Memory;
+                }
+                checks.expect(cleanShot.launched() && !droppedTrack && !clean.targetAlive(bandit),
+                              "radar: the seeker holds a target that is not beaming to the kill");
+            }
+
+            const int spentMagazine = world.radarRoundsRemaining();
+            world.rearm();
+            checks.expect(fired.launched() && spentMagazine < 4 && world.radarRoundsRemaining() == 4,
+                          "radar: rearm refills the radar magazine");
+
+            // Search alone: the dwells that point elsewhere must not coast the
+            // contact between its own dwells.
+            {
+                World search(config, 17);
+                search.setTerrain(flatConfig);
+                search.setRoleFighter("aim-9x-blk2");
+                const EntityId ahead = search.spawnTarget(glm::vec3(0.0f, 3000.0f, 8000.0f), 8.0f);
+                search.placeFighterAtEngagement();
+                if (Target *aircraft = search.findTarget(ahead))
+                {
+                    aircraft->setVelocity(glm::vec3(0.0f, 0.0f, -200.0f));
+                }
+                bool confirmedOnce = false;
+                int flickers = 0;
+                for (int step = 0; step < 300; ++step)
+                {
+                    search.step();
+                    for (const TrackEstimate &track : search.playerRadar().tracks().tracks())
+                    {
+                        if (track.life == TrackLife::Confirmed)
+                        {
+                            confirmedOnce = true;
+                        }
+                        else if (confirmedOnce)
+                        {
+                            ++flickers;
+                        }
+                    }
+                }
+                checks.expect(confirmedOnce && flickers == 0 && !search.playerRadar().singleTargetTrack(),
+                              "radar: a searched contact stays confirmed between its dwells",
+                              format("%.0f non-confirmed samples", static_cast<double>(flickers)));
+            }
+
+            // Opponent radar pointed away: nothing reaches the receiver.
+            {
+                World away(config, 23);
+                away.setTerrain(flatConfig);
+                away.setRoleFighter("aim-9x-blk2");
+                const EntityId leader = away.spawnTarget(glm::vec3(0.0f, 3000.0f, 6000.0f), 8.0f);
+                away.placeFighterAtEngagement();
+                if (Target *aircraft = away.findTarget(leader))
+                {
+                    aircraft->setVelocity(glm::vec3(0.0f, 0.0f, 220.0f));
+                }
+                away.setRedRadar(true);
+                bool heard = false;
+                for (int step = 0; step < 100; ++step)
+                {
+                    away.step();
+                    heard = heard || !away.warnings().radar.empty();
+                }
+                checks.expect(!heard, "radar: a radar looking away is not heard");
+            }
+
+            // Two-ship: the lead's radar does not track its own wingman. The
+            // wingman sits about 20 deg off the lead's left, in the raster's
+            // first column, so without IFF it would be painted, and held,
+            // before the player. Targets are kept inside the patrol airspace.
+            {
+                World pair(config, 29);
+                pair.setTerrain(flatConfig);
+                pair.setRoleFighter("aim-9x-blk2");
+                const EntityId leader = pair.spawnTarget(glm::vec3(0.0f, 600.0f, 2000.0f), 8.0f);
+                const EntityId wingman = pair.spawnTarget(glm::vec3(-250.0f, 600.0f, 1300.0f), 8.0f);
+                pair.placeFighterAtEngagement();
+                for (const EntityId id : {leader, wingman})
+                {
+                    if (Target *aircraft = pair.findTarget(id))
+                    {
+                        aircraft->setVelocity(glm::vec3(0.0f, 0.0f, -200.0f));
+                    }
+                }
+                pair.setRedRadar(true);
+                bool trackedPlayer = false;
+                bool trackedWingman = false;
+                for (int step = 0; step < 150; ++step)
+                {
+                    pair.step();
+                    PlatformSnapshot wing;
+                    PlatformSnapshot player;
+                    if (!pair.snapshot(wingman, wing) || !pair.snapshot(pair.fighterId(), player))
+                    {
+                        continue;
+                    }
+                    // The two close head-on, so a track belongs to whichever body it is nearer.
+                    for (const TrackEstimate &track : pair.hostileRadar().tracks().tracks())
+                    {
+                        const float toWingman = glm::length(track.position - wing.position);
+                        const float toPlayer = glm::length(track.position - player.position);
+                        trackedWingman = trackedWingman || (toWingman < toPlayer && toWingman < 500.0f);
+                        trackedPlayer = trackedPlayer || (toPlayer <= toWingman && toPlayer < 500.0f);
+                    }
+                }
+                checks.expect(trackedPlayer && !trackedWingman, "radar: the opponent's radar leaves its wingman out");
+            }
+
+            // One lock for both weapons. T takes the contact nearest the nose
+            // first; the heat seeker on the rail, never uncaged, then follows
+            // the lock to an aircraft off the nose instead of the one ahead.
+            // The patrol airspace is widened, and the two are placed after
+            // spawning (a spawn is pulled into the default airspace), so they
+            // stay outside one association gate of each other.
+            {
+                World slave(config, 31);
+                slave.setTerrain(flatConfig);
+                TargetAIConfig wide = slave.targetAIConfig();
+                wide.preferredDistance = 6000.0f;
+                slave.setTargetAIConfig(wide);
+                slave.setRoleFighter("aim-9x-blk2");
+                const float offNose = glm::radians(28.0f);
+                const EntityId ahead = slave.spawnTarget(glm::vec3(0.0f, 700.0f, 5000.0f), 8.0f);
+                const EntityId aside = slave.spawnTarget(glm::vec3(0.0f, 700.0f, 5000.0f), 8.0f);
+                // Positive azimuth is the right wing, -X for a +Z nose.
+                const glm::vec3 places[] = {glm::vec3(0.0f, 700.0f, 5000.0f),
+                                            glm::vec3(-std::sin(offNose) * 5000.0f, 700.0f, std::cos(offNose) * 5000.0f)};
+                const EntityId pairIds[] = {ahead, aside};
+                for (int index = 0; index < 2; ++index)
+                {
+                    if (Target *aircraft = slave.findTarget(pairIds[index]))
+                    {
+                        aircraft->setPosition(places[index]);
+                        aircraft->setVelocity(glm::vec3(0.0f, 0.0f, 200.0f));
+                    }
+                }
+                slave.placeFighterAtEngagement();
+
+                const auto trackNearest = [&slave](EntityId platform) {
+                    PlatformSnapshot body;
+                    if (!slave.snapshot(platform, body))
+                    {
+                        return sim::kNoEntity;
+                    }
+                    EntityId nearest = sim::kNoEntity;
+                    float best = 500.0f;
+                    for (const TrackEstimate &track : slave.playerRadar().tracks().tracks())
+                    {
+                        const float gap = glm::length(track.position - body.position);
+                        if (track.life != TrackLife::Lost && gap < best)
+                        {
+                            best = gap;
+                            nearest = track.id;
+                        }
+                    }
+                    return nearest;
+                };
+
+                bool bothTracked = false;
+                for (int step = 0; step < 200 && !bothTracked; ++step)
+                {
+                    slave.step();
+                    bothTracked = trackNearest(ahead).valid() && trackNearest(aside).valid() &&
+                                  trackNearest(ahead) != trackNearest(aside);
+                }
+                slave.cycleRadarDesignation();
+                const bool noseFirst = bothTracked && slave.designatedRadarTrack() == trackNearest(ahead);
+                slave.cycleRadarDesignation();
+                const bool thenAside = bothTracked && slave.designatedRadarTrack() == trackNearest(aside);
+                for (int step = 0; step < 30; ++step)
+                {
+                    slave.step();
+                }
+
+                const sim::FireControl fire = slave.fireControl();
+                const Missile *round = slave.readyRound();
+                PlatformSnapshot owner;
+                PlatformSnapshot side;
+                bool headOnAside = false;
+                if (round != nullptr && slave.snapshot(slave.fighterId(), owner) && slave.snapshot(aside, side))
+                {
+                    const glm::vec3 lineOfSight = glm::normalize(side.position - round->getPosition());
+                    headOnAside = glm::dot(glm::normalize(fire.seeker.lookDirection), lineOfSight) > std::cos(glm::radians(2.0f));
+                }
+                const bool tookAside = round != nullptr && round->getTargetObject() != nullptr &&
+                                       round->getTargetObject()->getEntityId() == aside;
+                const bool slavedState = fire.seeker.state == sim::SeekerState::Slaved ||
+                                         fire.seeker.state == sim::SeekerState::Designated ||
+                                         fire.seeker.state == sim::SeekerState::Locked;
+                checks.expect(noseFirst && thenAside, "radar: T locks the contact nearest the nose first");
+                checks.expect(!slave.seekerUncaged() && fire.radar == sim::RadarMode::Track && fire.lock.valid &&
+                                  slavedState && headOnAside && tookAside &&
+                                  slave.launchClearance() != LaunchBlock::SeekerCaged,
+                              "fire control: the radar lock slaves the heat seeker");
+
+                // The lock is a radar picture: it reads the track, never the aircraft.
+                const bool lockFromTrack = fire.lock.track == slave.designatedRadarTrack() && fire.lock.track != aside &&
+                                           std::abs(glm::length(fire.lock.position - owner.position) - fire.lock.rangeM) < 1.0f;
+                checks.expect(lockFromTrack, "fire control: the lock is the radar track");
+
+                // Selecting the radar round powers the heat seeker down.
+                slave.setFighterWeapon(FighterWeapon::RadarRound);
+                slave.step();
+                const sim::FireControl radarFire = slave.fireControl();
+                const Missile *rail = slave.readyRound();
+                checks.expect(radarFire.seeker.state == sim::SeekerState::Off && rail != nullptr &&
+                                  rail->getTargetObject() == nullptr && radarFire.lock.valid,
+                              "fire control: the radar round keeps the lock and cages the rail");
+            }
+
+            World gated(config, 3);
+            gated.setRoleFighter("aim-9x-blk2");
+            const int chaffBefore = gated.chaffRemaining();
+            checks.expect(!gated.dispenseChaff() && gated.chaffRemaining() == chaffBefore,
+                          "radar: chaff stays shut until a warning is heard");
+
+            World infrared(config, 5);
+            infrared.setTerrain(flatConfig);
+            infrared.setRoleFighter("aim-9x-blk2");
+            const EntityId bandit = infrared.spawnTarget(glm::vec3(0.0f, 3000.0f, 12000.0f), 8.0f);
+            infrared.placeFighterAtEngagement();
+            PlatformSnapshot fighterSnap;
+            infrared.snapshot(infrared.fighterId(), fighterSnap);
+            ScriptedLaunch fox2;
+            fox2.team = Team::Red;
+            fox2.position = fighterSnap.position + glm::vec3(0.0f, 0.0f, -2000.0f);
+            fox2.velocity = glm::vec3(0.0f, 0.0f, 400.0f);
+            fox2.fox2Id = "aim-9x-blk2";
+            fox2.target = bandit;
+            infrared.launchScripted(fox2);
+            bool radarHit = false;
+            bool approach = false;
+            for (int step = 0; step < 20; ++step)
+            {
+                infrared.step();
+                if (!infrared.warnings().radar.empty())
+                {
+                    radarHit = true;
+                }
+                if (!infrared.warnings().approach.empty())
+                {
+                    approach = true;
+                }
+            }
+            checks.expect(!radarHit && approach, "radar: an infrared shot warns by approach only");
+
+            World opponent(config, 9);
+            opponent.setTraceRecording(true);
+            opponent.setTerrain(flatConfig);
+            opponent.setRoleFighter("aim-9x-blk2");
+            const EntityId opponentId = opponent.spawnTarget(glm::vec3(0.0f, 3000.0f, 6000.0f), 8.0f);
+            opponent.placeFighterAtEngagement();
+            if (Target *banditAircraft = opponent.findTarget(opponentId))
+            {
+                banditAircraft->setVelocity(glm::vec3(0.0f, 0.0f, -220.0f));
+            }
+            opponent.setRedRadar(true);
+            bool heardRadar = false;
+            bool heardLaunch = false;
+            bool heardSeeker = false;
+            for (int step = 0; step < 4000 && !heardSeeker; ++step)
+            {
+                opponent.step();
+                for (const Warning &warning : opponent.warnings().radar)
+                {
+                    if (warning.kind == WarningKind::MissileSeeker)
+                    {
+                        heardSeeker = true;
+                    }
+                    else
+                    {
+                        heardRadar = true;
+                        heardLaunch = heardLaunch || warning.kind == WarningKind::RadarLaunch;
+                    }
+                }
+            }
+            bool opponentLaunch = false;
+            for (const SimEvent &event : opponent.trace())
+            {
+                if (event.type == EventType::WeaponLaunched && event.other != opponentId)
+                {
+                    opponentLaunch = true;
+                }
+            }
+            checks.expect(heardRadar && heardSeeker && opponentLaunch,
+                          "radar: the opponent fires from its own track and the seeker is heard");
+            checks.expect(heardLaunch, "radar: the opponent's guided round is heard as a launch");
+            checks.expect(opponent.hostileRadarRoundsRemaining() < 2, "radar: the opponent spends a round");
+            opponent.rearmHostileRadar();
+            checks.expect(opponent.hostileRadarRoundsRemaining() == 2, "radar: a new formation reloads the opponent");
+        }
     }
 
     int runEngagementChecks(const sim::SimulationConfig &config)
@@ -893,6 +1577,12 @@ namespace harness
         checkMountainsAndWater(checks);
         checkTerrainConfig(checks);
         checkTerrainContacts(checks, config);
+        checkSensorModel(checks);
+        checks.expect(sim::runScanRadarChecks() == 0, "scan radar suite");
+        checks.expect(sim::runRadarHomingChecks() == 0, "radar homing suite");
+        checks.expect(sim::runDefenseChecks() == 0, "defense suite");
+        checks.expect(missilesim::fox3::runFox3CatalogChecks() == 0, "fox3 catalog");
+        checkRadarEngagement(checks, config);
 
         std::printf("%d/%d engagement checks passed\n", checks.count - checks.failures, checks.count);
         return checks.failures;

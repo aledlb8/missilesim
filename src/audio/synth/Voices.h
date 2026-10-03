@@ -186,6 +186,40 @@ namespace missilesim::audio::synth
     };
 
     // ------------------------------------------------------------------
+    // Chaff cartridge: a short dispenser crack, then a high-band rustle that
+    // follows the cloud. Not a magnesium burn, so there is no low roar.
+    // ------------------------------------------------------------------
+
+    struct ChaffParams
+    {
+        float bloom = 1.0f; // current RCS / RCS at release, 0..1
+    };
+
+    class ChaffVoice : public SoundSource
+    {
+    public:
+        explicit ChaffVoice(uint64_t seed);
+        static EmitterSpec spec();
+
+        void setParams(const ChaffParams &params) { m_params.write(params); }
+
+        void render(const SourceContext &context, float *const *lobes, int lobeCount, int frames) override;
+        bool isFinished() const override { return m_released && m_releaseGain <= 0.0f; }
+
+    private:
+        LatestValue<ChaffParams> m_params;
+        Random m_random;
+        int64_t m_sample = 0;
+        float m_bloom = 1.0f;
+
+        BandNoise m_rustle;
+        Crackle m_ticks;
+        Flicker m_rustleFlicker{0.008f, 0.22f};
+        float m_gainRustle = 0.0f, m_gainTicks = 0.0f;
+        float m_releaseGain = 1.0f;
+    };
+
+    // ------------------------------------------------------------------
     // Cold-launch ejection: gas-generator slam, canister/cell clank and the
     // hiss of venting gas (single omni lobe, one-shot).
     // ------------------------------------------------------------------

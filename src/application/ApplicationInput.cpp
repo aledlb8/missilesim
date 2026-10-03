@@ -61,7 +61,8 @@ void Application::processInput(float deltaTime)
     // not also fire its gameplay action on the next frame.
     static constexpr int kLatchedKeys[] = {GLFW_KEY_TAB, GLFW_KEY_H, GLFW_KEY_V, GLFW_KEY_ENTER,
                                            GLFW_KEY_KP_ENTER, GLFW_KEY_C, GLFW_KEY_R, GLFW_KEY_F,
-                                           GLFW_KEY_G, GLFW_KEY_X};
+                                           GLFW_KEY_G, GLFW_KEY_X, GLFW_KEY_B, GLFW_KEY_T, GLFW_KEY_Z,
+                                           GLFW_KEY_N, GLFW_KEY_Y};
     static bool keyHeld[std::size(kLatchedKeys)] = {};
     bool keyPressed[std::size(kLatchedKeys)] = {};
     for (size_t i = 0; i < std::size(kLatchedKeys); ++i)
@@ -174,7 +175,7 @@ void Application::processInput(float deltaTime)
     if (pressed(GLFW_KEY_R) && m_world)
     {
         // Uncage (or cage) the seeker of the round that fires next. Caging
-        // drops its designation.
+        // drops its designation; a radar lock still slaves a fighter's seeker.
         m_world->setSeekerUncaged(!m_world->seekerUncaged());
     }
 
@@ -188,6 +189,29 @@ void Application::processInput(float deltaTime)
     if (pressed(GLFW_KEY_G) && flyingFighter)
     {
         rearm();
+    }
+    if (pressed(GLFW_KEY_B) && m_world && m_playerRole == PlayerRole::Fighter)
+    {
+        m_world->cycleFighterWeapon();
+    }
+    if (pressed(GLFW_KEY_T) && m_world && m_playerRole == PlayerRole::Fighter)
+    {
+        // One lock for both weapons: the radar round fires on it and the
+        // heat seeker on the rail is slaved to it.
+        m_world->cycleRadarDesignation();
+    }
+    if (pressed(GLFW_KEY_Y) && m_playerRole == PlayerRole::Fighter)
+    {
+        cycleRadarRangeScale();
+    }
+    if (pressed(GLFW_KEY_Z) && m_world && m_playerRole == PlayerRole::Fighter)
+    {
+        m_world->dispenseChaff();
+    }
+    if (pressed(GLFW_KEY_N) && m_world && m_playerRole == PlayerRole::Fighter)
+    {
+        m_hostileRadar = !m_hostileRadar;
+        m_world->setRedRadar(m_hostileRadar);
     }
 
     sampleFighterControls(deltaTime);

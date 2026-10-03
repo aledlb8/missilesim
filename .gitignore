@@ -22,6 +22,8 @@
 /rules.ninja
 
 # Tool and package artifacts
+__pycache__/
+*.py[cod]
 /imgui.ini
 /config/user_settings.ini
 /vcpkg_installed/
