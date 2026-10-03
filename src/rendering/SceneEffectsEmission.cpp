@@ -173,6 +173,114 @@ void SceneEffects::emitFlareEffect(const glm::vec3 &start,
     addHeatHaze(haze);
 }
 
+void SceneEffects::emitChaffEffect(const glm::vec3 &start,
+                                   const glm::vec3 &end,
+                                   const glm::vec3 &carrierVelocity,
+                                   float bloomFraction,
+                                   bool birth)
+{
+    const float intensity = glm::clamp(bloomFraction, 0.0f, 1.0f);
+    if (intensity <= 0.01f)
+    {
+        return;
+    }
+
+    const glm::vec3 direction = safeNormalize(carrierVelocity, glm::vec3(0.0f, 0.0f, 1.0f));
+    const float segmentLength = glm::length(end - start);
+    const int sampleCount = std::max(1, static_cast<int>(std::ceil(segmentLength / 2.0f)));
+    const glm::vec3 silver(0.86f, 0.90f, 0.94f);
+    const glm::vec3 cloud(0.62f, 0.64f, 0.66f);
+
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        const float interpolation = (sampleCount == 1) ? 1.0f : static_cast<float>(sampleIndex) / static_cast<float>(sampleCount - 1);
+        const glm::vec3 center = glm::mix(start, end, interpolation);
+
+        EffectParticle puff{};
+        puff.position = center + (randomInUnitSphere() * 0.45f);
+        puff.velocity = (carrierVelocity * 0.25f) + (randomInUnitSphere() * 2.5f);
+        puff.axis = direction;
+        puff.color = glm::vec4(cloud, 0.42f * intensity);
+        puff.lifetime = randomRange(1.1f, 1.8f);
+        puff.startSize = 0.55f;
+        puff.endSize = 4.2f + intensity * 2.4f;
+        puff.stretch = 1.05f;
+        puff.rotation = randomRange(0.0f, kTwoPi);
+        puff.angularVelocity = randomRange(-0.6f, 0.6f);
+        puff.softness = 0.9f;
+        puff.emissive = 0.15f;
+        puff.seed = randomRange(0.0f, 1000.0f);
+        puff.drag = 0.45f;
+        puff.upwardAcceleration = 0.6f;
+        puff.material = ParticleMaterial::SMOKE;
+        puff.blendMode = BlendMode::ALPHA;
+        addParticle(puff);
+
+        for (int sparkIndex = 0; sparkIndex < 2; ++sparkIndex)
+        {
+            const glm::vec3 glintDirection = randomUnitVector();
+            EffectParticle glint{};
+            glint.position = center + (randomInUnitSphere() * 0.35f);
+            glint.velocity = (carrierVelocity * 0.1f) + (glintDirection * randomRange(1.5f, 6.0f));
+            glint.axis = glintDirection;
+            glint.color = glm::vec4(silver, 1.0f);
+            glint.lifetime = randomRange(0.08f, 0.22f);
+            glint.startSize = 0.08f;
+            glint.endSize = 0.35f + intensity * 0.25f;
+            glint.stretch = randomRange(2.4f, 4.5f);
+            glint.softness = 0.7f;
+            glint.emissive = 1.15f;
+            glint.seed = randomRange(0.0f, 1000.0f);
+            glint.drag = 1.4f;
+            glint.material = ParticleMaterial::SPARK;
+            glint.blendMode = BlendMode::ADDITIVE;
+            addParticle(glint);
+        }
+    }
+
+    if (!birth)
+    {
+        return;
+    }
+
+    // Cartridge puff. One burst on the frame the bundle first appears.
+    EffectParticle cartridge{};
+    cartridge.position = end;
+    cartridge.velocity = carrierVelocity * 0.15f;
+    cartridge.axis = direction;
+    cartridge.color = glm::vec4(cloud, 0.55f);
+    cartridge.lifetime = 0.45f;
+    cartridge.startSize = 0.35f;
+    cartridge.endSize = 2.2f;
+    cartridge.softness = 0.8f;
+    cartridge.emissive = 0.2f;
+    cartridge.seed = randomRange(0.0f, 1000.0f);
+    cartridge.material = ParticleMaterial::SMOKE;
+    cartridge.blendMode = BlendMode::ALPHA;
+    addParticle(cartridge);
+
+    for (int index = 0; index < 10; ++index)
+    {
+        const glm::vec3 glintDirection = randomUnitVector();
+        EffectParticle glint{};
+        glint.position = end;
+        glint.velocity = carrierVelocity * 0.05f + glintDirection * randomRange(4.0f, 14.0f);
+        glint.axis = glintDirection;
+        glint.color = glm::vec4(1.0f, 0.97f, 0.92f, 1.0f);
+        glint.lifetime = randomRange(0.12f, 0.28f);
+        glint.startSize = 0.06f;
+        glint.endSize = 0.28f;
+        glint.stretch = randomRange(3.0f, 5.5f);
+        glint.softness = 0.6f;
+        glint.emissive = 1.4f;
+        glint.seed = randomRange(0.0f, 1000.0f);
+        glint.drag = 2.2f;
+        glint.material = ParticleMaterial::SPARK;
+        glint.blendMode = BlendMode::ADDITIVE;
+        addParticle(glint);
+    }
+}
+
 void SceneEffects::spawnMissileLaunch(const glm::vec3 &position,
                                       const glm::vec3 &forward,
                                       const glm::vec3 &carrierVelocity,

@@ -73,6 +73,12 @@ public:
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,
                          float heatFraction);
+    // birth is true on the first frame a bundle is drawn: the cartridge burst.
+    void emitChaffEffect(const glm::vec3 &start,
+                         const glm::vec3 &end,
+                         const glm::vec3 &carrierVelocity,
+                         float bloomFraction,
+                         bool birth);
     void spawnMissileLaunchEffect(const glm::vec3 &position,
                                   const glm::vec3 &forward,
                                   const glm::vec3 &carrierVelocity,
