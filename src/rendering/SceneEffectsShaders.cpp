@@ -86,7 +86,7 @@ namespace
         out vec2 vLocalUv;
         out vec4 vColor;
         out vec4 vParams0;
-        flat out vec3 vParams1;
+        flat out vec4 vParams1;
         flat out vec3 vLightLocal;
         flat out vec4 vEngineNozzleRadius;
         flat out vec4 vEngineAxisLength;
@@ -97,7 +97,7 @@ namespace
             vEngineNozzleRadius = vec4(0.0);
             vEngineAxisLength = vec4(0.0);
             vWorldRay = vec3(0.0);
-            if (iParams1.x > 7.5)
+            if (iParams1.x > 7.5 && iParams1.x < 9.5)
             {
                 // Project the volume bounds, including end-on and inside views.
                 vec3 nozzle = iCenterRotation.xyz;
@@ -125,7 +125,7 @@ namespace
                 vWorldRay = mat3(inverseView) * ray.xyz;
                 vEngineNozzleRadius = vec4(nozzle, iAxisSizeX.w);
                 vEngineAxisLength = vec4(axis, iParams0.x);
-                vParams0 = iParams0; vParams1 = iParams1.xyz;
+                vParams0 = iParams0; vParams1 = iParams1;
                 vColor = iColor; vLocalUv = aCorner; vLightLocal = vec3(0.0);
                 return;
             }
@@ -161,7 +161,7 @@ namespace
             vLocalUv = aCorner;
             vColor = iColor;
             vParams0 = iParams0;
-            vParams1 = iParams1.xyz;
+            vParams1 = iParams1;
             vec3 lightDirection = normalize(-sunDirection);
             vLightLocal = vec3(dot(lightDirection, localRight), dot(lightDirection, localUp), dot(lightDirection, viewDirection));
         }
@@ -172,7 +172,7 @@ namespace
         in vec2 vLocalUv;
         in vec4 vColor;
         in vec4 vParams0;
-        flat in vec3 vParams1;
+        flat in vec4 vParams1;
         flat in vec3 vLightLocal;
         uniform vec3 sunRadiance;
         flat in vec4 vEngineNozzleRadius;
@@ -314,7 +314,7 @@ namespace
         void main()
         {
             gl_FragDepth = gl_FragCoord.z;
-            if (vParams1.x > 7.5)
+            if (vParams1.x > 7.5 && vParams1.x < 9.5)
             {
                 renderEngineVolume();
                 return;
@@ -329,8 +329,64 @@ namespace
             float radial = length(uv);
             float alpha = 0.0;
             vec3 color = vColor.rgb;
+            vec3 glitter = vec3(0.0); // added light that is not scaled by opacity
 
-            if (material < 0.5)
+            if (material > 10.5)
+            {
+                // CHAFF_GLINT: a dipole cluster throwing the sun back. A pin-point
+                // core, a faint halo and a four-point star. vColor.a carries the
+                // tumble phase the CPU works out each frame.
+                float r2 = dot(uv, uv);
+                float core = exp(-r2 * 30.0);
+                float halo = exp(-r2 * 8.0) * 0.14;
+                vec2 a = abs(uv);
+                float spikes = exp(-a.x * a.x * 600.0) * exp(-a.y * 4.5) + exp(-a.y * a.y * 600.0) * exp(-a.x * 4.5);
+                alpha = core + halo + spikes * 0.4;
+                color = vColor.rgb;
+            }
+            else if (material > 9.5)
+            {
+                // CHAFF_CLOUD: a veil of foil strands, not smoke. A lumpy envelope,
+                // fine streaks along a grain that differs per lobe, lit as thin
+                // cloud, with glitter cells flashing as the dipoles tumble.
+                // vParams1.w is the bundle's age in seconds; emissive arrives as
+                // the glitter strength.
+                float clock = vParams1.w;
+                vec2 p = uv * 1.7 + vec2(seed * 0.37, seed * 0.21);
+                vec2 warp = vec2(noise(p * 1.3 + vec2(5.1, clock * 0.07)),
+                                 noise(p * 1.3 - vec2(3.7, clock * 0.05))) - 0.5;
+                float lumps = turbulence(p + warp * 0.9);
+                float envelope = 1.0 - smoothstep(0.1, 1.0, radial + (lumps - 0.5) * 0.8);
+                float grainAngle = seed * 2.399;
+                mat2 grainTurn = mat2(cos(grainAngle), -sin(grainAngle), sin(grainAngle), cos(grainAngle));
+                vec2 grain = grainTurn * uv;
+                float fibres = noise(vec2(grain.x * 4.0, grain.y * 26.0) + vec2(seed) + warp * 2.0);
+                float density = envelope * (0.2 + lumps * 1.3) * mix(0.35, 1.5, fibres);
+                alpha = 1.0 - exp(-density * 1.9);
+
+                // Lit like a small cloud: a bright sun side, a grey shade side,
+                // and a silver rim when the sun is behind it.
+                vec3 normal = normalize(vec3(uv * 0.7 + warp * 0.5, 0.7));
+                float diffuse = clamp(dot(normal, vLightLocal) * 0.6 + 0.4, 0.0, 1.0);
+                float forwardScatter = pow(max(-vLightLocal.z, 0.0), 6.0) * (1.0 - alpha);
+                vec3 ambient = vec3(0.30, 0.33, 0.39);
+                color = vColor.rgb * (ambient + sunRadiance * (0.42 * diffuse * diffuse + 0.35 * forwardScatter));
+
+                // Glitter: one candidate foil per cell, about half of them live,
+                // each flashing at its own tumble rate. Never thinner than a pixel,
+                // and dimmer as it is widened, so distance does not blow it up.
+                vec2 cellUv = uv * 7.0 + vec2(seed * 3.1, seed * 1.7);
+                vec2 cell = floor(cellUv);
+                float h1 = hash12(cell + vec2(seed));
+                float h2 = hash12(cell * 1.37 + 11.3);
+                vec2 offset = fract(cellUv) - 0.5 - (vec2(h1, h2) - 0.5) * 0.6;
+                float spot = max(0.05, max(fwidth(cellUv.x), 1e-4) * 0.9);
+                float flash = pow(max(sin(clock * mix(5.0, 16.0, h2) + h1 * 6.2831853), 0.0), 26.0);
+                float sparkle = exp(-dot(offset, offset) / (spot * spot)) * flash * step(0.45, h1) * min(1.0, 0.05 / spot);
+                glitter = sunRadiance * vec3(1.0, 0.98, 0.94) * sparkle * envelope * 2.5 * emissive;
+                emissive = 1.0;
+            }
+            else if (material < 0.5)
             {
                 // Advected filaments with a compact hot core and cooling edges.
                 vec2 flow = uv * vec2(3.2, 2.1) + vec2(seed * 0.73, -ageNorm * 3.5);
@@ -442,6 +498,7 @@ namespace
             float edge = 1.0 - smoothstep(0.84, 1.0, max(abs(uv.x), abs(uv.y)));
             alpha = clamp(alpha * softness * vColor.a * edge, 0.0, 1.0);
 
+            float depthFade = 1.0;
             if (depthFadeEnabled)
             {
                 vec2 screenUv = gl_FragCoord.xy / viewportSize;
@@ -452,13 +509,14 @@ namespace
                 // scene geometry. Fade distance scales with particle size so
                 // large smoke fades over metres and sparks stay crisp.
                 float fadeDistance = clamp(vParams0.x * 0.5, 0.3, 8.0);
-                alpha *= clamp((sceneLinear - fragLinear) / fadeDistance, 0.0, 1.0);
+                depthFade = clamp((sceneLinear - fragLinear) / fadeDistance, 0.0, 1.0);
 
                 // Fade near the camera so flying through a plume doesn't pop.
-                alpha *= clamp((fragLinear - zNear * 2.0) / 1.5, 0.0, 1.0);
+                depthFade *= clamp((fragLinear - zNear * 2.0) / 1.5, 0.0, 1.0);
             }
+            alpha *= depthFade;
 
-            vec3 premultiplied = color * alpha * max(emissive, 0.0);
+            vec3 premultiplied = color * alpha * max(emissive, 0.0) + glitter * edge * depthFade;
             FragColor = vec4(premultiplied, alpha * (1.0 - vParams1.z));
         }
     )";

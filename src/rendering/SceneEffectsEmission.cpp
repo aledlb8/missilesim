@@ -173,69 +173,149 @@ void SceneEffects::emitFlareEffect(const glm::vec3 &start,
     addHeatHaze(haze);
 }
 
-void SceneEffects::emitChaffEffect(const glm::vec3 &start,
-                                   const glm::vec3 &end,
-                                   const glm::vec3 &carrierVelocity,
-                                   float bloomFraction,
-                                   bool birth)
+float SceneEffects::pixelFootprint(const glm::vec3 &position) const
 {
-    const float intensity = glm::clamp(bloomFraction, 0.0f, 1.0f);
-    if (intensity <= 0.01f)
+    // projection[1][1] = 1 / tan(fov/2), so one pixel spans 2 tan(fov/2) / height.
+    const float focal = std::max(m_projection[1][1], 1.0e-3f);
+    const float radiansPerPixel = 2.0f / (focal * static_cast<float>(std::max(m_viewportHeight, 1)));
+    return glm::length(position - m_cameraPosition) * radiansPerPixel;
+}
+
+void SceneEffects::submitChaffCloud(const glm::vec3 &position,
+                                    const glm::vec3 &velocity,
+                                    float ageSeconds,
+                                    float lifetimeSeconds,
+                                    float bloomFraction,
+                                    std::uint32_t seed,
+                                    bool birth)
+{
+    const float age = std::max(ageSeconds, 0.0f);
+    const float life = std::max(lifetimeSeconds, 0.1f);
+    const float remaining = glm::clamp(bloomFraction, 0.0f, 1.0f);
+    if (remaining <= 0.002f || !std::isfinite(age))
     {
         return;
     }
 
-    const glm::vec3 direction = safeNormalize(carrierVelocity, glm::vec3(0.0f, 0.0f, 1.0f));
-    const float segmentLength = glm::length(end - start);
-    const int sampleCount = std::max(1, static_cast<int>(std::ceil(segmentLength / 2.0f)));
-    const glm::vec3 silver(0.86f, 0.90f, 0.94f);
-    const glm::vec3 cloud(0.62f, 0.64f, 0.66f);
-
-    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    // Deterministic per bundle and dipole: the same seed gives the same cloud.
+    auto hash01 = [seed](std::uint32_t index, std::uint32_t salt)
     {
-        const float interpolation = (sampleCount == 1) ? 1.0f : static_cast<float>(sampleIndex) / static_cast<float>(sampleCount - 1);
-        const glm::vec3 center = glm::mix(start, end, interpolation);
+        std::uint32_t h = seed * 747796405u + index * 2891336453u + salt * 1181783497u + 0x9E3779B9u;
+        h ^= h >> 16;
+        h *= 0x7FEB352Du;
+        h ^= h >> 15;
+        h *= 0x846CA68Bu;
+        h ^= h >> 16;
+        return static_cast<float>(h & 0x00FFFFFFu) / 16777216.0f;
+    };
+    auto hashDirection = [&](std::uint32_t index, std::uint32_t salt)
+    {
+        const float z = hash01(index, salt) * 2.0f - 1.0f;
+        const float azimuth = hash01(index, salt + 1u) * kTwoPi;
+        const float ring = std::sqrt(std::max(0.0f, 1.0f - z * z));
+        return glm::vec3(ring * std::cos(azimuth), z, ring * std::sin(azimuth));
+    };
 
-        EffectParticle puff{};
-        puff.position = center + (randomInUnitSphere() * 0.45f);
-        puff.velocity = (carrierVelocity * 0.25f) + (randomInUnitSphere() * 2.5f);
-        puff.axis = direction;
-        puff.color = glm::vec4(cloud, 0.42f * intensity);
-        puff.lifetime = randomRange(1.1f, 1.8f);
-        puff.startSize = 0.55f;
-        puff.endSize = 4.2f + intensity * 2.4f;
-        puff.stretch = 1.05f;
-        puff.rotation = randomRange(0.0f, kTwoPi);
-        puff.angularVelocity = randomRange(-0.6f, 0.6f);
-        puff.softness = 0.9f;
-        puff.emissive = 0.15f;
-        puff.seed = randomRange(0.0f, 1000.0f);
-        puff.drag = 0.45f;
-        puff.upwardAcceleration = 0.6f;
-        puff.material = ParticleMaterial::SMOKE;
-        puff.blendMode = BlendMode::ALPHA;
-        addParticle(puff);
+    // Shape. The bundle bursts open in a few tenths of a second, then keeps
+    // spreading slowly. Dipoles fall at slightly different rates, so the
+    // cloud stretches downward with age, and it sits a little flat. While the
+    // bundle still carries the jet's speed, the dipoles that stopped first
+    // trail it, so the young cloud is drawn out along its path.
+    const float speed = glm::length(velocity);
+    const glm::vec3 heading = speed > 0.5f ? velocity / speed : glm::vec3(0.0f);
+    const float radius = 7.5f * (1.0f - std::exp(-age / 0.22f)) + 1.1f * age + 0.35f;
+    const float smear = std::min(speed * 0.045f, 14.0f);
+    const float fallSpread = 0.9f * age;
+    const float churn = 0.12f * age;
 
-        for (int sparkIndex = 0; sparkIndex < 2; ++sparkIndex)
+    auto dipoleOffset = [&](std::uint32_t index, std::uint32_t salt, float reach)
+    {
+        glm::vec3 direction = hashDirection(index, salt);
+        // Slow churn about the vertical, a few degrees a second, per dipole.
+        const float turn = churn * (hash01(index, salt + 7u) - 0.5f);
+        const float c = std::cos(turn);
+        const float sn = std::sin(turn);
+        direction = glm::vec3(direction.x * c - direction.z * sn, direction.y, direction.x * sn + direction.z * c);
+        const float depth = std::cbrt(hash01(index, salt + 3u)); // a filled ball, not a shell
+        glm::vec3 offset = direction * (depth * radius * reach);
+        offset.y *= 0.72f;
+        offset.y -= (hash01(index, salt + 4u) - 0.35f) * fallSpread;
+        offset -= heading * (hash01(index, salt + 5u) * smear);
+        return offset;
+    };
+
+    // Opacity: dense the instant the foil opens, thinning as the same metal
+    // spreads over more sky, gone when the RCS is.
+    const float opening = smooth01(age / 0.12f);
+    const float thinning = 0.18f + 0.82f * std::exp(-age / 1.4f);
+    const float fadeOut = smooth01(remaining / 0.35f);
+    const float presence = opening * thinning * fadeOut;
+    const float ageNorm = glm::clamp(age / life, 0.0f, 0.999f);
+    const glm::vec3 foil(0.70f, 0.73f, 0.77f);
+
+    // Veil: overlapping fibrous lobes.
+    constexpr std::uint32_t kLobes = 7;
+    for (std::uint32_t lobe = 0; lobe < kLobes; ++lobe)
+    {
+        EffectParticle veil{};
+        veil.position = position + (lobe == 0 ? -heading * (smear * 0.35f) : dipoleOffset(lobe, 11u, 0.8f));
+        const float size = radius * (lobe == 0 ? 0.64f : glm::mix(0.40f, 0.58f, hash01(lobe, 21u))) + 0.25f;
+        // Drawn out along the path while young; the axis then drifts with the lobe.
+        const glm::vec3 drift = hashDirection(lobe, 23u);
+        veil.axis = speed > 2.0f ? heading
+                                 : safeNormalize(glm::vec3(drift.x, 0.25f * drift.y, drift.z), glm::vec3(1.0f, 0.0f, 0.0f));
+        veil.stretch = 1.0f + std::min(smear / std::max(size, 0.5f), 1.6f) * 0.6f;
+        veil.color = glm::vec4(foil * glm::mix(0.92f, 1.06f, hash01(lobe, 25u)), (lobe == 0 ? 0.85f : 0.65f) * presence);
+        veil.age = ageNorm;
+        veil.lifetime = 1.0f;
+        veil.startSize = size;
+        veil.endSize = size;
+        veil.softness = 1.0f;
+        veil.emissive = fadeOut * (0.55f + 0.45f * std::exp(-age / 3.0f)); // glitter strength
+        veil.seed = hash01(lobe, 27u) * 1000.0f;
+        veil.clock = age;
+        veil.material = ParticleMaterial::CHAFF_CLOUD;
+        veil.blendMode = BlendMode::ALPHA;
+        m_frameParticles.push_back(veil);
+    }
+
+    // Glints: dipole clusters tumbling through the angle that throws the sun
+    // at the camera. Each flash is brief and they never all fire at once, so
+    // the cloud twinkles. Kept at least a few pixels wide: a sun glint reads
+    // at any range, the way the real thing does.
+    constexpr std::uint32_t kGlints = 30;
+    const float sunPeak = std::max(std::max(m_sunRadiance.r, m_sunRadiance.g), std::max(m_sunRadiance.b, 1.0e-3f));
+    const glm::vec3 sunColor = m_sunRadiance / sunPeak;
+    for (std::uint32_t index = 0; index < kGlints; ++index)
+    {
+        const float rate = glm::mix(5.0f, 15.0f, hash01(index, 31u));
+        const float phase = hash01(index, 32u) * kTwoPi;
+        const float tumble = std::max(0.0f, std::sin(phase + rate * age));
+        const float flash = std::pow(tumble, 22.0f);
+        if (flash < 0.02f)
         {
-            const glm::vec3 glintDirection = randomUnitVector();
-            EffectParticle glint{};
-            glint.position = center + (randomInUnitSphere() * 0.35f);
-            glint.velocity = (carrierVelocity * 0.1f) + (glintDirection * randomRange(1.5f, 6.0f));
-            glint.axis = glintDirection;
-            glint.color = glm::vec4(silver, 1.0f);
-            glint.lifetime = randomRange(0.08f, 0.22f);
-            glint.startSize = 0.08f;
-            glint.endSize = 0.35f + intensity * 0.25f;
-            glint.stretch = randomRange(2.4f, 4.5f);
-            glint.softness = 0.7f;
-            glint.emissive = 1.15f;
-            glint.seed = randomRange(0.0f, 1000.0f);
-            glint.drag = 1.4f;
-            glint.material = ParticleMaterial::SPARK;
-            glint.blendMode = BlendMode::ADDITIVE;
-            addParticle(glint);
+            continue;
         }
+
+        const glm::vec3 point = position + dipoleOffset(index, 41u, 1.0f);
+        const float worldSize = glm::mix(0.25f, 0.45f, hash01(index, 33u));
+        const float size = std::max(worldSize, pixelFootprint(point) * 3.5f);
+
+        EffectParticle glint{};
+        glint.position = point;
+        glint.axis = glm::vec3(0.0f, 1.0f, 0.0f);
+        glint.rotation = hash01(index, 34u) * kTwoPi;
+        glint.color = glm::vec4(glm::mix(glm::vec3(1.0f), sunColor, 0.6f), flash * fadeOut * opening);
+        glint.age = ageNorm;
+        glint.lifetime = 1.0f;
+        glint.startSize = size;
+        glint.endSize = size;
+        glint.softness = 1.0f;
+        glint.emissive = 7.0f;
+        glint.seed = hash01(index, 35u) * 1000.0f;
+        glint.material = ParticleMaterial::CHAFF_GLINT;
+        glint.blendMode = BlendMode::ADDITIVE;
+        m_frameParticles.push_back(glint);
     }
 
     if (!birth)
@@ -243,41 +323,27 @@ void SceneEffects::emitChaffEffect(const glm::vec3 &start,
         return;
     }
 
-    // Cartridge puff. One burst on the frame the bundle first appears.
-    EffectParticle cartridge{};
-    cartridge.position = end;
-    cartridge.velocity = carrierVelocity * 0.15f;
-    cartridge.axis = direction;
-    cartridge.color = glm::vec4(cloud, 0.55f);
-    cartridge.lifetime = 0.45f;
-    cartridge.startSize = 0.35f;
-    cartridge.endSize = 2.2f;
-    cartridge.softness = 0.8f;
-    cartridge.emissive = 0.2f;
-    cartridge.seed = randomRange(0.0f, 1000.0f);
-    cartridge.material = ParticleMaterial::SMOKE;
-    cartridge.blendMode = BlendMode::ALPHA;
-    addParticle(cartridge);
-
-    for (int index = 0; index < 10; ++index)
+    // Cartridge pop: a small, dull puff of squib smoke left at the dispenser.
+    // It brakes hard, so it is gone behind the jet in a moment.
+    for (int puffIndex = 0; puffIndex < 3; ++puffIndex)
     {
-        const glm::vec3 glintDirection = randomUnitVector();
-        EffectParticle glint{};
-        glint.position = end;
-        glint.velocity = carrierVelocity * 0.05f + glintDirection * randomRange(4.0f, 14.0f);
-        glint.axis = glintDirection;
-        glint.color = glm::vec4(1.0f, 0.97f, 0.92f, 1.0f);
-        glint.lifetime = randomRange(0.12f, 0.28f);
-        glint.startSize = 0.06f;
-        glint.endSize = 0.28f;
-        glint.stretch = randomRange(3.0f, 5.5f);
-        glint.softness = 0.6f;
-        glint.emissive = 1.4f;
-        glint.seed = randomRange(0.0f, 1000.0f);
-        glint.drag = 2.2f;
-        glint.material = ParticleMaterial::SPARK;
-        glint.blendMode = BlendMode::ADDITIVE;
-        addParticle(glint);
+        EffectParticle puff{};
+        puff.position = position + randomInUnitSphere() * 0.3f;
+        puff.velocity = velocity + randomInUnitSphere() * 3.0f;
+        puff.axis = safeNormalize(velocity, glm::vec3(0.0f, -1.0f, 0.0f));
+        puff.color = glm::vec4(0.58f, 0.58f, 0.57f, 0.38f);
+        puff.lifetime = randomRange(0.45f, 0.75f);
+        puff.startSize = 0.25f;
+        puff.endSize = randomRange(1.2f, 1.8f);
+        puff.rotation = randomRange(0.0f, kTwoPi);
+        puff.angularVelocity = randomRange(-1.0f, 1.0f);
+        puff.softness = 0.8f;
+        puff.emissive = 0.9f;
+        puff.seed = randomRange(0.0f, 1000.0f);
+        puff.drag = 7.0f;
+        puff.material = ParticleMaterial::SMOKE;
+        puff.blendMode = BlendMode::ALPHA;
+        addParticle(puff);
     }
 }
 

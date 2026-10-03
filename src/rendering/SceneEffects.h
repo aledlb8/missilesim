@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <random>
 #include <vector>
 
@@ -24,7 +25,12 @@ public:
 
     void beginScene(const glm::vec3 &clearColor);
     void renderParticlesToScene();
-    void beginEngineFrame() { m_enginePlumes.clear(); }
+    // Clears everything submitted per frame: engine plumes and chaff clouds.
+    void beginEngineFrame()
+    {
+        m_enginePlumes.clear();
+        m_frameParticles.clear();
+    }
     void submitEnginePlume(const glm::vec3 &nozzle, const glm::vec3 &direction,
                            float radius, float throttle, bool rocket);
     void presentScene();
@@ -64,14 +70,20 @@ public:
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,
                          float heatFraction);
-    // Metallic-dipole cloud. bloomFraction is current RCS over RCS at release.
-    // birth adds the one-off cartridge burst. No heat haze: chaff is not a
-    // burning pellet.
-    void emitChaffEffect(const glm::vec3 &start,
-                         const glm::vec3 &end,
-                         const glm::vec3 &carrierVelocity,
-                         float bloomFraction,
-                         bool birth);
+    // One chaff bundle, drawn this frame where the simulation has it. Chaff
+    // is not a flare: nothing burns, so there is no light, no smoke trail and
+    // no heat haze. A small cartridge pop, then a cloud of foil that blooms,
+    // stops in the air, sinks and thins, and glints where its dipoles catch
+    // the sun. seed is the bundle's id, so every dipole keeps its place in
+    // the cloud from frame to frame. bloomFraction is current RCS over RCS at
+    // release; birth (first frame drawn) adds the cartridge pop.
+    void submitChaffCloud(const glm::vec3 &position,
+                          const glm::vec3 &velocity,
+                          float ageSeconds,
+                          float lifetimeSeconds,
+                          float bloomFraction,
+                          std::uint32_t seed,
+                          bool birth);
     void spawnMissileLaunch(const glm::vec3 &position,
                             const glm::vec3 &forward,
                             const glm::vec3 &carrierVelocity,
@@ -95,7 +107,9 @@ private:
         SHOCK_DIAMOND = 6,  // compact Mach-diamond pulse in engine exhaust
         FIREBALL = 7,      // optically thick, cooling blast lobe
         JET_PLUME = 8,     // attached, ray-integrated exhaust volumes
-        ROCKET_PLUME = 9
+        ROCKET_PLUME = 9,
+        CHAFF_CLOUD = 10,  // fibrous foil veil with twinkling glitter
+        CHAFF_GLINT = 11   // one dipole cluster flashing the sun back
     };
 
     enum class BlendMode
@@ -122,6 +136,7 @@ private:
         float seed = 0.0f;
         float drag = 0.0f;
         float upwardAcceleration = 0.0f;
+        float clock = 0.0f; // seconds, for materials that animate on their own (chaff glitter)
         ParticleMaterial material = ParticleMaterial::SMOKE;
         BlendMode blendMode = BlendMode::ALPHA;
     };
@@ -159,6 +174,8 @@ private:
     };
 
     std::vector<ParticleInstance> m_enginePlumes;
+    // Drawn this frame only, never aged by update(): chaff clouds.
+    std::vector<EffectParticle> m_frameParticles;
     float m_effectTime = 0.0f;
 
     void createShaders();
@@ -171,6 +188,8 @@ private:
     void renderParticlePass(const std::vector<ParticleInstance> &instances);
 
     void addParticle(const EffectParticle &particle);
+    // World size of one screen pixel at this distance from the camera.
+    float pixelFootprint(const glm::vec3 &position) const;
     void addHeatHaze(const HeatHazeSprite &sprite);
     void emitEngineTrail(const glm::vec3 &start,
                          const glm::vec3 &end,

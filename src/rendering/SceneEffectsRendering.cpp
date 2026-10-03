@@ -37,13 +37,15 @@ void SceneEffects::submitEnginePlume(const glm::vec3 &nozzle, const glm::vec3 &d
 
 void SceneEffects::renderParticlesToScene()
 {
-    if (!m_initialized || m_particleProgram == 0 || (m_particles.empty() && m_enginePlumes.empty()))
+    if (!m_initialized || m_particleProgram == 0 ||
+        (m_particles.empty() && m_enginePlumes.empty() && m_frameParticles.empty()))
     {
         return;
     }
 
+    const std::size_t total = m_particles.size() + m_frameParticles.size() + m_enginePlumes.size();
     std::vector<ParticleInstance> instances;
-    instances.reserve(m_particles.size() + m_enginePlumes.size());
+    instances.reserve(total);
 
     struct SortableParticle
     {
@@ -51,32 +53,33 @@ void SceneEffects::renderParticlesToScene()
         ParticleInstance instance{};
     };
     std::vector<SortableParticle> sortedParticles;
-    sortedParticles.reserve(m_particles.size() + m_enginePlumes.size());
+    sortedParticles.reserve(total);
     for (const auto &engine : m_enginePlumes)
     {
         const glm::vec3 center = glm::vec3(engine.centerRotation) + glm::vec3(engine.axisSizeX) * engine.params0.x * 0.5f;
         sortedParticles.push_back({-(m_view * glm::vec4(center, 1.0f)).z, engine});
     }
 
-    for (const EffectParticle &particle : m_particles)
+    auto collect = [&](const EffectParticle &particle)
     {
         const float ageNorm = (particle.lifetime > 0.0f) ? saturate(particle.age / particle.lifetime) : 1.0f;
         if (ageNorm >= 1.0f)
         {
-            continue;
+            return;
         }
 
         const float size = glm::mix(particle.startSize, particle.endSize, ageNorm);
         if (!std::isfinite(size) || size <= 0.0001f)
         {
-            continue;
+            return;
         }
 
         ParticleInstance instance{};
         const bool axisAligned = particle.material == ParticleMaterial::FLAME ||
                                  particle.material == ParticleMaterial::SPARK ||
                                  particle.material == ParticleMaterial::DEBRIS ||
-                                 particle.material == ParticleMaterial::SHOCK_DIAMOND;
+                                 particle.material == ParticleMaterial::SHOCK_DIAMOND ||
+                                 particle.material == ParticleMaterial::CHAFF_CLOUD;
         instance.centerRotation = glm::vec4(particle.position, axisAligned ? 0.0f : particle.rotation);
         instance.axisSizeX = glm::vec4(safeNormalize(particle.axis, particle.velocity), size);
         instance.color = particle.color;
@@ -87,9 +90,17 @@ void SceneEffects::renderParticlesToScene()
         // Sort emission and extinction together: foreground smoke must obscure
         // fire behind it. Additive instances output zero alpha in the shader.
         instance.params1 = glm::vec4(static_cast<float>(particle.material), particle.seed,
-                                     particle.blendMode == BlendMode::ADDITIVE ? 1.0f : 0.0f, 0.0f);
+                                     particle.blendMode == BlendMode::ADDITIVE ? 1.0f : 0.0f, particle.clock);
         const float viewDepth = -(m_view * glm::vec4(particle.position, 1.0f)).z;
         sortedParticles.push_back({viewDepth, instance});
+    };
+    for (const EffectParticle &particle : m_particles)
+    {
+        collect(particle);
+    }
+    for (const EffectParticle &particle : m_frameParticles)
+    {
+        collect(particle);
     }
 
     std::stable_sort(sortedParticles.begin(), sortedParticles.end(), [](const SortableParticle &lhs, const SortableParticle &rhs)

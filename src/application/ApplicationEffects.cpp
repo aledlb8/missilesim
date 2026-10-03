@@ -18,6 +18,7 @@
 #include <random>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -448,11 +449,14 @@ void Application::emitFrameVisualEffects(float deltaTime)
                                     heatFraction);
     }
 
-    // One streak per rendered frame. Several simulation steps can land in that
-    // frame, and chaff has no interpolated previous position of its own.
-    std::unordered_map<std::uint32_t, glm::vec3> nextChaffOrigin;
+    // Chaff is drawn whole every frame from the simulation's round: no trail.
+    // It is not a physics object, so it has no interpolated position; draw it
+    // where it was the same fraction of a step ago that blended objects are.
+    std::unordered_set<std::uint32_t> drawnChaff;
     if (m_world)
     {
+        const float lag = (1.0f - glm::clamp(m_renderAlpha, 0.0f, 1.0f)) * m_world->fixedStep();
+        const double now = m_world->time();
         for (const missilesim::sim::ChaffRound &round : m_world->chaffRounds())
         {
             if (!round.alive || round.birthRcsM2 <= 0.0f)
@@ -460,13 +464,12 @@ void Application::emitFrameVisualEffects(float deltaTime)
                 continue;
             }
             const float bloom = glm::clamp(round.rcsM2 / round.birthRcsM2, 0.0f, 1.0f);
-            // A short segment is not a birth: frames with no simulation step have none.
-            const auto previous = m_chaffDrawOrigin.find(round.id.value);
-            const bool birth = previous == m_chaffDrawOrigin.end();
-            const glm::vec3 start = birth ? round.position : previous->second;
-            m_renderer->emitChaffEffect(start, round.position, round.velocity, bloom, birth);
-            nextChaffOrigin.emplace(round.id.value, round.position);
+            const float age = static_cast<float>(std::max(0.0, now - round.birthTime)) - lag;
+            const bool birth = m_chaffDrawn.find(round.id.value) == m_chaffDrawn.end();
+            m_renderer->submitChaffCloud(round.position - round.velocity * lag, round.velocity, std::max(age, 0.0f),
+                                         static_cast<float>(round.lifetimeS), bloom, round.id.value, birth);
+            drawnChaff.insert(round.id.value);
         }
     }
-    m_chaffDrawOrigin.swap(nextChaffOrigin);
+    m_chaffDrawn.swap(drawnChaff);
 }

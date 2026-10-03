@@ -158,7 +158,7 @@ void Application::restartWorld()
     m_launchNoticeTimer = 0.0f;
     m_shotEndNotice.clear();
     m_shotEndNoticeTimer = 0.0f;
-    m_chaffDrawOrigin.clear();
+    m_chaffDrawn.clear();
     if (m_renderer)
     {
         m_renderer->clearEffects();

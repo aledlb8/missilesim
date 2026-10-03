@@ -322,16 +322,18 @@ void Renderer::emitFlareEffect(const glm::vec3 &start,
     addEffectLight(light);
 }
 
-void Renderer::emitChaffEffect(const glm::vec3 &start,
-                               const glm::vec3 &end,
-                               const glm::vec3 &carrierVelocity,
-                               float bloomFraction,
-                               bool birth)
+void Renderer::submitChaffCloud(const glm::vec3 &position,
+                                const glm::vec3 &velocity,
+                                float ageSeconds,
+                                float lifetimeSeconds,
+                                float bloomFraction,
+                                std::uint32_t seed,
+                                bool birth)
 {
     // Dipoles glint. They do not burn, so this does not add the flare's warm light.
     if (m_sceneEffects)
     {
-        m_sceneEffects->emitChaffEffect(start, end, carrierVelocity, bloomFraction, birth);
+        m_sceneEffects->submitChaffCloud(position, velocity, ageSeconds, lifetimeSeconds, bloomFraction, seed, birth);
     }
 }
 

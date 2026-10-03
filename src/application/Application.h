@@ -7,6 +7,7 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "objects/Target.h"
 #include "sim/EntityId.h"
@@ -438,7 +439,7 @@ private:
     std::string m_fox3Id = "reference";
     // Last position drawn for each chaff bundle, so the cloud streaks across frames.
     // Chaff is not a physics object and has no render interpolation.
-    std::unordered_map<std::uint32_t, glm::vec3> m_chaffDrawOrigin;
+    std::unordered_set<std::uint32_t> m_chaffDrawn;
     missilesim::sim::TerrainKind m_terrainKind = missilesim::sim::TerrainKind::Flat;
     std::string m_aircraftId = "f-16c-block-50";
 

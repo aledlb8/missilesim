@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -73,12 +74,15 @@ public:
                          const glm::vec3 &end,
                          const glm::vec3 &carrierVelocity,
                          float heatFraction);
-    // birth is true on the first frame a bundle is drawn: the cartridge burst.
-    void emitChaffEffect(const glm::vec3 &start,
-                         const glm::vec3 &end,
-                         const glm::vec3 &carrierVelocity,
-                         float bloomFraction,
-                         bool birth);
+    // One chaff bundle for this frame (see SceneEffects::submitChaffCloud).
+    // birth is true on the first frame a bundle is drawn: the cartridge pop.
+    void submitChaffCloud(const glm::vec3 &position,
+                          const glm::vec3 &velocity,
+                          float ageSeconds,
+                          float lifetimeSeconds,
+                          float bloomFraction,
+                          std::uint32_t seed,
+                          bool birth);
     void spawnMissileLaunchEffect(const glm::vec3 &position,
                                   const glm::vec3 &forward,
                                   const glm::vec3 &carrierVelocity,
