@@ -115,7 +115,12 @@ namespace missilesim::audio::synth
     void MissileWarningVoice::render(float *left, float *right, int frames)
     {
         const MissileWarningParams &params = m_params.read();
-        m_active += ((params.active ? 1.0f : 0.0f) - m_active) * blockCoefficient(0.03f, frames);
+        const bool sounding = params.timbre != WarningTimbre::Off;
+        if (sounding)
+        {
+            m_timbre = params.timbre;
+        }
+        m_active += ((sounding ? 1.0f : 0.0f) - m_active) * blockCoefficient(0.03f, frames);
         m_urgency += (clampf(params.urgency, 0.0f, 1.0f) - m_urgency) * blockCoefficient(0.3f, frames);
         if (m_active < 1.0e-4f)
         {
@@ -125,27 +130,75 @@ namespace missilesim::audio::synth
             return;
         }
 
-        const float rate = 2.5f + 7.5f * m_urgency; // pulses per second
-        const float pulseSeconds = kWarningDuty / rate;
-        const float level = (0.08f + 0.06f * m_urgency) * m_active;
+        // Approach keeps the original warble so the SAM camera sounds the same.
+        // Search is a slow beep, track a faster beep, launch a rapid run of
+        // long beeps at the track pitch, and a missile seeker a higher warble.
+        float highHz = kWarningHighHz;
+        float lowHz = kWarningLowHz;
+        float rate = 2.5f + 7.5f * m_urgency;
+        float duty = kWarningDuty;
+        float level = (0.08f + 0.06f * m_urgency) * m_active;
+        bool warble = true;
+        switch (m_timbre)
+        {
+        case WarningTimbre::Search:
+            highHz = 900.0f;
+            lowHz = 900.0f;
+            rate = 1.4f;
+            duty = 0.18f;
+            level = 0.07f * m_active;
+            warble = false;
+            break;
+        case WarningTimbre::Track:
+            highHz = 1680.0f;
+            lowHz = 1680.0f;
+            rate = 4.0f;
+            duty = 0.22f;
+            level = 0.09f * m_active;
+            warble = false;
+            break;
+        case WarningTimbre::Launch:
+            highHz = 1680.0f;
+            lowHz = 1680.0f;
+            rate = 8.0f;
+            duty = 0.5f;
+            level = 0.10f * m_active;
+            warble = false;
+            break;
+        case WarningTimbre::Seeker:
+            highHz = 2100.0f;
+            lowHz = 1560.0f;
+            rate = 6.0f + 6.0f * m_urgency;
+            duty = 0.45f;
+            level = (0.09f + 0.05f * m_urgency) * m_active;
+            break;
+        case WarningTimbre::Approach:
+        case WarningTimbre::Off:
+            break;
+        }
 
+        const float pulseSeconds = duty / rate;
         for (int i = 0; i < frames; ++i)
         {
             m_gate += rate * kSampleSeconds;
             if (m_gate >= 1.0f)
             {
                 m_gate -= 1.0f;
-                m_highTone = !m_highTone;
+                if (warble)
+                {
+                    m_highTone = !m_highTone;
+                }
             }
 
             float envelope = 0.0f;
-            if (m_gate < kWarningDuty)
+            if (m_gate < duty)
             {
                 const float t = m_gate / rate;
                 envelope = raisedCosine(std::min(t, pulseSeconds - t) / kWarningEdgeSeconds);
             }
 
-            m_phase += (m_highTone ? kWarningHighHz : kWarningLowHz) * kSampleSeconds;
+            const float hz = (warble && m_highTone) ? highHz : lowHz;
+            m_phase += hz * kSampleSeconds;
             m_phase -= std::floor(m_phase);
             // Slightly hollow timbre (odd harmonic) so it cuts through the roar.
             const float tone = std::sin(kTwoPi * m_phase) + 0.22f * std::sin(3.0f * kTwoPi * m_phase);

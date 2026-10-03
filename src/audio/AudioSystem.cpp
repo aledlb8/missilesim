@@ -83,6 +83,7 @@ struct AudioSystem::Impl
     std::unordered_map<std::uint32_t, Emitter<synth::RocketMotorVoice>> missiles;
     std::unordered_map<std::uint32_t, TargetVoice> targets;
     std::unordered_map<std::uint32_t, Emitter<synth::FlareVoice>> flares;
+    std::unordered_map<std::uint32_t, Emitter<synth::ChaffVoice>> chaff;
 
     // Updates every listed source and releases the voices of sources that
     // are no longer listed.
@@ -253,6 +254,29 @@ struct AudioSystem::Impl
         emitter.voice->setParams(params);
         engine.moveEmitter(*emitter.control, flare.getPosition(), wallVelocity(velocity), axis);
     }
+
+    void updateChaff(const AudioChaffState &cloud, Emitter<synth::ChaffVoice> &emitter)
+    {
+        const glm::vec3 velocity = cloud.velocity;
+        const glm::vec3 axis = directionOr(velocity, glm::vec3(0.0f, -1.0f, 0.0f));
+        synth::ChaffParams params;
+        params.bloom = std::clamp(cloud.bloom, 0.0f, 1.0f);
+
+        if (!emitter)
+        {
+            emitter.voice = std::make_shared<synth::ChaffVoice>(seed());
+            emitter.voice->setParams(params);
+            emitter.control = engine.spawn(synth::ChaffVoice::spec(), emitter.voice, cloud.position, wallVelocity(velocity), axis);
+            if (!emitter.control)
+            {
+                emitter.voice.reset();
+            }
+            return;
+        }
+
+        emitter.voice->setParams(params);
+        engine.moveEmitter(*emitter.control, cloud.position, wallVelocity(velocity), axis);
+    }
 };
 
 AudioSystem::AudioSystem() : m_impl(std::make_unique<Impl>()) {}
@@ -391,6 +415,17 @@ void AudioSystem::syncFlares(const std::vector<AudioFlareSource> &activeFlares)
                      [&impl](const Flare &flare, Emitter<synth::FlareVoice> &voice) { impl.updateFlare(flare, voice); });
 }
 
+void AudioSystem::syncChaff(const std::vector<AudioChaffSource> &activeChaff)
+{
+    Impl &impl = *m_impl;
+    if (!impl.running)
+    {
+        return;
+    }
+    impl.syncSources(activeChaff, impl.chaff,
+                     [&impl](const AudioChaffState &cloud, Emitter<synth::ChaffVoice> &voice) { impl.updateChaff(cloud, voice); });
+}
+
 void AudioSystem::syncCockpitCues(const CockpitCueState &cues)
 {
     Impl &impl = *m_impl;
@@ -406,8 +441,35 @@ void AudioSystem::syncCockpitCues(const CockpitCueState &cues)
     impl.seeker->setParams(seeker);
 
     synth::MissileWarningParams warning;
-    warning.active = cues.missileWarning && !impl.world.paused;
     warning.urgency = cues.missileWarningUrgency;
+    if (impl.world.paused)
+    {
+        warning.timbre = synth::WarningTimbre::Off;
+    }
+    else
+    {
+        switch (cues.alert)
+        {
+        case HeadsetAlert::RadarSearch:
+            warning.timbre = synth::WarningTimbre::Search;
+            break;
+        case HeadsetAlert::RadarTrack:
+            warning.timbre = synth::WarningTimbre::Track;
+            break;
+        case HeadsetAlert::RadarLaunch:
+            warning.timbre = synth::WarningTimbre::Launch;
+            break;
+        case HeadsetAlert::MissileSeeker:
+            warning.timbre = synth::WarningTimbre::Seeker;
+            break;
+        case HeadsetAlert::Approach:
+            warning.timbre = synth::WarningTimbre::Approach;
+            break;
+        case HeadsetAlert::None:
+            warning.timbre = cues.missileWarning ? synth::WarningTimbre::Approach : synth::WarningTimbre::Off;
+            break;
+        }
+    }
     impl.missileWarning->setParams(warning);
 }
 
@@ -466,4 +528,9 @@ void AudioSystem::stopAllEmitters()
         entry.second.release();
     }
     impl.flares.clear();
+    for (auto &entry : impl.chaff)
+    {
+        entry.second.release();
+    }
+    impl.chaff.clear();
 }

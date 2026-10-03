@@ -58,9 +58,19 @@ namespace missilesim::audio::synth
     // level climb with the threat's urgency.
     // ------------------------------------------------------------------
 
+    enum class WarningTimbre : std::uint8_t
+    {
+        Off = 0,
+        Search,   // slow single beep
+        Track,    // faster single beep
+        Launch,   // rapid, long beeps at the track pitch: a round is on its way
+        Seeker,   // two-tone warble, higher than an infrared approach
+        Approach, // the existing missile-approach warble
+    };
+
     struct MissileWarningParams
     {
-        bool active = false;
+        WarningTimbre timbre = WarningTimbre::Off;
         float urgency = 0.0f; // 0..1
     };
 
@@ -81,6 +91,8 @@ namespace missilesim::audio::synth
         float m_active = 0.0f;  // smoothed on/off
         float m_urgency = 0.0f; // smoothed
         bool m_highTone = true;
+        // The tone that is fading out keeps its own voice instead of the default warble.
+        WarningTimbre m_timbre = WarningTimbre::Approach;
     };
 
     // ------------------------------------------------------------------
