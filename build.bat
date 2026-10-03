@@ -83,5 +83,14 @@ if errorlevel 1 (
 )
 cmake --build --preset "%BUILD_PRESET%"
 set "RESULT=%ERRORLEVEL%"
+echo.
+if "%RESULT%"=="0" (
+    echo Build succeeded. Unchanged source files do not need recompiling.
+    echo Game executable:
+    echo   "%~dp0build\%CONFIGURE_PRESET%\bin\MissileSimOpenGL.exe"
+    echo Run that executable to start the game.
+) else (
+    echo Build failed. See the errors above.
+)
 popd
 exit /b %RESULT%
