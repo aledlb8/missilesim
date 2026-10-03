@@ -6,29 +6,29 @@
 namespace missilesim::sim
 {
     bool releaseChaff(ChaffDispenser &dispenser, std::vector<ChaffRound> &rounds, EntityId id, double time,
-                      const glm::vec3 &origin, const glm::vec3 &aircraftVelocity, const glm::vec3 &aircraftRight)
+                      const glm::vec3 &origin, const glm::vec3 &aircraftVelocity, const glm::vec3 &ejectDirection)
     {
         if (dispenser.remaining <= 0)
         {
             return false;
         }
 
-        // ejectSpeed is a speed, so a non-unit right vector still adds that many m/s.
-        glm::vec3 right = aircraftRight;
-        const float rightLength = glm::length(right);
-        if (rightLength > 1.0e-6f)
+        // ejectSpeed is a speed, so a non-unit direction still adds that many m/s.
+        glm::vec3 eject = ejectDirection;
+        const float ejectLength = glm::length(eject);
+        if (ejectLength > 1.0e-6f)
         {
-            right /= rightLength;
+            eject /= ejectLength;
         }
         else
         {
-            right = glm::vec3(0.0f);
+            eject = glm::vec3(0.0f);
         }
 
         ChaffRound round;
         round.id = id;
         round.position = origin;
-        round.velocity = aircraftVelocity + right * dispenser.ejectSpeed;
+        round.velocity = aircraftVelocity + eject * dispenser.ejectSpeed;
         round.rcsM2 = dispenser.rcsM2;
         round.birthRcsM2 = dispenser.rcsM2;
         round.birthTime = time;

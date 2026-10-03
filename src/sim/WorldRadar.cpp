@@ -1,5 +1,6 @@
 // Player and opponent scanning radars, the fictional radar round, the warning
-// picture, and the fire-control picture both of the player's weapons share.
+// picture, the fire-control picture both of the player's weapons share, and the
+// fighter's chaff and flare dispensers.
 // Fox 2 launch and Fox 2 sensing do not come through here; the radar lock only
 // cues the rail seeker (WorldWeapons.cpp). Nothing in this file reads the
 // camera or a live Target* for guidance.
@@ -8,6 +9,7 @@
 #include "sim/Fox2Catalog.h"
 #include "sim/Fox3Catalog.h"
 #include "objects/Fighter.h"
+#include "objects/Flare.h"
 #include "objects/Missile.h"
 #include "objects/Target.h"
 #include "physics/PhysicsEngine.h"
@@ -24,8 +26,18 @@ namespace missilesim::sim
     {
         constexpr int kPlayerRadarRounds = 4;
         constexpr int kRedRadarRounds = 2;
-        constexpr int kChaffRounds = 12;
-        constexpr double kPlayerReactionS = 1.0;
+        // Sim choices: the F-16's dispensers hold 120 cartridges in all; the
+        // player gets that many of each kind. A held key releases a chaff
+        // bundle every 0.2 s and a flare pair every 0.3 s.
+        constexpr int kPlayerChaff = 120;
+        constexpr int kPlayerFlares = 120;
+        constexpr double kChaffIntervalS = 0.2;
+        constexpr double kFlareIntervalS = 0.3;
+        // Cartridges leave the dispensers under the aft fuselage, this far
+        // behind the centre of mass, below it and out to each side.
+        constexpr float kDispenserAftM = 4.0f;
+        constexpr float kDispenserBelowM = 0.8f;
+        constexpr float kDispenserSideM = 0.7f;
         constexpr double kRedReactionS = 1.5;
         constexpr double kSupportPeriodS = 1.0;
         constexpr float kSeparationSpeedMps = 20.0f;
@@ -184,16 +196,19 @@ namespace missilesim::sim
     {
         m_radarMagazine = kPlayerRadarRounds;
         m_redRadarMagazine = kRedRadarRounds;
-        m_chaff.remaining = kChaffRounds;
+        m_chaff.remaining = kPlayerChaff;
         m_chaff.rcsM2 = 20.0f;
         m_chaff.lifetimeS = 8.0;
         m_chaff.ejectSpeed = 30.0f;
         m_chaff.dragTimeS = kChaffDragTimeS;
         m_chaff.fallSpeedMps = kChaffFallSpeedMps;
         m_chaffRounds.clear();
+        m_playerFlares = kPlayerFlares;
+        m_lastChaffTime = -1.0e9;
+        m_lastFlareTime = -1.0e9;
+        m_chaffSide = 1.0f;
         m_designatedTrack = kNoEntity;
         m_playerWarnings = {};
-        m_firstWarningTime = -1.0;
         m_redQualitySince = -1.0;
         configureRadars();
     }
@@ -201,7 +216,8 @@ namespace missilesim::sim
     void World::rearmRadarStores()
     {
         m_radarMagazine = kPlayerRadarRounds;
-        m_chaff.remaining = kChaffRounds;
+        m_chaff.remaining = kPlayerChaff;
+        m_playerFlares = kPlayerFlares;
     }
 
     void World::rearmHostileRadar()
@@ -598,30 +614,86 @@ namespace missilesim::sim
 
     bool World::dispenseChaff()
     {
-        if (!m_fighter || m_fighterRespawnPending || m_chaff.remaining <= 0)
-        {
-            return false;
-        }
-        if (!defenseAllowed(m_firstWarningTime, time(), kPlayerReactionS))
+        if (!m_fighter || m_fighterRespawnPending || m_chaff.remaining <= 0 || time() < m_lastChaffTime + kChaffIntervalS)
         {
             return false;
         }
 
+        // Down and out of the belly, left and right dispensers in turn.
+        const glm::vec3 nose = m_fighter->getNose();
+        const glm::vec3 up = m_fighter->getUp();
+        const glm::vec3 right = m_fighter->getRight();
+        const glm::vec3 origin = m_fighter->getPosition() - nose * kDispenserAftM - up * kDispenserBelowM +
+                                 right * (kDispenserSideM * m_chaffSide);
+        const glm::vec3 eject = -up + right * (0.35f * m_chaffSide);
         const EntityId id = allocateId();
-        const glm::vec3 origin = m_fighter->getPosition();
         // The free function shares this method's name. Qualify it.
         const bool released = ::missilesim::sim::releaseChaff(m_chaff, m_chaffRounds, id, time(), origin,
-                                                              m_fighter->getVelocity(), m_fighter->getRight());
+                                                              m_fighter->getVelocity(), eject);
         if (!released)
         {
             return false;
         }
+        m_lastChaffTime = time();
+        m_chaffSide = -m_chaffSide;
 
         SimEvent event = makeEvent(EventType::CountermeasureReleased, id, m_fighterId);
         event.position = origin;
-        event.velocity = m_fighter->getVelocity();
+        event.velocity = m_chaffRounds.back().velocity;
         publish(event);
         return true;
+    }
+
+    bool World::dispenseFlares()
+    {
+        if (!m_fighter || m_fighterRespawnPending || m_playerFlares <= 0 || time() < m_lastFlareTime + kFlareIntervalS)
+        {
+            return false;
+        }
+
+        // The same cartridge the opponents carry (heat, burn time, drag), shot
+        // down and outboard so the pair fans apart under the tail.
+        const TargetFlareConfig &cartridge = m_config.targets.flares;
+        const glm::vec3 nose = m_fighter->getNose();
+        const glm::vec3 up = m_fighter->getUp();
+        const glm::vec3 right = m_fighter->getRight();
+        const glm::vec3 base = m_fighter->getPosition() - nose * kDispenserAftM - up * kDispenserBelowM;
+        bool any = false;
+        for (const float side : {1.0f, -1.0f})
+        {
+            if (m_playerFlares <= 0)
+            {
+                break;
+            }
+            FlareLaunchRequest request;
+            request.position = base + right * (kDispenserSideM * side);
+            request.velocity = m_fighter->getVelocity() +
+                               glm::normalize(-up * 0.8f + right * (0.45f * side) - nose * 0.25f) * cartridge.ejectSpeed;
+            request.mass = cartridge.mass;
+            request.dragCoefficient = cartridge.dragCoefficient;
+            request.crossSectionalArea = cartridge.crossSectionalArea;
+            request.lifetime = cartridge.lifetime;
+            request.heatSignature = cartridge.heatSignature;
+            request.heatDecayRate = cartridge.heatDecayRate;
+            --m_playerFlares;
+
+            auto flare = std::make_unique<Flare>(request);
+            if (!flare->isActive())
+            {
+                continue;
+            }
+            const EntityId id = allocateId();
+            flare->setEntityId(id);
+            m_physics->addFlare(flare.get());
+            SimEvent event = makeEvent(EventType::CountermeasureReleased, id, m_fighterId);
+            event.position = flare->getPosition();
+            event.velocity = flare->getVelocity();
+            publish(event);
+            m_flares.push_back(std::move(flare));
+            any = true;
+        }
+        m_lastFlareTime = time();
+        return any;
     }
 
     void World::stepRadarBeforePhysics()
@@ -828,11 +900,6 @@ namespace missilesim::sim
                 set.radarWarning = true;
                 set.approachWarning = true;
                 m_playerWarnings = hear(time(), set, toSensorBody(ownship), terrain(), emissions, closing);
-                if (!(m_firstWarningTime >= 0.0) &&
-                    (!m_playerWarnings.radar.empty() || !m_playerWarnings.approach.empty()))
-                {
-                    m_firstWarningTime = time();
-                }
             }
         }
     }

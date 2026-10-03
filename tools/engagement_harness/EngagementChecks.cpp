@@ -1473,11 +1473,40 @@ namespace harness
                               "fire control: the radar round keeps the lock and cages the rail");
             }
 
-            World gated(config, 3);
-            gated.setRoleFighter("aim-9x-blk2");
-            const int chaffBefore = gated.chaffRemaining();
-            checks.expect(!gated.dispenseChaff() && gated.chaffRemaining() == chaffBefore,
-                          "radar: chaff stays shut until a warning is heard");
+            // Countermeasures release on demand, with nothing heard yet. The
+            // dispenser then cycles, so a held key cannot empty it in one step.
+            World dispenser(config, 3);
+            dispenser.setRoleFighter("aim-9x-blk2");
+            const int chaffBefore = dispenser.chaffRemaining();
+            const int flaresBefore = dispenser.flaresRemaining();
+            const bool chaffOut = dispenser.dispenseChaff();
+            const bool chaffCycling = !dispenser.dispenseChaff();
+            const bool flaresOut = dispenser.dispenseFlares();
+            const bool flaresCycling = !dispenser.dispenseFlares();
+            checks.expect(dispenser.warnings().radar.empty() && dispenser.warnings().approach.empty() && chaffOut &&
+                              chaffCycling && dispenser.chaffRemaining() == chaffBefore - 1 &&
+                              dispenser.chaffRounds().size() == 1,
+                          "countermeasures: chaff releases without a warning, one bundle per cycle");
+            checks.expect(flaresOut && flaresCycling && dispenser.flaresRemaining() == flaresBefore - 2 &&
+                              dispenser.flares().size() == 2,
+                          "countermeasures: flares release in pairs, one pair per cycle");
+            for (int step = 0; step < 40; ++step)
+            {
+                dispenser.step();
+            }
+            const bool again = dispenser.dispenseChaff() && dispenser.dispenseFlares();
+            dispenser.rearm();
+            checks.expect(again && dispenser.chaffRemaining() == chaffBefore && dispenser.flaresRemaining() == flaresBefore,
+                          "countermeasures: the dispenser cycles again and G refills both stores");
+            PlatformSnapshot ownship;
+            bool belowAndBehind = false;
+            if (dispenser.snapshot(dispenser.fighterId(), ownship) && !dispenser.flares().empty())
+            {
+                const Flare &flare = *dispenser.flares().back();
+                const glm::vec3 relative = flare.getVelocity() - ownship.velocity;
+                belowAndBehind = relative.y < 0.0f;
+            }
+            checks.expect(belowAndBehind, "countermeasures: flares leave downward");
 
             World infrared(config, 5);
             infrared.setTerrain(flatConfig);

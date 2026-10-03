@@ -3,8 +3,8 @@
 // The simulated engagement, independent of windows, rendering and audio.
 //
 // World owns every simulated entity: the physics engine and atmosphere, the
-// player's fighter, the target aircraft, their flares, the player's weapon
-// stations and every shot in the air. It advances on a fixed step and reports
+// player's fighter, the target aircraft, everyone's flares and the player's
+// chaff, the player's weapon stations and every shot in the air. It advances on a fixed step and reports
 // what happened as time-stamped events (sim/SimEvents.h). The game presents
 // those events; the headless harness (tools/engagement_harness) records them.
 // Both drive this same class, so what the harness checks is what the game runs.
@@ -16,8 +16,9 @@
 //    pointer.
 //  - A shot ends exactly once, with one ShotEndReason. Damage, destruction and
 //    the end of a shot are separate events; a platform is destroyed once.
-//  - New flares join the world at the end of the step that released them
-//    (a documented step boundary), not after a rendered frame.
+//  - New target flares join the world at the end of the step that released
+//    them (a documented step boundary), not after a rendered frame. The
+//    player's dispensers are called between steps and join at once.
 
 #include "sim/EntityId.h"
 #include "sim/Random.h"
@@ -437,10 +438,15 @@ namespace missilesim::sim
         double radarLaunchAgeLimit() const { return 2.0; }
         int radarRoundsRemaining() const { return m_radarMagazine; }
         int chaffRemaining() const { return m_chaff.remaining; }
+        int flaresRemaining() const { return m_playerFlares; }
         // Alive and spent bundles. Spent entries stay so their ids are not reused.
         const std::vector<ChaffRound> &chaffRounds() const { return m_chaffRounds; }
-        // False until a warning has been heard and the reaction delay has elapsed.
+        // The fighter's dispensers. Either releases on demand, warning or not,
+        // and refuses while the store is empty or the dispenser is still
+        // cycling (so calling every frame a key is held paces the release).
+        // Chaff: one bundle. Flares: a pair, one from each side.
         bool dispenseChaff();
+        bool dispenseFlares();
         const WarningPicture &warnings() const { return m_playerWarnings; }
         RadarFlightStatus radarFlightStatus() const;
         // Opponent radar. Off unless a scenario turns it on. Uses the same scan and the same round.
@@ -537,7 +543,7 @@ namespace missilesim::sim
         // passes its team: the radar's IFF leaves friendly platforms out.
         // Seekers pass nothing, since they have no IFF.
         std::vector<SensorBody> sensorBodies(EntityId ownship, const Team *friendly = nullptr) const;
-        // G on the fighter: full radar magazine and chaff store. Bundles in the air stay.
+        // G on the fighter: full radar magazine, chaff and flares. Rounds in the air stay.
         void rearmRadarStores();
         void advanceSelectedStation();
         // The station launch() fires from: the selected one, or the next loaded one.
@@ -598,8 +604,11 @@ namespace missilesim::sim
         double m_redQualitySince = -1.0;
         ChaffDispenser m_chaff;
         std::vector<ChaffRound> m_chaffRounds;
+        int m_playerFlares = 0;
+        double m_lastChaffTime = -1.0e9;
+        double m_lastFlareTime = -1.0e9;
+        float m_chaffSide = 1.0f; // alternates the left and right dispensers
         WarningPicture m_playerWarnings;
-        double m_firstWarningTime = -1.0;
 
         std::vector<std::unique_ptr<Shot>> m_shots;
     };

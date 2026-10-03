@@ -37,14 +37,15 @@ namespace missilesim::sim
         int remaining = 0; // finite. 0 refuses.
         float rcsM2 = 20.0f;
         double lifetimeS = 8.0;
-        float ejectSpeed = 30.0f; // m/s, added along aircraftRight, plus the aircraft velocity
+        float ejectSpeed = 30.0f; // m/s, added along the eject direction, plus the aircraft velocity
         double dragTimeS = 0.0;   // copied to each round
         float fallSpeedMps = 0.0f;
     };
 
     // Returns false when remaining is 0. On success, decrements remaining and appends one alive round.
+    // ejectDirection is where the cartridge points (any length; zero ejects at the aircraft velocity).
     bool releaseChaff(ChaffDispenser &dispenser, std::vector<ChaffRound> &rounds, EntityId id, double time,
-                      const glm::vec3 &origin, const glm::vec3 &aircraftVelocity, const glm::vec3 &aircraftRight);
+                      const glm::vec3 &origin, const glm::vec3 &aircraftVelocity, const glm::vec3 &ejectDirection);
 
     // Alive rounds move with their velocity, which relaxes toward the fall
     // (integrated exactly, so the step size does not change the path). RCS
