@@ -114,6 +114,7 @@ if(MISSILESIM_BUILD_TOOLS)
     add_subdirectory(tools/flight_harness)
     add_subdirectory(tools/engagement_harness)
     add_subdirectory(tools/hud_preview)
+    add_subdirectory(tools/effects_preview)
 endif()
 
 # Game sources: everything that is not in the core library or the audio library.
