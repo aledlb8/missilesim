@@ -591,4 +591,29 @@ namespace missilesim::ui
         drawList->AddRectFilledMultiColor(min, ImVec2(max.x, min.y + band), edge, edge, clear, clear);
         drawList->AddRectFilledMultiColor(ImVec2(min.x, max.y - band), max, clear, clear, edge, edge);
     }
+
+    void drawCornerBrackets(ImDrawList *drawList, ImVec2 centre, float half, ImU32 colour, float thickness,
+                            float legFraction)
+    {
+        if (drawList == nullptr || !(half > 0.0f))
+        {
+            return;
+        }
+        const float leg = half * std::clamp(legFraction, 0.0f, 1.0f);
+        const float left = centre.x - half;
+        const float right = centre.x + half;
+        const float top = centre.y - half;
+        const float bottom = centre.y + half;
+        // Each corner is one polyline, so the joint is mitred, not overlapped.
+        const ImVec2 corners[4][3] = {
+            {ImVec2(left + leg, top), ImVec2(left, top), ImVec2(left, top + leg)},
+            {ImVec2(right - leg, top), ImVec2(right, top), ImVec2(right, top + leg)},
+            {ImVec2(left + leg, bottom), ImVec2(left, bottom), ImVec2(left, bottom - leg)},
+            {ImVec2(right - leg, bottom), ImVec2(right, bottom), ImVec2(right, bottom - leg)},
+        };
+        for (const auto &corner : corners)
+        {
+            drawList->AddPolyline(corner, 3, colour, ImDrawFlags_None, thickness);
+        }
+    }
 }
